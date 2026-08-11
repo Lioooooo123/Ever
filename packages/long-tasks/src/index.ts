@@ -2,6 +2,7 @@ export * from "./acceptance.ts";
 export * from "./context-builder.ts";
 export * from "./controller.ts";
 export * from "./coordinator.ts";
+export * from "./execution-context.ts";
 export * from "./execution-policy.ts";
 export * from "./notifications.ts";
 export * from "./recovery.ts";

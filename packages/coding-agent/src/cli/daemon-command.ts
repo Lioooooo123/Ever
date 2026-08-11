@@ -2,12 +2,13 @@ import { spawn } from "node:child_process";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { dirname, join } from "node:path";
-import { SqliteTaskStore, TaskNotificationDispatcher } from "@karissa/long-tasks";
+import { resolveAgentExecutionContext, SqliteTaskStore, TaskNotificationDispatcher } from "@karissa/long-tasks";
 import chalk from "chalk";
 import { recoverExpiredLongTaskExecutions } from "../core/long-task-runtime.ts";
 import { DesktopNotificationAdapter } from "./desktop-notifier.ts";
 
 interface DaemonResponse {
+	schemaVersion: 1;
 	ok: boolean;
 	pid?: number;
 	runningTaskIds?: string[];
@@ -50,7 +51,9 @@ export function requestDaemon(agentDir: string, request: Record<string, unknown>
 		socket.on("error", reject);
 		socket.on("end", () => {
 			try {
-				resolve(JSON.parse(response.trim()) as DaemonResponse);
+				const parsed = JSON.parse(response.trim()) as DaemonResponse;
+				if (parsed.schemaVersion !== 1) throw new Error("Daemon returned an unsupported schemaVersion");
+				resolve(parsed);
 			} catch {
 				reject(new Error("Daemon returned an invalid response"));
 			}
@@ -105,11 +108,7 @@ async function serve(agentDir: string, unsafeNoSandbox: boolean): Promise<void> 
 				.listRunnableTasks(100)
 				.find((candidate) => activeTaskId === undefined || candidate.id === activeTaskId);
 			if (!task) return;
-			if (
-				!unsafeNoSandbox &&
-				process.env.KARISSA_UNATTENDED_SANDBOX !== "1" &&
-				task.constraints.unattendedApproved !== true
-			) {
+			if (!unsafeNoSandbox && process.env.KARISSA_UNATTENDED_SANDBOX !== "1") {
 				if (task.state === "queued") {
 					store.transitionTask(task.id, "paused", "sandbox_required");
 					store.appendTaskEvent(task.id, "SecurityPolicyDenied", {
@@ -121,6 +120,7 @@ async function serve(agentDir: string, unsafeNoSandbox: boolean): Promise<void> 
 			}
 			const agent = store.listRunnableAgents(task.id, 4)[0];
 			if (!agent || workers.has(agent.id)) return;
+			const executionContext = resolveAgentExecutionContext(store, task.id, agent.id);
 			const logDir = join(agentDir, "tasks", task.id);
 			mkdirSync(logDir, { recursive: true, mode: 0o700 });
 			const logFd = openSync(join(logDir, "daemon.log"), "a", 0o600);
@@ -129,10 +129,14 @@ async function serve(agentDir: string, unsafeNoSandbox: boolean): Promise<void> 
 					? [cliEntry, "task", "run", task.id, "--print"]
 					: [cliEntry, "task", "agent", "run", task.id, agent.id, "--print"];
 			const child = spawn(process.execPath, workerArgs, {
-				cwd: task.workspaceRoot,
-				detached: false,
+				cwd: executionContext.canonicalWorkspaceRoot,
+				detached: true,
 				stdio: ["ignore", logFd, logFd],
-				env: { ...process.env, KARISSA_DAEMON_WORKER: "1" },
+				env: {
+					...process.env,
+					KARISSA_DAEMON_WORKER: "1",
+					...(unsafeNoSandbox ? { KARISSA_UNSAFE_NO_SANDBOX: "1" } : {}),
+				},
 			});
 			closeSync(logFd);
 			workers.set(agent.id, { child, taskId: task.id });
@@ -165,13 +169,14 @@ async function serve(agentDir: string, unsafeNoSandbox: boolean): Promise<void> 
 			try {
 				command = (JSON.parse(input.trim()) as { command?: string }).command;
 			} catch {
-				socket.end(JSON.stringify({ ok: false, message: "invalid request" }));
+				socket.end(JSON.stringify({ schemaVersion: 1, ok: false, message: "invalid request" }));
 				return;
 			}
 			if (command === "status" || command === "wake") {
 				void schedule();
 				socket.end(
 					JSON.stringify({
+						schemaVersion: 1,
 						ok: true,
 						pid: process.pid,
 						runningTaskIds: [...new Set([...workers.values()].map((worker) => worker.taskId))],
@@ -179,10 +184,12 @@ async function serve(agentDir: string, unsafeNoSandbox: boolean): Promise<void> 
 				);
 			} else if (command === "stop") {
 				stopping = true;
-				socket.end(JSON.stringify({ ok: true, pid: process.pid, message: "stopping" }));
+				socket.end(JSON.stringify({ schemaVersion: 1, ok: true, pid: process.pid, message: "stopping" }));
 				server.close();
 			} else {
-				socket.end(JSON.stringify({ ok: false, message: `unknown command: ${command ?? "missing"}` }));
+				socket.end(
+					JSON.stringify({ schemaVersion: 1, ok: false, message: `unknown command: ${command ?? "missing"}` }),
+				);
 			}
 		});
 	});
@@ -199,7 +206,13 @@ async function serve(agentDir: string, unsafeNoSandbox: boolean): Promise<void> 
 		await new Promise<void>((resolve) => server.once("close", resolve));
 		const deadline = Date.now() + 30_000;
 		while (workers.size > 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
-		for (const worker of workers.values()) worker.child.kill("SIGTERM");
+		for (const worker of workers.values()) {
+			try {
+				process.kill(-worker.child.pid!, "SIGTERM");
+			} catch {
+				worker.child.kill("SIGTERM");
+			}
+		}
 	} finally {
 		clearInterval(interval);
 		store.close();

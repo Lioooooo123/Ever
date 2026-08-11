@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentRecord } from "./types.ts";
 
 export type ToolEffect = "read_only" | "reconcilable_write" | "process" | "external_side_effect";
@@ -11,15 +12,33 @@ export interface NormalizedToolCall {
 
 export type AuthorizationDecision = { allowed: true } | { allowed: false; code: string; reason: string };
 
+export interface ToolExecutionContext {
+	sandboxAvailable: boolean;
+	unattended: boolean;
+	unsafeNoSandbox?: boolean;
+}
+
+function canonicalize(path: string): string {
+	let existing = resolve(path);
+	const suffix: string[] = [];
+	while (!existsSync(existing)) {
+		const parent = dirname(existing);
+		if (parent === existing) break;
+		suffix.unshift(existing.slice(parent.length + (parent.endsWith("/") ? 0 : 1)));
+		existing = parent;
+	}
+	return resolve(realpathSync(existing), ...suffix);
+}
+
 function isInside(path: string, root: string): boolean {
-	const resolvedPath = resolve(path);
-	const resolvedRoot = resolve(root);
+	const resolvedPath = canonicalize(path);
+	const resolvedRoot = realpathSync(root);
 	const child = relative(resolvedRoot, resolvedPath);
 	return child === "" || (!child.startsWith("..") && !isAbsolute(child));
 }
 
 export class ExecutionPolicy {
-	authorizeTool(agent: AgentRecord, call: NormalizedToolCall, sandboxAvailable: boolean): AuthorizationDecision {
+	authorizeTool(agent: AgentRecord, call: NormalizedToolCall, context: ToolExecutionContext): AuthorizationDecision {
 		if (!agent.toolPolicy.allowedTools.includes(call.name)) {
 			return { allowed: false, code: "tool_not_allowed", reason: `${call.name} is outside the agent tool policy` };
 		}
@@ -33,8 +52,20 @@ export class ExecutionPolicy {
 				reason: "Read-only agents cannot execute side-effecting tools",
 			};
 		}
-		if (agent.toolPolicy.sandboxRequired && !sandboxAvailable) {
+		if (agent.toolPolicy.sandboxRequired && !context.sandboxAvailable) {
 			return { allowed: false, code: "sandbox_required", reason: "The agent policy requires an execution sandbox" };
+		}
+		if (
+			context.unattended &&
+			call.effect !== "read_only" &&
+			!context.sandboxAvailable &&
+			context.unsafeNoSandbox !== true
+		) {
+			return {
+				allowed: false,
+				code: "unattended_sandbox_required",
+				reason: "Unattended side-effecting tools require an execution sandbox",
+			};
 		}
 		return { allowed: true };
 	}

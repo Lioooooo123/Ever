@@ -52,8 +52,14 @@ export async function submitAsyncTask(input: {
 	agentDir: string;
 	cwd: string;
 	goal: string;
+	title?: string;
 	verificationCommand?: string;
+	verificationCwd?: string;
+	verificationTimeoutSeconds?: number;
 	maxTurns?: number;
+	maxWallTimeMinutes?: number;
+	maxCostUsd?: number;
+	model?: { provider: string; id: string };
 }): Promise<TaskRecord> {
 	const workspace = workspaceIdentity(input.cwd);
 	const store = SqliteTaskStore.open({
@@ -74,17 +80,21 @@ export async function submitAsyncTask(input: {
 				id: "verification-command",
 				kind: "command",
 				command: input.verificationCommand,
-				cwd: ".",
-				timeoutSeconds: 600,
+				cwd: input.verificationCwd ?? ".",
+				timeoutSeconds: input.verificationTimeoutSeconds ?? 600,
 			});
 		}
 		const controller = new TaskController(store);
 		const task = controller.create({
-			title: input.goal.split("\n", 1)[0]!.slice(0, 80),
+			title: input.title ?? input.goal.split("\n", 1)[0]!.slice(0, 80),
 			goal: input.goal,
 			acceptance,
-			constraints: { unattendedApproved: true },
-			budget: { maxTurns: input.maxTurns ?? 200, maxWallTimeMinutes: 240 },
+			constraints: { unattendedApproved: true, ...(input.model === undefined ? {} : { model: input.model }) },
+			budget: {
+				maxTurns: input.maxTurns ?? 200,
+				maxWallTimeMinutes: input.maxWallTimeMinutes ?? 240,
+				...(input.maxCostUsd === undefined ? {} : { maxCostUsd: input.maxCostUsd, mode: "hard" }),
+			},
 			workspaceRoot: workspace.root,
 			workspaceFingerprint: workspace.fingerprint,
 			...(workspace.head ? { initialGitHead: workspace.head } : {}),
