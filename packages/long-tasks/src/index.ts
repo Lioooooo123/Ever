@@ -1,5 +1,6 @@
 export * from "./acceptance.ts";
 export * from "./context-builder.ts";
+export * from "./continuation-controller.ts";
 export * from "./controller.ts";
 export * from "./coordinator.ts";
 export * from "./execution-context.ts";
@@ -7,6 +8,7 @@ export * from "./execution-policy.ts";
 export * from "./notifications.ts";
 export * from "./recovery.ts";
 export * from "./runtime-snapshot.ts";
+export * from "./schedule-engine.ts";
 export * from "./scheduler.ts";
 export * from "./store.ts";
 export * from "./types.ts";

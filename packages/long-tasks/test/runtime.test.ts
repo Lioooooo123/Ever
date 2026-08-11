@@ -3,6 +3,7 @@ import {
 	compareRuntimeSnapshots,
 	createInMemoryTaskStore,
 	DurableAgentCoordinator,
+	defaultToolEffect,
 	ExecutionPolicy,
 	RecoveryEngine,
 	type RuntimeSnapshot,
@@ -202,6 +203,10 @@ describe("runtime and policy", () => {
 	});
 
 	it("enforces read-only tools and retains mandatory context fields", () => {
+		expect(defaultToolEffect("read")).toBe("read_only");
+		expect(defaultToolEffect("write")).toBe("reconcilable_write");
+		expect(defaultToolEffect("bash")).toBe("process");
+		expect(defaultToolEffect("send_message")).toBe("external_side_effect");
 		const { store, task, main } = createTask();
 		const policyRoot = process.cwd();
 		const policyPath = join(policyRoot, "a.ts");

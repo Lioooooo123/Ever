@@ -7,6 +7,7 @@ import {
 	AcceptanceRunner,
 	type AgentRecord,
 	DurableAgentCoordinator,
+	defaultToolEffect,
 	EvidenceRefSchema,
 	ExecutionPolicy,
 	SqliteTaskStore,
@@ -97,14 +98,7 @@ export default function longTasksExtension(pi: ExtensionAPI): void {
 		const store = openStore();
 		try {
 			const actor = resolveActor(store, taskId);
-			const effect =
-				event.toolName === "bash"
-					? "process"
-					: ["edit", "write"].includes(event.toolName)
-						? "reconcilable_write"
-						: ["read", "grep", "find", "ls"].includes(event.toolName)
-							? "read_only"
-							: "external_side_effect";
+			const effect = defaultToolEffect(event.toolName);
 			const input = event.input as Record<string, unknown>;
 			const paths = [input.path, input.cwd].filter((value): value is string => typeof value === "string");
 			const decision = new ExecutionPolicy().authorizeTool(
@@ -180,7 +174,24 @@ export default function longTasksExtension(pi: ExtensionAPI): void {
 					return textResult({ accepted: true, state: store.requireTask(taskId).state });
 				}
 				if (params.action === "wait") {
-					if (params.resumeAt) store.setNextWakeAt(taskId, params.resumeAt);
+					if (params.waitKind === "time" && !params.resumeAt) throw new Error("Timed waits require resumeAt");
+					if (params.resumeAt) {
+						store.setNextWakeAt(taskId, params.resumeAt);
+						store.createSchedule({
+							taskId,
+							agentId: actor.id,
+							kind: "once",
+							expression: params.resumeAt,
+							timezone: "UTC",
+							nextRunAt: params.resumeAt,
+							payload: {
+								heartbeat: false,
+								hasAction: true,
+								prompt: `Resume the durable Task after waiting: ${params.reason}`,
+								waitKind: params.waitKind,
+							},
+						});
+					}
 					const state = params.waitKind === "user" ? "waiting_input" : "waiting_external";
 					return textResult({ accepted: true, state: store.transitionTask(taskId, state, params.reason).state });
 				}
@@ -201,9 +212,11 @@ export default function longTasksExtension(pi: ExtensionAPI): void {
 					if (acceptance.failed.length > 0 || acceptance.pendingManual.length > 0) {
 						return textResult({ accepted: false, state: store.requireTask(taskId).state, acceptance });
 					}
-					const completed = controller.requestCompletion(taskId);
-					store.transitionAgent(actor.id, "completed", "task_completed");
-					return textResult({ accepted: true, state: completed.state });
+					return textResult({
+						accepted: true,
+						state: store.requireTask(taskId).state,
+						pending: "settled_turn_continuation_decision",
+					});
 				}
 				return textResult({ accepted: true, state: controller.fail(taskId, params.code).state });
 			} finally {

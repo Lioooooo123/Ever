@@ -66,6 +66,14 @@ export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 }
 
+export interface LongTaskContinuationSettings {
+	maxIdenticalProgressTurns?: number;
+	pauseAfterIdenticalProgressTurns?: number;
+	maxRepeatedFailureTurns?: number;
+	pauseAfterRepeatedFailureTurns?: number;
+	maxAutomaticContinuationTurnsPerAttempt?: number;
+}
+
 export interface LongTaskSettings {
 	enabled?: boolean;
 	maxConcurrentTasks?: number;
@@ -85,6 +93,13 @@ export interface LongTaskSettings {
 	unattendedMode?: "require-sandbox";
 	budgetMode?: "hard" | "soft";
 	requireExplicitUnattendedBudget?: boolean;
+	workerHeartbeatSeconds?: number;
+	workerLeaseSeconds?: number;
+	eventReplayMaxCount?: number;
+	eventReplayMaxBytes?: number;
+	snapshotChunkBytes?: number;
+	commandJournalRetentionDays?: number;
+	continuation?: LongTaskContinuationSettings;
 }
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
@@ -847,7 +862,9 @@ export class SettingsManager {
 		};
 	}
 
-	getLongTaskSettings(): Required<LongTaskSettings> {
+	getLongTaskSettings(): Omit<Required<LongTaskSettings>, "continuation"> & {
+		continuation: Required<LongTaskContinuationSettings>;
+	} {
 		return {
 			enabled: this.settings.longTasks?.enabled ?? true,
 			maxConcurrentTasks: this.settings.longTasks?.maxConcurrentTasks ?? 1,
@@ -867,6 +884,22 @@ export class SettingsManager {
 			unattendedMode: this.settings.longTasks?.unattendedMode ?? "require-sandbox",
 			budgetMode: this.settings.longTasks?.budgetMode ?? "hard",
 			requireExplicitUnattendedBudget: this.settings.longTasks?.requireExplicitUnattendedBudget ?? true,
+			workerHeartbeatSeconds:
+				this.settings.longTasks?.workerHeartbeatSeconds ?? this.settings.longTasks?.heartbeatSeconds ?? 5,
+			workerLeaseSeconds: this.settings.longTasks?.workerLeaseSeconds ?? this.settings.longTasks?.leaseSeconds ?? 30,
+			eventReplayMaxCount: this.settings.longTasks?.eventReplayMaxCount ?? 10_000,
+			eventReplayMaxBytes: this.settings.longTasks?.eventReplayMaxBytes ?? 16_777_216,
+			snapshotChunkBytes: this.settings.longTasks?.snapshotChunkBytes ?? 524_288,
+			commandJournalRetentionDays: this.settings.longTasks?.commandJournalRetentionDays ?? 7,
+			continuation: {
+				maxIdenticalProgressTurns: this.settings.longTasks?.continuation?.maxIdenticalProgressTurns ?? 2,
+				pauseAfterIdenticalProgressTurns:
+					this.settings.longTasks?.continuation?.pauseAfterIdenticalProgressTurns ?? 3,
+				maxRepeatedFailureTurns: this.settings.longTasks?.continuation?.maxRepeatedFailureTurns ?? 2,
+				pauseAfterRepeatedFailureTurns: this.settings.longTasks?.continuation?.pauseAfterRepeatedFailureTurns ?? 3,
+				maxAutomaticContinuationTurnsPerAttempt:
+					this.settings.longTasks?.continuation?.maxAutomaticContinuationTurnsPerAttempt ?? 25,
+			},
 		};
 	}
 

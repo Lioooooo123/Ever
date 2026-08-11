@@ -63,6 +63,7 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
+import { runResidentWorkerFromEnvironment } from "./daemon/worker-host.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
@@ -590,8 +591,9 @@ export async function main(args: string[], options?: MainOptions) {
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
 	const commandSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
-	const longTasksEnabled = commandSettingsManager.getLongTaskSettings().enabled;
-	if (await handleDaemonCommand(args, agentDir, longTasksEnabled)) {
+	const longTaskSettings = commandSettingsManager.getLongTaskSettings();
+	const longTasksEnabled = longTaskSettings.enabled;
+	if (await handleDaemonCommand(args, agentDir, longTasksEnabled, longTaskSettings)) {
 		return;
 	}
 	if (await handleTaskCommand(args, agentDir, cwd, longTasksEnabled)) {
@@ -941,10 +943,13 @@ export async function main(args: string[], options?: MainOptions) {
 				agentDir,
 				process.env.KARISSA_TASK_RUN_ID,
 				process.env.KARISSA_ACCEPT_RUNTIME_DRIFT === "1",
+				longTaskSettings.continuation,
 			)
 		: undefined;
 	try {
-		if (appMode === "rpc") {
+		if (process.env.KARISSA_RESIDENT_WORKER === "1") {
+			await runResidentWorkerFromEnvironment(runtime, initialMessage, initialImages);
+		} else if (appMode === "rpc") {
 			printTimings();
 			await runRpcMode(runtime);
 		} else if (appMode === "interactive") {
