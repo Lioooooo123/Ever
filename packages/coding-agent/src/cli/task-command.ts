@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
-import { SqliteTaskStore, TaskController, type TaskRecord } from "@karissa/long-tasks";
+import { ScheduleEngine, SqliteTaskStore, TaskController, type TaskRecord } from "@karissa/long-tasks";
 import chalk from "chalk";
 import { requestDaemon, startDaemon } from "./daemon-command.ts";
 import { submitAsyncTask } from "./karissa-command.ts";
@@ -80,6 +80,11 @@ function printTaskHelp(): void {
   karissa task run <task-id> [--accept-runtime-drift]
   karissa task show <task-id>
   karissa task pause|resume|cancel <task-id>
+  karissa task stop <task-id> [--agent <agent-id>]
+  karissa task schedule add <task-id> --cron <expr> --timezone <iana>
+  karissa task schedule add <task-id> --interval <duration>
+  karissa task schedule ls <task-id>
+  karissa task schedule pause|resume|cancel <schedule-id>
   karissa task events <task-id> [--json]
   karissa task logs <task-id> [--follow]`);
 }
@@ -133,6 +138,7 @@ export async function handleTaskCommand(
 		artifactsRoot: join(agentDir, "tasks"),
 	});
 	const controller = new TaskController(store);
+	const scheduleEngine = new ScheduleEngine(store);
 	try {
 		switch (command) {
 			case "create": {
@@ -216,15 +222,52 @@ export async function handleTaskCommand(
 				break;
 			}
 			case "schedule": {
-				const task = resolveTask(store, args[2] ?? "");
-				const at = requiredOption(args, "--at");
-				if (!Number.isFinite(Date.parse(at))) throw new Error("--at must be an ISO date-time");
-				printTask(store.setNextWakeAt(task.id, new Date(at).toISOString()));
-				try {
-					await requestDaemon(agentDir, { command: "wake", taskId: task.id });
-				} catch {
-					// The persisted wake condition remains valid when the daemon is offline.
+				const action = args[2] ?? "";
+				if (action === "add") {
+					const task = resolveTask(store, args[3] ?? "");
+					const timezone = option(args, "--timezone") ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+					const cron = option(args, "--cron");
+					const interval = option(args, "--interval");
+					const at = option(args, "--at");
+					const selected = [cron, interval, at].filter((value) => value !== undefined);
+					if (selected.length !== 1)
+						throw new Error("schedule add requires exactly one of --cron, --interval, or --at");
+					const expression = cron ?? interval ?? at;
+					if (!expression) throw new Error("Schedule expression is required");
+					const schedule = scheduleEngine.create({
+						taskId: task.id,
+						...(option(args, "--agent") ? { agentId: requiredOption(args, "--agent") } : {}),
+						kind: cron ? "cron" : interval ? "interval" : "once",
+						expression,
+						timezone,
+						payload: { prompt: option(args, "--prompt") ?? "Evaluate the scheduled durable Task." },
+					});
+					console.log(JSON.stringify(schedule));
+				} else if (action === "ls") {
+					const task = resolveTask(store, args[3] ?? "");
+					for (const schedule of store.listSchedules(task.id)) console.log(JSON.stringify(schedule));
+				} else if (action === "pause" || action === "resume" || action === "cancel") {
+					const state = action === "pause" ? "paused" : action === "resume" ? "active" : "cancelled";
+					console.log(JSON.stringify(store.transitionSchedule(args[3] ?? "", state)));
+				} else {
+					throw new Error("Expected: karissa task schedule <add|ls|pause|resume|cancel>");
 				}
+				try {
+					await requestDaemon(agentDir, { command: "wake" });
+				} catch {
+					// The persisted schedule remains valid when the daemon is offline.
+				}
+				break;
+			}
+			case "stop": {
+				const task = resolveTask(store, args[2] ?? "");
+				const response = await requestDaemon(agentDir, {
+					command: "stop-agent",
+					taskId: task.id,
+					...(option(args, "--agent") ? { agentId: requiredOption(args, "--agent") } : {}),
+				});
+				if (!response.ok) throw new Error(response.message ?? "Daemon rejected Agent stop");
+				console.log(JSON.stringify(response));
 				break;
 			}
 			case "logs": {

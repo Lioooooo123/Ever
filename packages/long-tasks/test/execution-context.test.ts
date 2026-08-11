@@ -18,7 +18,6 @@ describe("agent execution context", () => {
 		const isolated = join(root, "isolated");
 		mkdirSync(primary);
 		mkdirSync(isolated);
-
 		const store = createInMemoryTaskStore();
 		const controller = new TaskController(store);
 		const task = controller.create({
@@ -44,7 +43,6 @@ describe("agent execution context", () => {
 			required: true,
 			workspaceRoot: isolated,
 		});
-
 		expect(resolveAgentExecutionContext(store, task.id).canonicalWorkspaceRoot).toBe(realpathSync(primary));
 		expect(resolveAgentExecutionContext(store, task.id, delegated.agentId)).toMatchObject({
 			canonicalWorkspaceRoot: realpathSync(isolated),

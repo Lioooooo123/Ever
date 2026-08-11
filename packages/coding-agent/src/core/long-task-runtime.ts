@@ -3,7 +3,10 @@ import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import {
 	type AgentLease,
+	ContinuationController,
+	type ContinuationPolicy,
 	compareRuntimeSnapshots,
+	defaultToolEffect,
 	type InboxMessage,
 	type Progress,
 	RecoveryEngine,
@@ -65,15 +68,6 @@ function executionExists(pid: number, processGroup: boolean): boolean {
 	return processExists(processGroup ? -pid : pid);
 }
 
-function stopExecution(pid: number, processGroup: boolean): boolean {
-	try {
-		process.kill(processGroup ? -pid : pid, "SIGTERM");
-		return true;
-	} catch (error) {
-		return error instanceof Error && "code" in error && error.code === "ESRCH";
-	}
-}
-
 export async function recoverExpiredLongTaskExecutions(store: SqliteTaskStore): Promise<RecoveryResult[]> {
 	const recovery = new RecoveryEngine(store, {
 		async stopExecution(execution) {
@@ -81,13 +75,10 @@ export async function recoverExpiredLongTaskExecutions(store: SqliteTaskStore): 
 			if (execution.pid === undefined) return false;
 			const processGroup = execution.workerId.startsWith("daemon:");
 			if (!executionExists(execution.pid, processGroup)) return true;
-			if (execution.pid === process.pid) return false;
-			if (!stopExecution(execution.pid, processGroup)) return false;
-			const deadline = Date.now() + 5_000;
-			while (executionExists(execution.pid, processGroup) && Date.now() < deadline) {
-				await new Promise((resolve) => setTimeout(resolve, 50));
-			}
-			return !executionExists(execution.pid, processGroup);
+			// A numeric PID can be reused after its original process exits. Without a
+			// non-reusable process handle, fail closed instead of signaling a process
+			// whose identity cannot be proven.
+			return false;
 		},
 	});
 	return recovery.recoverExpired();
@@ -117,6 +108,7 @@ export async function attachLongTaskRuntime(
 	agentDir: string,
 	taskId: string,
 	acceptRuntimeDrift: boolean,
+	continuationPolicy: ContinuationPolicy,
 ): Promise<LongTaskRuntimeHandle> {
 	const store = SqliteTaskStore.open({
 		databasePath: join(agentDir, "long-tasks.sqlite"),
@@ -166,7 +158,18 @@ export async function attachLongTaskRuntime(
 	}
 
 	const workerKind = process.env.KARISSA_DAEMON_WORKER === "1" ? "daemon" : "foreground";
-	let lease: AgentLease = store.acquireLease(actor.id, `${workerKind}:${process.pid}`, randomUUID(), 30, {
+	const leaseSeconds = Number(process.env.KARISSA_WORKER_LEASE_SECONDS ?? 30);
+	const heartbeatSeconds = Number(process.env.KARISSA_WORKER_HEARTBEAT_SECONDS ?? 5);
+	if (
+		!Number.isFinite(leaseSeconds) ||
+		leaseSeconds <= 0 ||
+		!Number.isFinite(heartbeatSeconds) ||
+		heartbeatSeconds <= 0
+	) {
+		store.close();
+		throw new Error("Invalid long-task Worker lease or heartbeat configuration");
+	}
+	let lease: AgentLease = store.acquireLease(actor.id, `${workerKind}:${process.pid}`, randomUUID(), leaseSeconds, {
 		pid: process.pid,
 	});
 	const attemptId = store.createAttempt(actor.id, runtime.session.sessionId, snapshot, snapshotSha256);
@@ -205,7 +208,7 @@ export async function attachLongTaskRuntime(
 			})()
 		: undefined;
 
-	async function commitSessionCheckpoint(beforeCompaction: boolean): Promise<void> {
+	async function commitSessionCheckpoint(beforeCompaction: boolean) {
 		const update = store.getPendingCheckpointUpdate(taskId, actor.id);
 		if (update) {
 			progress = {
@@ -233,6 +236,7 @@ export async function attachLongTaskRuntime(
 		});
 		progress = { ...checkpointProgress, consumedMessageIds: [] };
 		consumedMessageIds.clear();
+		return sessionCheckpoint;
 	}
 
 	preCompactionCheckpoints.set(runtime.session.sessionId, async () => {
@@ -267,12 +271,12 @@ export async function attachLongTaskRuntime(
 				void runtime.session.abort();
 				return;
 			}
-			lease = store.renewLease(lease);
+			lease = store.renewLease(lease, leaseSeconds);
 		} catch (error) {
 			heartbeatError = error instanceof Error ? error : new Error(String(error));
 			void runtime.session.abort();
 		}
-	}, 5_000);
+	}, heartbeatSeconds * 1_000);
 
 	async function handleEvent(event: AgentSessionEvent): Promise<void> {
 		if (event.type === "agent_start") {
@@ -284,12 +288,7 @@ export async function attachLongTaskRuntime(
 			);
 		} else if (event.type === "tool_execution_start") {
 			const inputSha256 = sha256(JSON.stringify(event.args));
-			const effect =
-				event.toolName === "bash"
-					? "process"
-					: ["edit", "write"].includes(event.toolName)
-						? "reconcilable_write"
-						: "read_only";
+			const effect = defaultToolEffect(event.toolName);
 			store.appendAgentEvent(lease, attemptId, "ToolPlanned", {
 				toolCallId: event.toolCallId,
 				toolName: event.toolName,
@@ -326,8 +325,34 @@ export async function attachLongTaskRuntime(
 				store.settleBudget(reservationId, index === 0 ? actualTurnCostUsd : 0);
 			}
 			actualTurnCostUsd = 0;
-			await commitSessionCheckpoint(false);
-			lease = store.renewLease(lease);
+			const sessionCheckpoint = await commitSessionCheckpoint(false);
+			lease = store.renewLease(lease, leaseSeconds);
+			const continuation = new ContinuationController(store, continuationPolicy).evaluate({
+				lease,
+				attemptId,
+				settledTurnIndex: sessionCheckpoint.settledTurnIndex,
+				progress,
+			});
+			if (
+				!continuation.duplicate &&
+				continuation.decision.nextPrompt &&
+				process.env.KARISSA_RESIDENT_WORKER === "1"
+			) {
+				const prompt = continuation.decision.nextPrompt;
+				setTimeout(() => {
+					if (closed) return;
+					void runtime.session.prompt(prompt).catch((error) => {
+						store.appendTaskEvent(taskId, "ContinuationPromptFailed", {
+							decisionId: continuation.decision.id,
+							message: error instanceof Error ? error.message : String(error),
+							schemaVersion: 1,
+						});
+						const current = store.requireTask(taskId);
+						if (current.state === "running")
+							store.transitionTask(taskId, "waiting_external", "continuation_prompt_failed");
+					});
+				}, 0);
+			}
 		}
 	}
 

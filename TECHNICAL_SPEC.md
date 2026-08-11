@@ -1132,7 +1132,9 @@ daemon 使用本地 Unix socket 与 CLI 通信。socket 默认位于 `~/.pi/agen
 
 `pi daemon stop` 先停止接收新任务，等待正在执行的 Turn settled，写 checkpoint 后退出。超过 30 秒仍未 settled 时停止 worker，并按副作用恢复规则更新 Task。
 
-Phase 3 支持 daemon 进程重启后恢复，不负责开机自动启动。macOS launchd 和 Linux systemd user service 作为 Phase 4 单独交付。
+daemon 重启时，新的 Supervisor 从持久 owner secret 和 Worker descriptor 的旧 generation 派生一次性接管凭证；Worker 验证旧凭证后原子旋转到新 generation 凭证。旧 Supervisor 因凭证失效不能继续控制 Worker。descriptor、进程和私有 socket 任一项无法验证时保持 fail-closed。
+
+Phase 4 提供 macOS launchd user agent 和 Linux systemd user service。`daemon install` 写入服务定义并立即加载、启用；`daemon uninstall` 先停止和卸载服务再删除定义；`daemon doctor` 同时报告定义文件与服务管理器中的真实加载状态。
 
 ## 19. 等待与唤醒
 
@@ -1143,6 +1145,8 @@ Wake condition 支持三类：
 | `user_input` | 问题和目标 Task | CLI 或 TUI 回复 |
 | `time` | ISO 8601 时间 | scheduler 到期 |
 | `external` | provider、文件或扩展定义条件 | 对应 watcher 确认 |
+
+event schedule 使用 Task event 的单调 `seq` 作为持久游标。表达式为精确 event type 或 `*`；只消费 schedule 创建后的事件，且保留 `Schedule*` 为内部事件，避免通配 schedule 自触发。事件在投递前先持久 claim，Supervisor 重启后不会重复产生不确定副作用。
 
 外部 watcher 必须是显式注册的代码，模型不能提交任意轮询脚本作为系统 watcher。没有可用 watcher 时，Task 进入 `waiting_input`，提示用户手动恢复。
 
@@ -1323,6 +1327,8 @@ CLI 至少显示：
 Phase 2 额外要求主 Agent 并行委派两个只读 subagent 和一个隔离 worktree subagent。运行中分别重启主 Agent 和一个 subagent，确认消息没有丢失、重复副作用或跨工作区写入。
 
 Phase 3 额外要求 daemon 连续运行 8 小时，期间模拟 provider 超时、Agent worker 崩溃和 CLI 重连。
+
+`test:long-task-soak` 运行真实时钟 8 小时验收；普通定向测试会加速执行相同的 28,800 个一秒控制周期，并注入 provider timeout/recovery、Worker crash、Supervisor generation 轮换和 CLI reconnect。
 
 ## 25. 性能要求
 

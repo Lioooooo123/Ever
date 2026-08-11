@@ -34,6 +34,106 @@ export type AgentState = (typeof AGENT_STATES)[number];
 export type AgentKind = "main" | "subagent";
 export type WorkspaceMode = "read_only_shared" | "isolated_worktree" | "primary";
 
+export type DaemonCommandState = "received" | "dispatched" | "completed" | "uncertain" | "acknowledged";
+
+export interface DaemonCommandRecord {
+	clientId: string;
+	commandId: string;
+	commandType: string;
+	payloadSha256: string;
+	payload: Record<string, unknown>;
+	state: DaemonCommandState;
+	result?: Record<string, unknown>;
+	error?: string;
+	receivedAt: string;
+	dispatchedAt?: string;
+	completedAt?: string;
+	acknowledgedAt?: string;
+}
+
+export interface ReceiveDaemonCommandInput {
+	clientId: string;
+	commandId: string;
+	commandType: string;
+	payloadSha256: string;
+	payload: Record<string, unknown>;
+}
+
+export type ContinuationAction =
+	| "continue"
+	| "replan"
+	| "wait_user"
+	| "wait_external"
+	| "pause_budget"
+	| "pause_no_progress"
+	| "complete"
+	| "fail";
+
+export interface ContinuationDecision {
+	id: string;
+	taskId: string;
+	agentId: string;
+	attemptId: string;
+	settledTurnIndex: number;
+	action: ContinuationAction;
+	reasonCode: string;
+	reason: string;
+	progressFingerprint: string;
+	nextPrompt?: string;
+	nextWakeAt?: string;
+	createdAt: string;
+}
+
+export interface ContinuationPolicy {
+	maxIdenticalProgressTurns: number;
+	pauseAfterIdenticalProgressTurns: number;
+	maxRepeatedFailureTurns: number;
+	pauseAfterRepeatedFailureTurns: number;
+	maxAutomaticContinuationTurnsPerAttempt: number;
+}
+
+export const DEFAULT_CONTINUATION_POLICY: ContinuationPolicy = {
+	maxIdenticalProgressTurns: 2,
+	pauseAfterIdenticalProgressTurns: 3,
+	maxRepeatedFailureTurns: 2,
+	pauseAfterRepeatedFailureTurns: 3,
+	maxAutomaticContinuationTurnsPerAttempt: 25,
+};
+
+export type ScheduleKind = "once" | "interval" | "cron" | "event";
+export type ScheduleState = "active" | "paused" | "completed" | "cancelled";
+
+export interface ScheduleRecord {
+	id: string;
+	taskId: string;
+	agentId?: string;
+	kind: ScheduleKind;
+	expression: string;
+	timezone: string;
+	payload: Record<string, unknown>;
+	state: ScheduleState;
+	nextRunAt?: string;
+	lastClaimId?: string;
+	lastClaimedAt?: string;
+	lastDeliveredAt?: string;
+	lastEventSeq: number;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface ScheduleClaim {
+	schedule: ScheduleRecord;
+	claimId: string;
+	dueAt: string;
+	missedCount: number;
+	claimedAt: string;
+}
+
+export interface ScheduleEventTrigger {
+	schedule: ScheduleRecord;
+	event: TaskEvent;
+}
+
 export const AcceptanceCriterionSchema = Type.Union([
 	Type.Object({
 		id: Type.String({ minLength: 1 }),

@@ -12,9 +12,15 @@ import {
 	assertSchema,
 	type Budget,
 	type CheckpointRecord,
+	type ContinuationDecision,
 	type CoordinationResult,
 	type CreateTaskInput,
+	type DaemonCommandRecord,
 	type InboxMessage,
+	type ReceiveDaemonCommandInput,
+	type ScheduleClaim,
+	type ScheduleEventTrigger,
+	type ScheduleRecord,
 	type StaleExecution,
 	type TaskEvent,
 	type TaskNotification,
@@ -26,7 +32,7 @@ import {
 	type WorkspaceSnapshot,
 } from "./types.ts";
 
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 
 const TASK_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
 	draft: ["queued", "cancelled"],
@@ -145,6 +151,54 @@ interface LeaseRow {
 	sandbox_id: string | null;
 }
 
+interface DaemonCommandRow {
+	client_id: string;
+	command_id: string;
+	command_type: string;
+	payload_sha256: string;
+	payload_json: string;
+	state: DaemonCommandRecord["state"];
+	result_json: string | null;
+	error: string | null;
+	received_at: string;
+	dispatched_at: string | null;
+	completed_at: string | null;
+	acknowledged_at: string | null;
+}
+
+interface ContinuationDecisionRow {
+	id: string;
+	task_id: string;
+	agent_id: string;
+	attempt_id: string;
+	settled_turn_index: number;
+	action: ContinuationDecision["action"];
+	reason_code: string;
+	reason: string;
+	progress_fingerprint: string;
+	next_prompt: string | null;
+	next_wake_at: string | null;
+	created_at: string;
+}
+
+interface ScheduleRow {
+	id: string;
+	task_id: string;
+	agent_id: string | null;
+	kind: ScheduleRecord["kind"];
+	expression: string;
+	timezone: string;
+	payload_json: string;
+	state: ScheduleRecord["state"];
+	next_run_at: string | null;
+	last_claim_id: string | null;
+	last_claimed_at: string | null;
+	last_delivered_at: string | null;
+	last_event_seq: number;
+	created_at: string;
+	updated_at: string;
+}
+
 function parseObject(text: string, label: string): Record<string, unknown> {
 	let value: unknown;
 	try {
@@ -231,6 +285,60 @@ function eventFromRow(row: EventRow): TaskEvent {
 	};
 }
 
+function daemonCommandFromRow(row: DaemonCommandRow): DaemonCommandRecord {
+	return {
+		clientId: row.client_id,
+		commandId: row.command_id,
+		commandType: row.command_type,
+		payloadSha256: row.payload_sha256,
+		payload: parseObject(row.payload_json, "daemon command payload"),
+		state: row.state,
+		...(row.result_json === null ? {} : { result: parseObject(row.result_json, "daemon command result") }),
+		...(row.error === null ? {} : { error: row.error }),
+		receivedAt: row.received_at,
+		...(row.dispatched_at === null ? {} : { dispatchedAt: row.dispatched_at }),
+		...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+		...(row.acknowledged_at === null ? {} : { acknowledgedAt: row.acknowledged_at }),
+	};
+}
+
+function continuationDecisionFromRow(row: ContinuationDecisionRow): ContinuationDecision {
+	return {
+		id: row.id,
+		taskId: row.task_id,
+		agentId: row.agent_id,
+		attemptId: row.attempt_id,
+		settledTurnIndex: row.settled_turn_index,
+		action: row.action,
+		reasonCode: row.reason_code,
+		reason: row.reason,
+		progressFingerprint: row.progress_fingerprint,
+		...(row.next_prompt === null ? {} : { nextPrompt: row.next_prompt }),
+		...(row.next_wake_at === null ? {} : { nextWakeAt: row.next_wake_at }),
+		createdAt: row.created_at,
+	};
+}
+
+function scheduleFromRow(row: ScheduleRow): ScheduleRecord {
+	return {
+		id: row.id,
+		taskId: row.task_id,
+		...(row.agent_id === null ? {} : { agentId: row.agent_id }),
+		kind: row.kind,
+		expression: row.expression,
+		timezone: row.timezone,
+		payload: parseObject(row.payload_json, "schedule payload"),
+		state: row.state,
+		...(row.next_run_at === null ? {} : { nextRunAt: row.next_run_at }),
+		...(row.last_claim_id === null ? {} : { lastClaimId: row.last_claim_id }),
+		...(row.last_claimed_at === null ? {} : { lastClaimedAt: row.last_claimed_at }),
+		...(row.last_delivered_at === null ? {} : { lastDeliveredAt: row.last_delivered_at }),
+		lastEventSeq: row.last_event_seq,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+	};
+}
+
 function executeTransaction<T>(database: DatabaseSync, operation: () => T): T {
 	database.exec("BEGIN IMMEDIATE");
 	try {
@@ -248,7 +356,7 @@ function executeTransaction<T>(database: DatabaseSync, operation: () => T): T {
 }
 
 function migrationSql(version: number): string {
-	const names = { 1: "long_tasks", 2: "multi_agent", 3: "notifications" } as const;
+	const names = { 1: "long_tasks", 2: "multi_agent", 3: "notifications", 4: "control_plane" } as const;
 	return readFileSync(
 		fileURLToPath(new URL(`./migrations/00${version}_${names[version as keyof typeof names]}.sql`, import.meta.url)),
 		"utf8",
@@ -310,6 +418,460 @@ export class SqliteTaskStore {
 
 	close(): void {
 		this.database.close();
+	}
+
+	receiveDaemonCommand(input: ReceiveDaemonCommandInput): { command: DaemonCommandRecord; duplicate: boolean } {
+		if (
+			input.clientId.trim() === "" ||
+			input.commandId.trim() === "" ||
+			input.commandType.trim() === "" ||
+			!/^[a-f0-9]{64}$/.test(input.payloadSha256)
+		) {
+			throw new TypeError("Invalid daemon command identity");
+		}
+		return executeTransaction(this.database, () => {
+			const existing = this.getDaemonCommand(input.clientId, input.commandId);
+			if (existing) {
+				if (existing.payloadSha256 !== input.payloadSha256 || existing.commandType !== input.commandType) {
+					throw new Error(`Daemon command identity conflict: ${input.clientId}/${input.commandId}`);
+				}
+				return { command: existing, duplicate: true };
+			}
+			const now = this.now().toISOString();
+			this.database
+				.prepare(
+					`INSERT INTO daemon_commands
+					 (client_id, command_id, command_type, payload_sha256, payload_json, state, received_at)
+					 VALUES (?, ?, ?, ?, ?, 'received', ?)`,
+				)
+				.run(
+					input.clientId,
+					input.commandId,
+					input.commandType,
+					input.payloadSha256,
+					JSON.stringify(input.payload),
+					now,
+				);
+			return { command: this.requireDaemonCommand(input.clientId, input.commandId), duplicate: false };
+		});
+	}
+
+	getDaemonCommand(clientId: string, commandId: string): DaemonCommandRecord | undefined {
+		const row = this.database
+			.prepare("SELECT * FROM daemon_commands WHERE client_id = ? AND command_id = ?")
+			.get(clientId, commandId) as DaemonCommandRow | undefined;
+		return row ? daemonCommandFromRow(row) : undefined;
+	}
+
+	markDaemonCommandDispatched(clientId: string, commandId: string): DaemonCommandRecord {
+		const result = this.database
+			.prepare(
+				"UPDATE daemon_commands SET state = 'dispatched', dispatched_at = ? WHERE client_id = ? AND command_id = ? AND state = 'received'",
+			)
+			.run(this.now().toISOString(), clientId, commandId);
+		if (Number(result.changes) !== 1) throw new Error(`Daemon command is not ready: ${clientId}/${commandId}`);
+		return this.requireDaemonCommand(clientId, commandId);
+	}
+
+	completeDaemonCommand(clientId: string, commandId: string, result: Record<string, unknown>): DaemonCommandRecord {
+		const update = this.database
+			.prepare(
+				`UPDATE daemon_commands SET state = 'completed', result_json = ?, error = NULL, completed_at = ?
+				 WHERE client_id = ? AND command_id = ? AND state = 'dispatched'`,
+			)
+			.run(JSON.stringify(result), this.now().toISOString(), clientId, commandId);
+		if (Number(update.changes) !== 1) throw new Error(`Daemon command is not dispatched: ${clientId}/${commandId}`);
+		return this.requireDaemonCommand(clientId, commandId);
+	}
+
+	markDaemonCommandUncertain(clientId: string, commandId: string, error?: string): DaemonCommandRecord {
+		const result = this.database
+			.prepare(
+				`UPDATE daemon_commands SET state = 'uncertain', error = ?
+				 WHERE client_id = ? AND command_id = ? AND state IN ('received', 'dispatched')`,
+			)
+			.run(error?.slice(0, 1000) ?? null, clientId, commandId);
+		if (Number(result.changes) !== 1)
+			throw new Error(`Daemon command cannot become uncertain: ${clientId}/${commandId}`);
+		return this.requireDaemonCommand(clientId, commandId);
+	}
+
+	acknowledgeDaemonCommand(clientId: string, commandId: string): DaemonCommandRecord {
+		const result = this.database
+			.prepare(
+				`UPDATE daemon_commands SET state = 'acknowledged', acknowledged_at = ?
+				 WHERE client_id = ? AND command_id = ? AND state IN ('completed', 'uncertain')`,
+			)
+			.run(this.now().toISOString(), clientId, commandId);
+		if (Number(result.changes) !== 1)
+			throw new Error(`Daemon command cannot be acknowledged: ${clientId}/${commandId}`);
+		return this.requireDaemonCommand(clientId, commandId);
+	}
+
+	markInterruptedDaemonCommandsUncertain(): number {
+		const result = this.database
+			.prepare(
+				`UPDATE daemon_commands SET state = 'uncertain', error = COALESCE(error, 'daemon restarted before completion')
+				 WHERE state IN ('received', 'dispatched')`,
+			)
+			.run();
+		return Number(result.changes);
+	}
+
+	pruneDaemonCommands(retentionDays: number): number {
+		if (!Number.isSafeInteger(retentionDays) || retentionDays < 1)
+			throw new TypeError("Invalid daemon command journal retention");
+		const cutoff = new Date(this.now().getTime() - retentionDays * 86_400_000).toISOString();
+		const result = this.database
+			.prepare(
+				`DELETE FROM daemon_commands
+				 WHERE state IN ('completed', 'uncertain', 'acknowledged')
+				   AND COALESCE(acknowledged_at, completed_at, received_at) < ?`,
+			)
+			.run(cutoff);
+		return Number(result.changes);
+	}
+
+	recordContinuationDecision(
+		lease: AgentLease,
+		input: Omit<ContinuationDecision, "id" | "taskId" | "agentId" | "createdAt">,
+	): { decision: ContinuationDecision; duplicate: boolean } {
+		if (!Number.isSafeInteger(input.settledTurnIndex) || input.settledTurnIndex < 0)
+			throw new TypeError("Invalid settled Turn index");
+		return executeTransaction(this.database, () => {
+			this.assertLeaseInternal(lease);
+			const existing = this.database
+				.prepare(
+					"SELECT * FROM continuation_decisions WHERE agent_id = ? AND attempt_id = ? AND settled_turn_index = ?",
+				)
+				.get(lease.agentId, input.attemptId, input.settledTurnIndex) as ContinuationDecisionRow | undefined;
+			if (existing) return { decision: continuationDecisionFromRow(existing), duplicate: true };
+			const id = randomUUID();
+			const now = this.now().toISOString();
+			this.database
+				.prepare(
+					`INSERT INTO continuation_decisions
+					 (id, task_id, agent_id, attempt_id, settled_turn_index, action, reason_code, reason,
+					  progress_fingerprint, next_prompt, next_wake_at, created_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					id,
+					lease.taskId,
+					lease.agentId,
+					input.attemptId,
+					input.settledTurnIndex,
+					input.action,
+					input.reasonCode,
+					input.reason,
+					input.progressFingerprint,
+					input.nextPrompt ?? null,
+					input.nextWakeAt ?? null,
+					now,
+				);
+			this.appendEventInternal(
+				lease.taskId,
+				lease.agentId,
+				input.attemptId,
+				"ContinuationDecided",
+				{
+					decisionId: id,
+					settledTurnIndex: input.settledTurnIndex,
+					action: input.action,
+					reasonCode: input.reasonCode,
+					progressFingerprint: input.progressFingerprint,
+					schemaVersion: 1,
+				},
+				now,
+			);
+			const row = this.database.prepare("SELECT * FROM continuation_decisions WHERE id = ?").get(id) as
+				| ContinuationDecisionRow
+				| undefined;
+			if (!row) throw new Error(`Continuation decision not found after insert: ${id}`);
+			return { decision: continuationDecisionFromRow(row), duplicate: false };
+		});
+	}
+
+	listContinuationDecisions(agentId: string, attemptId?: string): ContinuationDecision[] {
+		const rows = (attemptId
+			? this.database
+					.prepare(
+						"SELECT * FROM continuation_decisions WHERE agent_id = ? AND attempt_id = ? ORDER BY settled_turn_index",
+					)
+					.all(agentId, attemptId)
+			: this.database
+					.prepare("SELECT * FROM continuation_decisions WHERE agent_id = ? ORDER BY created_at")
+					.all(agentId)) as unknown as ContinuationDecisionRow[];
+		return rows.map(continuationDecisionFromRow);
+	}
+
+	hasUnfinishedTools(taskId: string, agentId: string): boolean {
+		return this.listUnfinishedToolsInternal(taskId, agentId).length > 0;
+	}
+
+	hasPendingAcceptanceRequest(taskId: string): boolean {
+		return Boolean(
+			this.database
+				.prepare(
+					`SELECT id FROM task_events requested WHERE task_id = ? AND type = 'AcceptanceRequested'
+					 AND NOT EXISTS (
+					  SELECT 1 FROM task_events completed WHERE completed.task_id = requested.task_id
+					  AND completed.type = 'TaskCompleted' AND completed.seq > requested.seq
+					 ) ORDER BY seq DESC LIMIT 1`,
+				)
+				.get(taskId),
+		);
+	}
+
+	hasPassedAllAcceptance(taskId: string): boolean {
+		return this.requireTask(taskId).acceptance.every((criterion) => this.hasPassedAcceptance(taskId, criterion.id));
+	}
+
+	hasPendingManualAcceptance(taskId: string): boolean {
+		return this.requireTask(taskId).acceptance.some(
+			(criterion) => criterion.kind === "manual" && !this.hasPassedAcceptance(taskId, criterion.id),
+		);
+	}
+
+	hasIncompleteRequiredDelegations(taskId: string): boolean {
+		const row = this.database
+			.prepare(
+				"SELECT COUNT(*) AS count FROM delegations WHERE task_id = ? AND required = 1 AND state <> 'completed'",
+			)
+			.get(taskId) as { count: number };
+		return row.count > 0;
+	}
+
+	createSchedule(input: {
+		taskId: string;
+		agentId?: string;
+		kind: ScheduleRecord["kind"];
+		expression: string;
+		timezone: string;
+		payload?: Record<string, unknown>;
+		nextRunAt?: string;
+	}): ScheduleRecord {
+		this.requireTask(input.taskId);
+		if (input.agentId && this.requireAgent(input.agentId).taskId !== input.taskId)
+			throw new Error("Schedule Agent does not belong to Task");
+		if (input.expression.trim() === "" || input.timezone.trim() === "")
+			throw new TypeError("Schedule expression and timezone are required");
+		if (input.nextRunAt !== undefined && !Number.isFinite(Date.parse(input.nextRunAt)))
+			throw new Error("Invalid schedule next run time");
+		const id = randomUUID();
+		const now = this.now().toISOString();
+		executeTransaction(this.database, () => {
+			this.database
+				.prepare(
+					`INSERT INTO schedules
+					 (id, task_id, agent_id, kind, expression, timezone, payload_json, state, next_run_at,
+					  last_event_seq, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?)`,
+				)
+				.run(
+					id,
+					input.taskId,
+					input.agentId ?? null,
+					input.kind,
+					input.expression,
+					input.timezone,
+					JSON.stringify(input.payload ?? {}),
+					input.nextRunAt ?? null,
+					now,
+					now,
+				);
+			const createdEventSeq = this.appendEventInternal(
+				input.taskId,
+				input.agentId,
+				undefined,
+				"ScheduleCreated",
+				{ scheduleId: id, kind: input.kind, nextRunAt: input.nextRunAt, schemaVersion: 1 },
+				now,
+			);
+			if (input.kind === "event")
+				this.database.prepare("UPDATE schedules SET last_event_seq = ? WHERE id = ?").run(createdEventSeq, id);
+		});
+		return this.requireSchedule(id);
+	}
+
+	getSchedule(scheduleId: string): ScheduleRecord | undefined {
+		const row = this.database.prepare("SELECT * FROM schedules WHERE id = ?").get(scheduleId) as
+			| ScheduleRow
+			| undefined;
+		return row ? scheduleFromRow(row) : undefined;
+	}
+
+	requireSchedule(scheduleId: string): ScheduleRecord {
+		const schedule = this.getSchedule(scheduleId);
+		if (!schedule) throw new Error(`Schedule not found: ${scheduleId}`);
+		return schedule;
+	}
+
+	listSchedules(taskId: string): ScheduleRecord[] {
+		return (
+			this.database
+				.prepare("SELECT * FROM schedules WHERE task_id = ? ORDER BY created_at")
+				.all(taskId) as unknown as ScheduleRow[]
+		).map(scheduleFromRow);
+	}
+
+	listDueSchedules(dueAt: string, limit = 100): ScheduleRecord[] {
+		return (
+			this.database
+				.prepare(
+					"SELECT * FROM schedules WHERE state = 'active' AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT ?",
+				)
+				.all(dueAt, limit) as unknown as ScheduleRow[]
+		).map(scheduleFromRow);
+	}
+
+	listPendingEventScheduleTriggers(limit = 100): ScheduleEventTrigger[] {
+		const rows = this.database
+			.prepare(
+				`SELECT
+				   s.id AS schedule_id,
+				   e.id AS event_id, e.task_id, e.agent_id, e.attempt_id, e.seq, e.type, e.payload_json, e.created_at
+				 FROM schedules s
+				 JOIN task_events e ON e.task_id = s.task_id AND e.seq > s.last_event_seq
+				 WHERE s.kind = 'event' AND s.state = 'active'
+				   AND (s.expression = '*' OR s.expression = e.type)
+				   AND e.type NOT LIKE 'Schedule%'
+				   AND (s.agent_id IS NULL OR s.agent_id = e.agent_id)
+				 ORDER BY e.created_at, e.seq, s.created_at
+				 LIMIT ?`,
+			)
+			.all(limit) as unknown as Array<EventRow & { schedule_id: string; event_id: string }>;
+		return rows.map((row) => ({
+			schedule: this.requireSchedule(row.schedule_id),
+			event: eventFromRow({ ...row, id: row.event_id }),
+		}));
+	}
+
+	claimEventSchedule(trigger: ScheduleEventTrigger, claimedAt: string): ScheduleClaim | undefined {
+		return executeTransaction(this.database, () => {
+			const schedule = this.getSchedule(trigger.schedule.id);
+			if (!schedule || schedule.kind !== "event" || schedule.state !== "active") return undefined;
+			if (schedule.lastEventSeq >= trigger.event.seq) return undefined;
+			const claimId = randomUUID();
+			const result = this.database
+				.prepare(
+					`UPDATE schedules SET last_event_seq = ?, last_claim_id = ?, last_claimed_at = ?,
+					 last_delivered_at = NULL, updated_at = ?
+					 WHERE id = ? AND kind = 'event' AND state = 'active' AND last_event_seq < ?`,
+				)
+				.run(trigger.event.seq, claimId, claimedAt, claimedAt, schedule.id, trigger.event.seq);
+			if (Number(result.changes) !== 1) return undefined;
+			this.appendEventInternal(
+				schedule.taskId,
+				schedule.agentId,
+				undefined,
+				"ScheduleEventClaimed",
+				{
+					scheduleId: schedule.id,
+					claimId,
+					sourceEventId: trigger.event.id,
+					sourceEventSeq: trigger.event.seq,
+					sourceEventType: trigger.event.type,
+					schemaVersion: 1,
+				},
+				claimedAt,
+			);
+			return {
+				schedule: this.requireSchedule(schedule.id),
+				claimId,
+				dueAt: trigger.event.createdAt,
+				missedCount: 1,
+				claimedAt,
+			};
+		});
+	}
+
+	claimSchedule(input: {
+		scheduleId: string;
+		dueAt: string;
+		claimedAt: string;
+		nextRunAt?: string;
+		missedCount: number;
+	}): ScheduleClaim | undefined {
+		return executeTransaction(this.database, () => {
+			const schedule = this.getSchedule(input.scheduleId);
+			if (!schedule || schedule.state !== "active" || schedule.nextRunAt !== input.dueAt) return undefined;
+			const claimId = randomUUID();
+			const nextState = schedule.kind === "once" ? "completed" : "active";
+			const result = this.database
+				.prepare(
+					`UPDATE schedules SET state = ?, next_run_at = ?, last_claim_id = ?, last_claimed_at = ?,
+					 last_delivered_at = NULL, updated_at = ?
+					 WHERE id = ? AND state = 'active' AND next_run_at = ?`,
+				)
+				.run(
+					nextState,
+					input.nextRunAt ?? null,
+					claimId,
+					input.claimedAt,
+					input.claimedAt,
+					schedule.id,
+					input.dueAt,
+				);
+			if (Number(result.changes) !== 1) return undefined;
+			this.appendEventInternal(
+				schedule.taskId,
+				schedule.agentId,
+				undefined,
+				"ScheduleClaimed",
+				{
+					scheduleId: schedule.id,
+					claimId,
+					dueAt: input.dueAt,
+					nextRunAt: input.nextRunAt,
+					missedCount: input.missedCount,
+					schemaVersion: 1,
+				},
+				input.claimedAt,
+			);
+			return {
+				schedule: this.requireSchedule(schedule.id),
+				claimId,
+				dueAt: input.dueAt,
+				missedCount: input.missedCount,
+				claimedAt: input.claimedAt,
+			};
+		});
+	}
+
+	markScheduleDelivered(scheduleId: string, claimId: string, deliveredAt: string): ScheduleRecord {
+		return executeTransaction(this.database, () => {
+			const schedule = this.requireSchedule(scheduleId);
+			if (schedule.lastClaimId !== claimId) throw new Error("Schedule claim is no longer current");
+			if (schedule.lastDeliveredAt !== undefined) return schedule;
+			this.database
+				.prepare("UPDATE schedules SET last_delivered_at = ?, updated_at = ? WHERE id = ? AND last_claim_id = ?")
+				.run(deliveredAt, deliveredAt, scheduleId, claimId);
+			this.appendEventInternal(
+				schedule.taskId,
+				schedule.agentId,
+				undefined,
+				"ScheduleDelivered",
+				{ scheduleId, claimId, schemaVersion: 1 },
+				deliveredAt,
+			);
+			return this.requireSchedule(scheduleId);
+		});
+	}
+
+	transitionSchedule(scheduleId: string, state: "active" | "paused" | "cancelled"): ScheduleRecord {
+		const schedule = this.requireSchedule(scheduleId);
+		if (schedule.state === "completed" || schedule.state === "cancelled")
+			throw new Error(`Schedule cannot transition from ${schedule.state}`);
+		const now = this.now().toISOString();
+		this.database.prepare("UPDATE schedules SET state = ?, updated_at = ? WHERE id = ?").run(state, now, scheduleId);
+		return this.requireSchedule(scheduleId);
+	}
+
+	private requireDaemonCommand(clientId: string, commandId: string): DaemonCommandRecord {
+		const command = this.getDaemonCommand(clientId, commandId);
+		if (!command) throw new Error(`Daemon command not found: ${clientId}/${commandId}`);
+		return command;
 	}
 
 	createTask(input: CreateTaskInput): { task: TaskRecord; mainAgent: AgentRecord } {
