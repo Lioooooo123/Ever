@@ -6,32 +6,46 @@ Use them to measure end-to-end behavior and compare prompts, tools, skills, mode
 
 ## Running evals
 
-Run from the repository root with a default provider and model:
+Eval has two execution profiles and one report command:
+
+- `quick`: lightweight Pi Agent checks through `vitest-evals`; no Docker. It defaults to one end-to-end smoke prompt.
+- `benchmark`: Docker-isolated external benchmarks with official verifiers, Oracle gating, and resumable trials.
+- `report`: lists both job types or renders one normalized overview with the profile-specific comparison appended.
+
+Run the daily smoke profile from the repository root:
 
 ```bash
-npm run eval -- --provider openai --model gpt-5.6-sol
+npm run eval -- quick --provider openai --model gpt-5.6-sol
 ```
 
 The equivalent environment variables are:
 
 ```bash
-PI_PROVIDER=openai PI_MODEL=gpt-5.6-sol npm run eval
+PI_PROVIDER=openai PI_MODEL=gpt-5.6-sol npm run eval -- quick
 ```
 
-CLI values take precedence and become defaults for harnesses that do not select a model explicitly. Provider and model must be supplied together. The runner also allows no default when every executed harness configures its own model.
+CLI values take precedence over the environment. Provider and model must be supplied together so every quick job records an exact default model identity.
 Authentication comes from Pi's normal `ModelRuntime`, including Pi subscription credentials and provider API-key
 environment variables.
 
-Additional arguments are forwarded to Vitest:
+Use `--suite all` for every lightweight Eval, or pass advanced Vitest filters directly:
 
 ```bash
-npm run eval -- src/extensions.eval.ts
-npm run eval -- -t "creates, reloads, and uses"
+npm run eval -- quick --provider openai --model gpt-5.6-sol --suite all
+npm run eval -- quick --provider openai --model gpt-5.6-sol src/extensions.eval.ts
+npm run eval -- quick --provider openai --model gpt-5.6-sol -t "creates, reloads, and uses"
 ```
 
-Each invocation prints an ignored `.eval/` artifact directory. `runs.jsonl` indexes completed harness runs and their
-native Pi session JSONL attachments under `sessions/`. These files may contain prompts, responses, source code, and tool
-output.
+Each job writes a common `eval-job.json` under `.eval/<job-id>/`. Quick jobs retain `runs.jsonl`, sessions, sources, and
+harness comparisons. Benchmark jobs retain official results, verifier output, trajectories, and workspace snapshots.
+These files may contain prompts, responses, source code, and tool output.
+
+List all jobs or render one report:
+
+```bash
+npm run eval -- report
+npm run eval -- report <job-id>
+```
 
 ## Writing evals
 
@@ -151,3 +165,88 @@ necessary, use Vitest's built-in sequence shuffling.
 
 See the [`skill-eval-harness`](https://github.com/adewale/skill-eval-harness/) guidance for comparative-eval methodology,
 repetition strategy, trustworthy judges, and telemetry interpretation.
+
+## Running external benchmarks
+
+The benchmark runner executes Terminal-Bench 2.1 tasks in fresh Docker containers and injects each task's official
+`tests/` directory only after the agent has stopped. It writes append-only results under `packages/evals/.eval/` and can
+resume an interrupted job.
+
+Prepare a JSON agent configuration. Commands run inside the benchmark container, so each entry must either name an
+executable already present in the image or use `preparation` to copy and install a pinned local artifact. Credential
+names are declared with `forwardEnvironment`; their values are read only after Docker preflight and are not persisted.
+
+```json
+[
+  {
+    "kind": "karissa",
+    "name": "karissa",
+    "version": "0.84.1+a12230ac0",
+    "executableDigest": "<64-character-sha256>",
+    "configurationDigest": "<64-character-sha256>",
+    "command": ["/opt/karissa/bin/karissa"],
+    "forwardEnvironment": ["OPENAI_API_KEY"],
+    "preparation": {
+      "copyIn": [{ "source": "/absolute/path/karissa-release", "destination": "/opt/karissa" }]
+    }
+  },
+  {
+    "kind": "command",
+    "name": "codex",
+    "version": "<exact-version>",
+    "executableDigest": "<64-character-sha256>",
+    "configurationDigest": "<64-character-sha256>",
+    "command": ["codex", "exec", "{instruction}"],
+    "forwardEnvironment": ["OPENAI_API_KEY"]
+  }
+]
+```
+
+First run the deterministic ten-task subset with an `oracle` entry from the same agent configuration. The oracle command
+normally copies the task's `solution/` assets during its own agent phase. Model-backed comparisons require the resulting
+job as a hard gate.
+
+```bash
+npm run eval -- benchmark \
+  --benchmark terminal-bench-2-1 \
+  --benchmark-root /absolute/path/to/terminal-bench-2.1 \
+  --agent-config /absolute/path/to/agents.json \
+  --agents oracle \
+  --subset development
+```
+
+Then run the comparison with one exact model identity and a hard job admission budget:
+
+```bash
+npm run eval -- benchmark \
+  --benchmark terminal-bench-2-1 \
+  --benchmark-root /absolute/path/to/terminal-bench-2.1 \
+  --agent-config /absolute/path/to/agents.json \
+  --agents karissa,codex,terminus-2 \
+  --oracle-job <oracle-job-id> \
+  --provider openai \
+  --model <exact-model-id> \
+  --max-cost-usd 50
+```
+
+Resume and regenerate a report without rerunning completed trials:
+
+```bash
+npm run eval -- benchmark --resume <job-id>
+npm run eval -- report <job-id>
+npm run eval -- benchmark --redact <job-id> --secret-env OPENAI_API_KEY
+```
+
+Docker must be installed and `docker info` must succeed. The command rejects floating agent versions, floating model
+aliases, digest drift, mismatched models, missing budgets, benchmark symlinks, and hidden tests visible before execution.
+
+Fault injection is intentionally separate from official benchmark jobs. Use only a Karissa agent, a profile name that
+starts with `karissa-reliability`, and a JSON schedule containing `kill_agent_process`, `kill_daemon_process`,
+`pause_agent_process`, or `terminate_container` entries:
+
+```bash
+npm run eval -- benchmark <normal-options> \
+  --agents karissa \
+  --fault-profile karissa-reliability-daemon-kill \
+  --fault-schedule /absolute/path/to/faults.json
+```

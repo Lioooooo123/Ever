@@ -203,17 +203,35 @@ describe("runtime and policy", () => {
 
 	it("enforces read-only tools and retains mandatory context fields", () => {
 		const { store, task, main } = createTask();
+		const policyRoot = process.cwd();
+		const policyPath = join(policyRoot, "a.ts");
 		const readOnly = {
 			...main,
-			toolPolicy: { allowedTools: ["read"], allowedPaths: ["/repo"], readOnly: true, sandboxRequired: true },
+			toolPolicy: { allowedTools: ["read"], allowedPaths: [policyRoot], readOnly: true, sandboxRequired: true },
 		};
 		const policy = new ExecutionPolicy();
 		expect(
-			policy.authorizeTool(readOnly, { name: "read", paths: ["/repo/a.ts"], effect: "read_only" }, true),
+			policy.authorizeTool(
+				readOnly,
+				{ name: "read", paths: [policyPath], effect: "read_only" },
+				{ sandboxAvailable: true, unattended: false },
+			),
 		).toEqual({ allowed: true });
 		expect(
-			policy.authorizeTool(readOnly, { name: "write", paths: ["/repo/a.ts"], effect: "reconcilable_write" }, true),
+			policy.authorizeTool(
+				readOnly,
+				{ name: "write", paths: [policyPath], effect: "reconcilable_write" },
+				{ sandboxAvailable: true, unattended: false },
+			),
 		).toMatchObject({ allowed: false });
+		const unattended = { ...main, toolPolicy: { ...main.toolPolicy, allowedPaths: [policyRoot] } };
+		expect(
+			policy.authorizeTool(
+				unattended,
+				{ name: "bash", paths: [policyRoot], effect: "process" },
+				{ sandboxAvailable: false, unattended: true },
+			),
+		).toMatchObject({ allowed: false, code: "unattended_sandbox_required" });
 		const context = new TaskContextBuilder().build({ task, agent: main, evidence: [], agents: [main] });
 		expect(context).toContain("<goal>finish safely</goal>");
 		expect(context).toContain("<acceptance>");

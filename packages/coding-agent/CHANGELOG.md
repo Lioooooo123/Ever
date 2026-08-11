@@ -6,6 +6,7 @@
 
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 - Added the `karissa` guided asynchronous task command, persistent daemon consumption, and desktop task notifications.
+- Added versioned JSON task submission, inspection, event streaming, and daemon control for black-box Eval runners.
 
 ### Changed
 

@@ -9,6 +9,7 @@ import {
 	RecoveryEngine,
 	type RecoveryResult,
 	type RuntimeSnapshot,
+	resolveAgentExecutionContext,
 	runtimeSnapshotHash,
 	SqliteTaskStore,
 } from "@karissa/long-tasks";
@@ -60,24 +61,33 @@ function processExists(pid: number): boolean {
 	}
 }
 
+function executionExists(pid: number, processGroup: boolean): boolean {
+	return processExists(processGroup ? -pid : pid);
+}
+
+function stopExecution(pid: number, processGroup: boolean): boolean {
+	try {
+		process.kill(processGroup ? -pid : pid, "SIGTERM");
+		return true;
+	} catch (error) {
+		return error instanceof Error && "code" in error && error.code === "ESRCH";
+	}
+}
+
 export async function recoverExpiredLongTaskExecutions(store: SqliteTaskStore): Promise<RecoveryResult[]> {
 	const recovery = new RecoveryEngine(store, {
 		async stopExecution(execution) {
 			if (execution.sandboxId) return false;
 			if (execution.pid === undefined) return false;
-			if (!processExists(execution.pid)) return true;
+			const processGroup = execution.workerId.startsWith("daemon:");
+			if (!executionExists(execution.pid, processGroup)) return true;
 			if (execution.pid === process.pid) return false;
-			try {
-				process.kill(execution.pid, "SIGTERM");
-			} catch (error) {
-				if (error instanceof Error && "code" in error && error.code === "ESRCH") return true;
-				return false;
-			}
+			if (!stopExecution(execution.pid, processGroup)) return false;
 			const deadline = Date.now() + 5_000;
-			while (processExists(execution.pid) && Date.now() < deadline) {
+			while (executionExists(execution.pid, processGroup) && Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, 50));
 			}
-			return !processExists(execution.pid);
+			return !executionExists(execution.pid, processGroup);
 		},
 	});
 	return recovery.recoverExpired();
@@ -112,23 +122,14 @@ export async function attachLongTaskRuntime(
 		databasePath: join(agentDir, "long-tasks.sqlite"),
 		artifactsRoot: join(agentDir, "tasks"),
 	});
-	const task = store.requireTask(taskId);
-	if (realpathSync(runtime.cwd) !== realpathSync(task.workspaceRoot)) {
+	const executionContext = resolveAgentExecutionContext(store, taskId, process.env.KARISSA_AGENT_RUN_ID);
+	const { agent: actor, task } = executionContext;
+	if (realpathSync(runtime.cwd) !== executionContext.canonicalWorkspaceRoot) {
 		store.close();
-		throw new Error(`Task workspace mismatch: expected ${task.workspaceRoot}, got ${runtime.cwd}`);
+		throw new Error(
+			`Agent workspace mismatch: expected ${executionContext.canonicalWorkspaceRoot}, got ${runtime.cwd}`,
+		);
 	}
-	const foundMainAgent = store.listAgents(taskId).find((agent) => agent.kind === "main");
-	if (!foundMainAgent) {
-		store.close();
-		throw new Error(`Task ${taskId} has no main Agent`);
-	}
-	const requestedAgentId = process.env.KARISSA_AGENT_RUN_ID;
-	const foundActor = requestedAgentId ? store.getAgent(requestedAgentId) : foundMainAgent;
-	if (!foundActor || foundActor.taskId !== taskId) {
-		store.close();
-		throw new Error(`Agent ${requestedAgentId ?? "main"} does not belong to Task ${taskId}`);
-	}
-	const actor = foundActor;
 	const recoveryResults = await recoverExpiredLongTaskExecutions(store);
 	const blockedRecovery = recoveryResults.find((result) => !result.recovered);
 	if (blockedRecovery) {
@@ -164,7 +165,8 @@ export async function attachLongTaskRuntime(
 		}
 	}
 
-	let lease: AgentLease = store.acquireLease(actor.id, `foreground:${process.pid}`, randomUUID(), 30, {
+	const workerKind = process.env.KARISSA_DAEMON_WORKER === "1" ? "daemon" : "foreground";
+	let lease: AgentLease = store.acquireLease(actor.id, `${workerKind}:${process.pid}`, randomUUID(), 30, {
 		pid: process.pid,
 	});
 	const attemptId = store.createAttempt(actor.id, runtime.session.sessionId, snapshot, snapshotSha256);

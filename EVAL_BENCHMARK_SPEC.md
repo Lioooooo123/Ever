@@ -481,10 +481,10 @@ Artifacts may contain prompts, source code, tool output, credentials accidentall
 V1 extends the existing root Eval command:
 
 ```text
-npm run eval -- long-task --benchmark terminal-bench-2-1 --agents karissa,codex,terminus-2 --model <exact-model> --max-cost-usd <amount>
-npm run eval -- long-task --benchmark terminal-bench-2-1 --agents oracle --subset development
-npm run eval -- long-task --resume <job-id>
-npm run eval -- long-task --report <job-id>
+npm run eval -- benchmark --benchmark terminal-bench-2-1 --agents karissa,codex,terminus-2 --model <exact-model> --max-cost-usd <amount>
+npm run eval -- benchmark --benchmark terminal-bench-2-1 --agents oracle --subset development
+npm run eval -- benchmark --resume <job-id>
+npm run eval -- report <job-id>
 ```
 
 `--model` and `--max-cost-usd` are required for model-backed jobs. The runner validates them before starting Docker or making a provider request. Shell history and reports never contain credential values.

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import type { Reporter, SerializedError, TestCase, TestModule, TestRunEndReason, Vitest } from "vitest/node";
 import { isHarnessRun } from "vitest-evals/harness";
 import { PI_SESSION_SNAPSHOT_ARTIFACT, persistEvalArtifactReferences } from "./artifacts.ts";
@@ -18,6 +19,7 @@ async function appendHarnessRunReport(test: TestCase): Promise<void> {
 	if (!harness || !isHarnessRun(harness.run)) return;
 
 	const run = harness.run;
+	const score = readFiniteNumber(test.meta().eval?.avgScore);
 	const artifactRunId = run.artifacts?.runId;
 	const runId = typeof artifactRunId === "string" ? artifactRunId : randomUUID();
 	const metadata = Object.fromEntries(
@@ -34,6 +36,12 @@ async function appendHarnessRunReport(test: TestCase): Promise<void> {
 			status: test.result().state,
 		},
 		harness: harness.name,
+		evaluation:
+			run.errors.length > 0
+				? { outcome: "errored" }
+				: score === undefined
+					? { outcome: test.result().state }
+					: { outcome: "scored", score },
 		usage: run.usage,
 		...(run.timings ? { timings: run.timings } : {}),
 		...(run.errors.length > 0 ? { errors: run.errors } : {}),
@@ -95,17 +103,29 @@ export default class EvalHarnessReporter implements Reporter {
 		await appendHarnessRunReport(test);
 	}
 
-	onTestRunEnd(
+	async onTestRunEnd(
 		modules: ReadonlyArray<TestModule>,
 		_errors: ReadonlyArray<SerializedError>,
 		reason: TestRunEndReason,
-	): void {
+	): Promise<void> {
 		if (reason === "interrupted") {
 			this.vitest?.logger.log("\nEval comparisons unavailable: test run interrupted.");
 			return;
 		}
 		const report = summarizeHarnessComparisons(collectHarnessObservations(modules));
 		const formatted = formatHarnessComparisonReport(report);
+		const artifactDirectory = process.env.PI_EVAL_ARTIFACT_DIR?.trim();
+		if (artifactDirectory) {
+			await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
+			await writeFile(join(artifactDirectory, "comparison.json"), `${JSON.stringify(report, null, 2)}\n`, {
+				mode: 0o600,
+			});
+			await writeFile(
+				join(artifactDirectory, "comparison.md"),
+				formatted ? `${stripVTControlCharacters(formatted)}\n` : "No paired harness comparisons.\n",
+				{ mode: 0o600 },
+			);
+		}
 		if (formatted) this.vitest?.logger.log(`\n${formatted}`);
 	}
 }

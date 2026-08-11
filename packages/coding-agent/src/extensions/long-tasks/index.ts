@@ -110,7 +110,11 @@ export default function longTasksExtension(pi: ExtensionAPI): void {
 			const decision = new ExecutionPolicy().authorizeTool(
 				actor,
 				{ name: event.toolName, paths, effect },
-				process.env.KARISSA_UNATTENDED_SANDBOX === "1",
+				{
+					sandboxAvailable: process.env.KARISSA_UNATTENDED_SANDBOX === "1",
+					unattended: process.env.KARISSA_DAEMON_WORKER === "1",
+					unsafeNoSandbox: process.env.KARISSA_UNSAFE_NO_SANDBOX === "1",
+				},
 			);
 			if (decision.allowed) return undefined;
 			store.appendTaskEvent(taskId, "SecurityPolicyDenied", {

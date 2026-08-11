@@ -4,7 +4,9 @@ import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { SqliteTaskStore, TaskController, type TaskRecord } from "@karissa/long-tasks";
 import chalk from "chalk";
-import { requestDaemon } from "./daemon-command.ts";
+import { requestDaemon, startDaemon } from "./daemon-command.ts";
+import { submitAsyncTask } from "./karissa-command.ts";
+import { readTaskSubmitManifest } from "./task-submit-manifest.ts";
 
 function option(args: string[], name: string): string | undefined {
 	const index = args.indexOf(name);
@@ -61,8 +63,18 @@ function printTask(task: TaskRecord): void {
 	console.log(`${task.id}\t${task.state}\t${task.title}`);
 }
 
+function taskModelArgs(task: TaskRecord): string[] {
+	const model = task.constraints.model;
+	if (typeof model !== "object" || model === null || Array.isArray(model)) return [];
+	const provider = Reflect.get(model, "provider");
+	const id = Reflect.get(model, "id");
+	if (typeof provider !== "string" || typeof id !== "string") throw new Error("Task model constraint is invalid");
+	return ["--provider", provider, "--model", id];
+}
+
 function printTaskHelp(): void {
 	console.log(`karissa task commands:
+  karissa task submit --manifest <path> --yes --json
   karissa task create --title <title> --goal <goal> --acceptance <text>
   karissa task ls
   karissa task run <task-id> [--accept-runtime-drift]
@@ -87,6 +99,33 @@ export async function handleTaskCommand(
 	const command = args[1];
 	if (!command || command === "--help" || command === "help") {
 		printTaskHelp();
+		return true;
+	}
+	if (command === "submit") {
+		if (!args.includes("--yes")) throw new Error("task submit requires --yes for unattended workspace changes");
+		if (!args.includes("--json")) throw new Error("task submit requires --json");
+		const manifest = readTaskSubmitManifest(requiredOption(args, "--manifest"), cwd);
+		const task = await submitAsyncTask({
+			agentDir,
+			cwd: manifest.workspaceRoot,
+			goal: manifest.goal,
+			...(manifest.title ? { title: manifest.title } : {}),
+			...(manifest.verification
+				? {
+						verificationCommand: manifest.verification.command,
+						verificationCwd: manifest.verification.cwd,
+						verificationTimeoutSeconds: manifest.verification.timeoutSeconds,
+					}
+				: {}),
+			maxTurns: manifest.limits.maxTurns,
+			maxWallTimeMinutes: manifest.limits.maxWallTimeMinutes,
+			...(manifest.limits.maxCostUsd === undefined ? {} : { maxCostUsd: manifest.limits.maxCostUsd }),
+			...(manifest.model === undefined ? {} : { model: manifest.model }),
+		});
+		await startDaemon(agentDir);
+		const response = await requestDaemon(agentDir, { command: "wake", taskId: task.id });
+		if (!response.ok) throw new Error(response.message ?? "Daemon rejected Task submission");
+		console.log(JSON.stringify({ schemaVersion: 1, taskId: task.id, state: task.state, createdAt: task.createdAt }));
 		return true;
 	}
 	const store = SqliteTaskStore.open({
@@ -158,6 +197,7 @@ export async function handleTaskCommand(
 					...(checkpoint?.sessionCheckpoint.sessionPath
 						? ["--session", checkpoint.sessionCheckpoint.sessionPath]
 						: []),
+					...taskModelArgs(task),
 					"--append-system-prompt",
 					durableContext,
 					...(printMode ? ["--print"] : []),
@@ -202,7 +242,7 @@ export async function handleTaskCommand(
 			}
 			case "show": {
 				const task = resolveTask(store, args[2] ?? "");
-				console.log(JSON.stringify({ ...task, agents: store.listAgents(task.id) }, null, 2));
+				console.log(JSON.stringify({ schemaVersion: 1, ...task, agents: store.listAgents(task.id) }, null, 2));
 				break;
 			}
 			case "pause": {
@@ -235,7 +275,11 @@ export async function handleTaskCommand(
 			}
 			case "events": {
 				const task = resolveTask(store, args[2] ?? "");
-				for (const event of store.listEvents(task.id, 0, 10_000)) {
+				const after = option(args, "--after");
+				const afterSeq = after === undefined ? 0 : Number(after);
+				if (!Number.isSafeInteger(afterSeq) || afterSeq < 0)
+					throw new Error("--after must be a non-negative integer");
+				for (const event of store.listEvents(task.id, afterSeq, 10_000)) {
 					console.log(
 						args.includes("--json")
 							? JSON.stringify({ schemaVersion: 1, ...event })
