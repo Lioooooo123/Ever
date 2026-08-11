@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
@@ -23,6 +24,30 @@ import { SessionManager } from "./session-manager.ts";
 export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResult {
 	services: AgentSessionServices;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
+}
+
+export interface SessionCheckpoint {
+	sessionId: string;
+	sessionPath?: string;
+	leafEntryId?: string;
+	settledTurnIndex: number;
+	runtimeSnapshotSha256: string;
+	createdAt: string;
+}
+
+export class SessionCheckpointUnavailableError extends Error {
+	readonly code = "SESSION_CHECKPOINT_UNAVAILABLE";
+	readonly reason: "agent_running" | "compaction_running";
+
+	constructor(reason: "agent_running" | "compaction_running") {
+		super(
+			reason === "agent_running"
+				? "Cannot checkpoint while the agent is running"
+				: "Cannot checkpoint during compaction",
+		);
+		this.name = "SessionCheckpointUnavailableError";
+		this.reason = reason;
+	}
 }
 
 /**
@@ -128,6 +153,62 @@ export class AgentSessionRuntime {
 	 */
 	setBeforeSessionInvalidate(beforeSessionInvalidate?: () => void): void {
 		this.beforeSessionInvalidate = beforeSessionInvalidate;
+	}
+
+	/** Create a stable pointer to the current settled session boundary. */
+	async createCheckpoint(): Promise<SessionCheckpoint> {
+		if (this.session.isStreaming) throw new SessionCheckpointUnavailableError("agent_running");
+		if (this.session.isCompacting) throw new SessionCheckpointUnavailableError("compaction_running");
+		return this.buildCheckpoint();
+	}
+
+	/** Used only from session_before_compact, after the Turn is settled but before history is rewritten. */
+	async createPreCompactionCheckpoint(): Promise<SessionCheckpoint> {
+		return this.buildCheckpoint();
+	}
+
+	private buildCheckpoint(): SessionCheckpoint {
+		const leafEntryId = this.session.sessionManager.getLeafId() ?? undefined;
+		const settledTurnIndex = this.session.sessionManager
+			.buildContextEntries()
+			.filter((entry) => entry.type === "message" && entry.message.role === "assistant").length;
+		const runtimeSnapshotSha256 = createHash("sha256")
+			.update(
+				JSON.stringify({
+					model: this.session.model ? { provider: this.session.model.provider, id: this.session.model.id } : null,
+					thinkingLevel: this.session.thinkingLevel,
+					systemPrompt: this.session.systemPrompt,
+					tools: [...this.session.getActiveToolNames()].sort(),
+				}),
+			)
+			.digest("hex");
+		return {
+			sessionId: this.session.sessionId,
+			...(this.session.sessionFile === undefined ? {} : { sessionPath: this.session.sessionFile }),
+			...(leafEntryId === undefined ? {} : { leafEntryId }),
+			settledTurnIndex,
+			runtimeSnapshotSha256,
+			createdAt: new Date().toISOString(),
+		};
+	}
+
+	/** Restore an existing session to a checkpointed leaf without rewriting its history. */
+	async restoreCheckpoint(checkpoint: SessionCheckpoint): Promise<void> {
+		if (this.session.isStreaming) throw new SessionCheckpointUnavailableError("agent_running");
+		if (this.session.isCompacting) throw new SessionCheckpointUnavailableError("compaction_running");
+		if (checkpoint.sessionPath && checkpoint.sessionPath !== this.session.sessionFile) {
+			const result = await this.switchSession(checkpoint.sessionPath);
+			if (result.cancelled) throw new Error("Session restore was cancelled by an extension");
+		}
+		if (this.session.sessionId !== checkpoint.sessionId) {
+			throw new Error(`Checkpoint session ${checkpoint.sessionId} does not match ${this.session.sessionId}`);
+		}
+		if (checkpoint.leafEntryId) {
+			this.session.sessionManager.branch(checkpoint.leafEntryId);
+		} else {
+			this.session.sessionManager.resetLeaf();
+		}
+		this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
 	}
 
 	private async emitBeforeSwitch(

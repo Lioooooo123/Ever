@@ -12,6 +12,7 @@ const rootLockfilePath = join(repoRoot, "package-lock.json");
 const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
 const internalPackagePrefix = "@earendil-works/pi-";
+const additionalInternalPackages = new Set(["@karissa/long-tasks"]);
 const installPackageName = "@earendil-works/pi-coding-agent-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
@@ -59,6 +60,8 @@ function sortedPackageEntry(entry) {
 		"os",
 		"cpu",
 		"libc",
+		"bundledDependencies",
+		"inBundle",
 		"optional",
 		"hasInstallScript",
 		"deprecated",
@@ -104,6 +107,7 @@ function copyPackageJsonEntry(packageJson, options) {
 		"os",
 		"cpu",
 		"libc",
+		"bundledDependencies",
 	]) {
 		if (packageJson[field] !== undefined) {
 			entry[field] = packageJson[field];
@@ -111,6 +115,10 @@ function copyPackageJsonEntry(packageJson, options) {
 	}
 
 	return sortedPackageEntry(entry);
+}
+
+function isInternalPackage(name) {
+	return name.startsWith(internalPackagePrefix) || additionalInternalPackages.has(name);
 }
 
 function packageNameFromLockPath(lockPath) {
@@ -143,7 +151,7 @@ function getInternalWorkspaces(lockPackages) {
 		if (!lockPath.startsWith("packages/") || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
 			continue;
 		}
-		if (!entry.name.startsWith(internalPackagePrefix)) {
+		if (!isInternalPackage(entry.name)) {
 			continue;
 		}
 
@@ -203,7 +211,11 @@ function addInternalWorkspace(installLockPackages, addedPaths, queue, name, work
 	const packageJson = workspace.packageJson;
 	const outputPath = `node_modules/${name}`;
 	const entry = copyPackageJsonEntry(packageJson, { includeName: false });
-	entry.resolved = registryTarballUrl(name, packageJson.version);
+	if (workspace.bundled) {
+		entry.inBundle = true;
+	} else {
+		entry.resolved = registryTarballUrl(name, packageJson.version);
+	}
 
 	installLockPackages[outputPath] = sortedPackageEntry(entry);
 	addedPaths.add(outputPath);
@@ -365,6 +377,10 @@ function generateInstallLock() {
 	const codingAgentPackage = readJson(join(codingAgentDir, "package.json"));
 	const installerPackageJson = createInstallerPackageJson(codingAgentPackage);
 	const internalWorkspaces = getInternalWorkspaces(lockPackages);
+	const bundledDependencies = new Set(codingAgentPackage.bundledDependencies ?? codingAgentPackage.bundleDependencies ?? []);
+	for (const [name, workspace] of internalWorkspaces) {
+		workspace.bundled = bundledDependencies.has(name);
+	}
 	const installLockPackages = {
 		"": createRootLockEntry(installerPackageJson),
 	};

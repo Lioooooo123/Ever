@@ -3,6 +3,7 @@
 	"compilerOptions": {
 		"outDir": "./dist",
 		"paths": {
+			"@karissa/long-tasks": ["../long-tasks/dist/index.d.ts"],
 			"@earendil-works/pi-agent-core": ["../agent/dist/index.d.ts"],
 			"@earendil-works/pi-agent-core/*": ["../agent/dist/*.d.ts"],
 			"@earendil-works/pi-ai": ["../ai/dist/index.d.ts"],

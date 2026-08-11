@@ -66,6 +66,27 @@ export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 }
 
+export interface LongTaskSettings {
+	enabled?: boolean;
+	maxConcurrentTasks?: number;
+	maxConcurrentAgentsPerTask?: number;
+	maxAgentDepth?: number;
+	subagentDefaultTurnBudget?: number;
+	taskMaxTurns?: number;
+	attemptMaxTurns?: number;
+	attemptMaxWallTimeMinutes?: number;
+	toolMaxWallTimeMinutes?: number;
+	heartbeatSeconds?: number;
+	leaseSeconds?: number;
+	providerRetryMax?: number;
+	contextTokenBudget?: number;
+	messageMaxBytes?: number;
+	inboxBatchSize?: number;
+	unattendedMode?: "require-sandbox";
+	budgetMode?: "hard" | "soft";
+	requireExplicitUnattendedBudget?: boolean;
+}
+
 export type DefaultProjectTrust = "ask" | "always" | "never";
 
 export type TransportSetting = Transport;
@@ -129,6 +150,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
+	longTasks?: LongTaskSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
@@ -822,6 +844,29 @@ export class SettingsManager {
 			enabled: this.getRetryEnabled(),
 			maxRetries: this.settings.retry?.maxRetries ?? 3,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
+		};
+	}
+
+	getLongTaskSettings(): Required<LongTaskSettings> {
+		return {
+			enabled: this.settings.longTasks?.enabled ?? true,
+			maxConcurrentTasks: this.settings.longTasks?.maxConcurrentTasks ?? 1,
+			maxConcurrentAgentsPerTask: this.settings.longTasks?.maxConcurrentAgentsPerTask ?? 4,
+			maxAgentDepth: this.settings.longTasks?.maxAgentDepth ?? 1,
+			subagentDefaultTurnBudget: this.settings.longTasks?.subagentDefaultTurnBudget ?? 20,
+			taskMaxTurns: this.settings.longTasks?.taskMaxTurns ?? 200,
+			attemptMaxTurns: this.settings.longTasks?.attemptMaxTurns ?? 50,
+			attemptMaxWallTimeMinutes: this.settings.longTasks?.attemptMaxWallTimeMinutes ?? 240,
+			toolMaxWallTimeMinutes: this.settings.longTasks?.toolMaxWallTimeMinutes ?? 30,
+			heartbeatSeconds: this.settings.longTasks?.heartbeatSeconds ?? 5,
+			leaseSeconds: this.settings.longTasks?.leaseSeconds ?? 30,
+			providerRetryMax: this.settings.longTasks?.providerRetryMax ?? 8,
+			contextTokenBudget: this.settings.longTasks?.contextTokenBudget ?? 8000,
+			messageMaxBytes: this.settings.longTasks?.messageMaxBytes ?? 16_384,
+			inboxBatchSize: this.settings.longTasks?.inboxBatchSize ?? 20,
+			unattendedMode: this.settings.longTasks?.unattendedMode ?? "require-sandbox",
+			budgetMode: this.settings.longTasks?.budgetMode ?? "hard",
+			requireExplicitUnattendedBudget: this.settings.longTasks?.requireExplicitUnattendedBudget ?? true,
 		};
 	}
 
