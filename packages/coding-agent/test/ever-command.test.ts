@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteTaskStore } from "@ever/long-tasks";
+import { SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import { submitAsyncTask, submitInteractiveTask } from "../src/cli/ever-command.ts";
 import { handleTaskCommand } from "../src/cli/task-command.ts";

@@ -7,7 +7,7 @@ import {
 	createAssistantMessageEventStream,
 	type Model,
 	type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+} from "@lioooooo123/ever-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type AgentSessionLifecycleRef,

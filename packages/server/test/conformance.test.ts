@@ -1,20 +1,20 @@
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeClientMessage, encodeFrame, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
+import { encodeClientMessage, encodeFrame, PROTOCOL_VERSION } from "@lioooooo123/ever-protocol";
 import { afterEach, describe, expect, test } from "vitest";
-import { InternalServerError, NotImplementedError, type PiServer, PiServerError } from "../src/index.ts";
+import { type EverServer, EverServerError, InternalServerError, NotImplementedError } from "../src/index.ts";
 import { connectUnixTestClient, Deferred, type ProtocolTestClient, TestServerService } from "../src/testing/index.ts";
 import { createUnixServer, type UnixServerOptions } from "../src/transports/unix/index.ts";
 
-const servers = new Set<PiServer>();
+const servers = new Set<EverServer>();
 const clients = new Set<ProtocolTestClient>();
 const tempDirectories = new Set<string>();
 
 async function startServer(
 	service = new TestServerService(),
 	overrides: Partial<UnixServerOptions> = {},
-): Promise<{ server: PiServer; service: TestServerService }> {
+): Promise<{ server: EverServer; service: TestServerService }> {
 	const directory = await mkdtemp(join(tmpdir(), "pis-"));
 	tempDirectories.add(directory);
 	const server = createUnixServer(service, {
@@ -26,7 +26,7 @@ async function startServer(
 	return { server, service };
 }
 
-async function connect(server: PiServer): Promise<ProtocolTestClient> {
+async function connect(server: EverServer): Promise<ProtocolTestClient> {
 	const client = await connectUnixTestClient(server.addresses[0]!);
 	clients.add(client);
 	return client;
@@ -232,7 +232,7 @@ describe("Unix transport conformance", () => {
 		const runtime = service.latestRuntime("terminal");
 
 		runtime.setPhase("turn");
-		runtime.emitError(new PiServerError("session_locked", "lock ownership lost"));
+		runtime.emitError(new EverServerError("session_locked", "lock ownership lost"));
 		await client.waitForClose();
 		await runtime.disposed.promise;
 		expect(runtime.disposeCount).toBe(1);

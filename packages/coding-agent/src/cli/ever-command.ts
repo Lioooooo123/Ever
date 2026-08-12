@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { SqliteTaskStore, type TaskRecord } from "@ever/long-tasks";
+import { SqliteTaskStore, type TaskRecord } from "@lioooooo123/ever-long-tasks";
 import chalk from "chalk";
 import { TaskApplication } from "../core/task-application.ts";
 import { resolveTaskModel } from "../core/task-model.ts";
@@ -86,7 +86,7 @@ function printHelp(): void {
 	console.log(`Ever long-running agent
 
 Usage:
-	  ever                              引导创建 Task 后进入原 Pi TUI
+	  ever                              引导创建 Task 后进入 Ever Task Home
   ever <goal>                       创建 Task 并进入同一个 TUI
   ever <goal> --detach --yes        创建 Task 后转入后台
   ever new                          引导式创建 Task
@@ -182,7 +182,7 @@ export async function handleEverCommand(args: string[], agentDir: string, cwd: s
 	}
 	if (args.includes("--version") || args.includes("-v") || args.includes("--list-models")) return false;
 	if (args.some((arg) => INTERNAL_SESSION_OPTIONS.has(arg))) {
-		console.error(chalk.red("Error: Ever CLI 只运行持久 Task；普通 Session 仅保留在 Pi SDK 内部。"));
+		console.error(chalk.red("Error: Ever CLI 只运行持久 Task；Session 是 Task 内部的执行上下文。"));
 		process.exitCode = 1;
 		return true;
 	}

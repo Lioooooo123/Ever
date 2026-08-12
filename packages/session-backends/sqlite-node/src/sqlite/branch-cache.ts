@@ -1,5 +1,5 @@
-import { SessionError } from "@earendil-works/pi-agent-core";
-import { uuidv7 } from "@earendil-works/pi-ai";
+import { SessionError } from "@lioooooo123/ever-agent-core";
+import { uuidv7 } from "@lioooooo123/ever-ai";
 import { sql } from "./sql.ts";
 import {
 	copyBranchEntriesThroughSeq,

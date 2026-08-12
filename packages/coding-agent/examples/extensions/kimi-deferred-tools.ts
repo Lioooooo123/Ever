@@ -1,19 +1,19 @@
 /**
  * Minimal Kimi deferred-tool loading demo.
  *
- *   pi -e ./kimi-deferred-tools.ts
+ *   ever -e ./kimi-deferred-tools.ts
  *    example prompt: Use the available tools to calculate 100 + 500. Do not calculate it yourself.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@lioooooo123/ever";
 import { Type } from "typebox";
 
 function calculate(_expr: string): string {
 	return "42";
 }
 
-export default function (pi: ExtensionAPI): void {
-	pi.registerTool({
+export default function (ever: ExtensionAPI): void {
+	ever.registerTool({
 		name: "Calculator",
 		label: "Calculator",
 		description: "Evaluate a simple arithmetic expression.",
@@ -28,7 +28,7 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerTool({
+	ever.registerTool({
 		name: "tool_search",
 		label: "Tool Search",
 		description: "Find and activate tools for a capability.",
@@ -44,9 +44,9 @@ export default function (pi: ExtensionAPI): void {
 				};
 			}
 
-			const active = pi.getActiveTools();
+			const active = ever.getActiveTools();
 			const added = active.includes("Calculator") ? [] : ["Calculator"];
-			if (added.length > 0) pi.setActiveTools([...active, ...added]);
+			if (added.length > 0) ever.setActiveTools([...active, ...added]);
 
 			return {
 				content: [{ type: "text", text: "Success. Found 1 matching tool(s)" }],
@@ -55,7 +55,7 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on("session_start", () => {
-		pi.setActiveTools(["tool_search"]);
+	ever.on("session_start", () => {
+		ever.setActiveTools(["tool_search"]);
 	});
 }

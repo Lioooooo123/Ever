@@ -36,7 +36,7 @@ One harness executes runs against one session. The session has four kinds of sta
 ## Non-goals
 
 - **Exactly-once hook side effects.** A hook result becomes durable when the record or entry that consumes it commits. A crash before that commit can run the hook again (section 11 replay table). Side effects a hook makes on its own are invisible to the harness: HTTP calls, file writes. A hook that needs crash-safe external effects must be idempotent, for example keyed by operation id.
-- **Provider stream resumption.** Partial streams are never persisted or resumed. After a crash, an attempt without a response is an unknown provider effect: recovery starts a later numbered attempt only when policy permits, or, with an abort marker, settles the existing attempt once as synthetic `aborted` under its provisioned id without repeating the effect. A settled stream is persisted before classification. Deferred requests remain in scope: pi-ai persists the provider handle in a `deferred` assistant message. One stable deferred-fetch step redeems that response and later pending responses, copying the original generation step's total configuration and normalized retry policy once. Each `resume()` performs at most one numbered check and persists its response, including another pending `deferred` response. Recovery polls the newest persisted source instead of starting replacement generation.
+- **Provider stream resumption.** Partial streams are never persisted or resumed. After a crash, an attempt without a response is an unknown provider effect: recovery starts a later numbered attempt only when policy permits, or, with an abort marker, settles the existing attempt once as synthetic `aborted` under its provisioned id without repeating the effect. A settled stream is persisted before classification. Deferred requests remain in scope: ever-ai persists the provider handle in a `deferred` assistant message. One stable deferred-fetch step redeems that response and later pending responses, copying the original generation step's total configuration and normalized retry policy once. Each `resume()` performs at most one numbered check and persists its response, including another pending `deferred` response. Recovery polls the newest persisted source instead of starting replacement generation.
 - **Multiple writers.** Two processes on one session are out of scope. The serving layer routes all traffic for a session to the process that holds its harness. Lanes cover the workloads that look like multi-writer: parallel threads over shared history.
 - **Replication.** A session lives in one place. Coordination-free sync of diverging copies is a different design. Nothing forecloses it later.
 - **Coding-agent migration.** Migrating coding-agent to `AgentHarness` is out of scope. Compatibility means the new JSONL repository can read supported coding-agent v3 files.
@@ -674,7 +674,7 @@ An abort marker takes priority over ordinary transitions, regardless of a respon
 
 Overflow classification has three explicit inputs, all durable on the response and attempt:
 
-1. **Explicit provider context-limit error.** The response has `stopReason: "error"`, and its durable `errorMessage` matches pi-ai's context-limit patterns after exclusions such as throttling and rate limits. Examples: "prompt is too long", "exceeds the context window", and DashScope/Qwen's "Range of input length should be". Reopen needs no transient exception or HTTP object.
+1. **Explicit provider context-limit error.** The response has `stopReason: "error"`, and its durable `errorMessage` matches ever-ai's context-limit patterns after exclusions such as throttling and rate limits. Examples: "prompt is too long", "exceeds the context window", and DashScope/Qwen's "Range of input length should be". Reopen needs no transient exception or HTTP object.
 2. **Reported input exceeds the captured window.** The response has `stopReason: "stop"`, `attempt.contextWindow > 0`, and `message.usage.input + message.usage.cacheRead > attempt.contextWindow`. This preserves the existing successful-response check without introducing a separate named condition or durable outcome.
 3. **A recoverable `length`.** The response either matches the existing Xiaomi MiMo-compatible context-pressure signal — zero output and reported input plus cache-read tokens at least 99% of the captured non-zero window — or ended below the request's persisted intended output limit:
 
@@ -1461,7 +1461,7 @@ interface SuspendedOperation {
 ### Examples
 
 ```ts
-// Interactive pi. suspended has 0 or 1 entries, always "main".
+// Interactive ever. suspended has 0 or 1 entries, always "main".
 const { harness, suspended } = await AgentHarness.create({
   session,
   models,
@@ -3756,9 +3756,9 @@ Notes:
 - Abort before structural commit suppresses it and finishes aborted; abort after commit completes remaining writes as completed.
 - After a summarized navigation move, recovery appends the exact hook/prepared summary and never invokes hook/provider.
 
-## 16. pi-ai: deferred requests
+## 16. ever-ai: deferred requests
 
-These pi-ai deferred/authenticated Models APIs are already landed. H8 only integrates them; it adds no pi-ai work.
+These ever-ai deferred/authenticated Models APIs are already landed. H8 only integrates them; it adds no ever-ai work.
 
 Everything is per-request; batch APIs can implement the same shape through a custom provider.
 
@@ -3799,7 +3799,7 @@ interface AssistantMessage {
 // part of this interface.
 interface ProviderRequestOptions<TModel = Model<Api>> {
   signal?: AbortSignal;
-  /** Explicit parent for this logical pi-ai operation. Inherited by stream,
+  /** Explicit parent for this logical ever-ai operation. Inherited by stream,
       simple-stream, deferred fetch/cancel, and image options. */
   telemetryContext?: TelemetryContext;
   apiKey?: string;
@@ -3846,7 +3846,7 @@ export interface ProviderStreams {
 
 All stream, deferred, and image options inherit `ProviderRequestOptions.telemetryContext`; providers, Models, ImagesModels, direct dispatch, and `buildBaseOptions()` preserve it unchanged.
 
-`pending` exists only in mutable live streams. Wrapper results and harness entries use `SettledAssistantMessage`; durable usage records and settled `pi.ai.request` spans cannot contain `pending`. Telemetry spells `toolUse` as `tool_use`.
+`pending` exists only in mutable live streams. Wrapper results and harness entries use `SettledAssistantMessage`; durable usage records and settled `ever.ai.request` spans cannot contain `pending`. Telemetry spells `toolUse` as `tool_use`.
 
 The harness uses the authenticated `Models` dispatch surface rather than talking to a provider object directly:
 
@@ -3889,7 +3889,7 @@ repo.create({ id?, parentSessionId? }): Promise<Session>;
 - Copy conversation entries without source lanes, including non-projecting responses, but no orchestration/classification/usage records. A copied compaction's self-contained tail preserves exact overflow omission without its link. A fork before it uses entry-local projection: omit `error`/`aborted`/`deferred`, retain `stop`/general `length`. The fork is idle with zero token/cost ledger, visible entry usage snapshots, and `messageCount` from copied messages.
 - `scope: "branch"` creates only `main` at the fork point with a fresh config equal to snapshot source `main`. `scope: "tree"` copies every lane name/leaf and gives each its snapshot config. Atomic configured-lane creation writes new destination records, never source history or anchor-derived config. No other lane records copy, so all lanes are idle.
 - Tree scope copies current name, labels, and custom facts. Branch scope copies name/custom facts and labels only for copied targets. Deletions stay absent; custom JSON null remains. Destination writes fresh history; facts have no ids.
-- Any message may be the fork point. A mid-tool-batch tip remains promptable because pi-ai inserts empty results for orphaned calls at request build.
+- Any message may be the fork point. A mid-tool-batch tip remains promptable because ever-ai inserts empty results for orphaned calls at request build.
 - Forking leaves the source untouched and copies only its coherent committed prefix, including committed open-operation entries but not its records or promised output.
 - Linkage is `parentSessionId`, set by `fork()` and settable on `create()` — the basis for subagent parent/child tracking and export bundles.
 - **Non-normative example.** Harness has no subagent tool. An application may derive a child session id from parent id plus provider `toolCallId`, so safe replay reopens rather than duplicates it. Core does not depend on this.
@@ -3903,11 +3903,11 @@ Pi ships no exporter. `InMemoryTelemetryContext` is the deterministic reference;
 
 ### Package ownership
 
-`@earendil-works/pi-telemetry` owns/exports the generic contract, schema machinery, no-op, and memory reference; `/testing` exports runner-independent conformance. Pi-ai imports only `TelemetryContext` for options and emits no spans. Agent `harness/telemetry.ts` owns AI/harness schemas and starters plus their readonly composition tuple. Agent root re-exports them and the generic surface: one generic contract, one domain-schema owner.
+`@lioooooo123/ever-telemetry` owns/exports the generic contract, schema machinery, no-op, and memory reference; `/testing` exports runner-independent conformance. Pi-ai imports only `TelemetryContext` for options and emits no spans. Agent `harness/telemetry.ts` owns AI/harness schemas and starters plus their readonly composition tuple. Agent root re-exports them and the generic surface: one generic contract, one domain-schema owner.
 
-`AgentHarnessOptions.telemetryContext` defaults to the no-op context, and the agent-side request wrapper emits `pi.ai.request` through the agent-owned AI schema.
+`AgentHarnessOptions.telemetryContext` defaults to the no-op context, and the agent-side request wrapper emits `ever.ai.request` through the agent-owned AI schema.
 
-Schemas use pi-owned `pi.ai.*`, `pi.harness.*`, `pi.session.*`, and `pi.*` attributes, not external semantic conventions. Adapters may translate; emitted vocabulary stays stable.
+Schemas use Ever-owned `ever.ai.*`, `ever.harness.*`, `ever.session.*`, and `ever.*` attributes, not external semantic conventions. Adapters may translate; emitted vocabulary stays stable.
 
 ### Context contract
 
@@ -4016,7 +4016,7 @@ type TelemetryParentDefinition =
 interface TelemetrySpanDefinition {
   description: string;
   /** Exhaustive allowed-parent rule. "external" means a caller-owned span
-      outside the pi schemas. */
+      outside the Ever schemas. */
   parents: TelemetryParentDefinition;
   startAttributes: Record<string, TelemetryStartAttributeDefinition>;
   /** Completion enrichment only. Every end attribute is optional; startSpan()
@@ -4051,10 +4051,10 @@ const startSpan = createTypedSpanStarter(
   AGENT_TELEMETRY_SCHEMAS,
 );
 
-await startSpan("pi.harness.step", stepAttributes, async (stepSpan, startChildSpan) => {
-  stepSpan.setAttributes({ "pi.step.outcome": "succeeded" });
-  return startChildSpan("pi.ai.request", requestAttributes, async (requestSpan) => {
-    requestSpan.setAttributes({ "pi.ai.response.stop_reason": "stop" });
+await startSpan("ever.harness.step", stepAttributes, async (stepSpan, startChildSpan) => {
+  stepSpan.setAttributes({ "ever.step.outcome": "succeeded" });
+  return startChildSpan("ever.ai.request", requestAttributes, async (requestSpan) => {
+    requestSpan.setAttributes({ "ever.ai.response.stop_reason": "stop" });
   });
 });
 ```
@@ -4069,55 +4069,55 @@ The following tables are normative input to the schema objects. `!` means a requ
 
 | span | allowed parents | status |
 |---|---|---|
-| `pi.ai.request` | root or any caller span | error on throw/reject or a returned result with stop reason `error`; `aborted` and `deferred` are normal outcomes |
+| `ever.ai.request` | root or any caller span | error on throw/reject or a returned result with stop reason `error`; `aborted` and `deferred` are normal outcomes |
 
-| `pi.ai.request` start attribute | type | requirement | values / meaning |
+| `ever.ai.request` start attribute | type | requirement | values / meaning |
 |---|---|---|---|
-| `pi.ai.operation` | string | ! | `stream`, `fetch_deferred`, `cancel_deferred`, `generate_images` |
-| `pi.ai.provider` | string | ! | selected provider id |
-| `pi.ai.model` | string | ! | requested model id |
-| `pi.ai.api` | string | ! | provider API id |
-| `pi.ai.streaming` | boolean | ! | whether this operation returns a stream |
-| `pi.ai.deferred` | boolean | ? | whether the operation requests or participates in deferred execution |
+| `ever.ai.operation` | string | ! | `stream`, `fetch_deferred`, `cancel_deferred`, `generate_images` |
+| `ever.ai.provider` | string | ! | selected provider id |
+| `ever.ai.model` | string | ! | requested model id |
+| `ever.ai.api` | string | ! | provider API id |
+| `ever.ai.streaming` | boolean | ! | whether this operation returns a stream |
+| `ever.ai.deferred` | boolean | ? | whether the operation requests or participates in deferred execution |
 
-| `pi.ai.request` end attribute | type | values / meaning |
+| `ever.ai.request` end attribute | type | values / meaning |
 |---|---|---|
-| `pi.ai.response.model` | string | concrete response model, when reported |
-| `pi.ai.response.id` | string | provider response id; high cardinality |
-| `pi.ai.response.stop_reason` | string | `stop`, `length`, `tool_use`, `error`, `aborted`, `deferred`; terminal `toolUse` normalizes to `tool_use`, and `pending` is never recorded |
-| `pi.ai.http.status_code` | number | final HTTP status when exposed by the provider path |
-| `pi.ai.usage.input_tokens` | number | reported input tokens |
-| `pi.ai.usage.output_tokens` | number | reported output tokens |
-| `pi.ai.usage.cache_read_tokens` | number | reported cache-read tokens |
-| `pi.ai.usage.cache_write_tokens` | number | reported cache-write tokens |
-| `pi.ai.usage.reasoning_tokens` | number | reported reasoning subset of output |
-| `pi.ai.usage.total_tokens` | number | reported total tokens |
-| `pi.ai.usage.cost` | number | reported total cost |
-| `pi.ai.stream.chunk_count` | number | number of streamed update chunks, without chunk content |
-| `pi.ai.stream.time_to_first_chunk_ms` | number | elapsed milliseconds to first update chunk |
-| `pi.ai.error.type` | string | low-cardinality provider or transport error class |
+| `ever.ai.response.model` | string | concrete response model, when reported |
+| `ever.ai.response.id` | string | provider response id; high cardinality |
+| `ever.ai.response.stop_reason` | string | `stop`, `length`, `tool_use`, `error`, `aborted`, `deferred`; terminal `toolUse` normalizes to `tool_use`, and `pending` is never recorded |
+| `ever.ai.http.status_code` | number | final HTTP status when exposed by the provider path |
+| `ever.ai.usage.input_tokens` | number | reported input tokens |
+| `ever.ai.usage.output_tokens` | number | reported output tokens |
+| `ever.ai.usage.cache_read_tokens` | number | reported cache-read tokens |
+| `ever.ai.usage.cache_write_tokens` | number | reported cache-write tokens |
+| `ever.ai.usage.reasoning_tokens` | number | reported reasoning subset of output |
+| `ever.ai.usage.total_tokens` | number | reported total tokens |
+| `ever.ai.usage.cost` | number | reported total cost |
+| `ever.ai.stream.chunk_count` | number | number of streamed update chunks, without chunk content |
+| `ever.ai.stream.time_to_first_chunk_ms` | number | elapsed milliseconds to first update chunk |
+| `ever.ai.error.type` | string | low-cardinality provider or transport error class |
 
 The schema declares no per-chunk telemetry event. The assistant stream carries live deltas while telemetry records only aggregate chunk count and first-chunk latency. Default telemetry never contains request or response content.
 
 #### Harness schema
 
-The three operation spans share `pi.session.id` (string, required, high cardinality), `pi.lane.name` (string, required, high cardinality), `pi.operation.id` (string, required, high cardinality), and `pi.operation.recovery` (boolean, required). Each also requires `pi.operation.kind` with only the literal matching that span. Operation error status may add optional end attributes `pi.error.code` and `pi.error.type`, both low-cardinality strings; free-form error messages are status diagnostics, not schema attributes.
+The three operation spans share `ever.session.id` (string, required, high cardinality), `ever.lane.name` (string, required, high cardinality), `ever.operation.id` (string, required, high cardinality), and `ever.operation.recovery` (boolean, required). Each also requires `ever.operation.kind` with only the literal matching that span. Operation error status may add optional end attributes `ever.error.code` and `ever.error.type`, both low-cardinality strings; free-form error messages are status diagnostics, not schema attributes.
 
 | span | allowed parents | start attributes | optional end attributes | explicit error status |
 |---|---|---|---|---|
-| `pi.harness.run` | root or application span | common operation attributes plus `pi.operation.kind`: `run` | `pi.operation.outcome`: `completed`, `aborted`, `failed`, `suspended` | outcome `failed` |
-| `pi.harness.compaction` | root or application span | common operation attributes plus `pi.operation.kind`: `compaction` | `pi.operation.outcome`: `completed`, `declined`, `aborted`, `failed` | outcome `failed` |
-| `pi.harness.navigation` | root or application span | common operation attributes plus `pi.operation.kind`: `navigation` | `pi.operation.outcome`: `completed`, `declined`, `aborted`, `failed` | outcome `failed` |
-| `pi.harness.checkpoint` | `pi.harness.run` | `pi.lane.name`!, `pi.operation.id`!, `pi.checkpoint.kind`!: `normal`, `failure_drain`, `abort_reconcile` | none | only throw/reject |
-| `pi.harness.turn` | `pi.harness.run` | `pi.lane.name`!, `pi.operation.id`!, `pi.turn.id`! string, high cardinality | none | only throw/reject |
-| `pi.harness.step` | `pi.harness.run`, `pi.harness.turn`, `pi.harness.checkpoint`, `pi.harness.compaction`, or `pi.harness.navigation` | `pi.lane.name`!, `pi.operation.id`!, `pi.step.id`! string high-cardinality, `pi.step.kind`!: `assistant`, `deferred_fetch`, `compaction`, `branch_summary`; `pi.step.attempt`! number; `pi.compaction.reason`?: `manual`, `threshold`, `overflow` | `pi.step.outcome`: `succeeded`, `retry`, `failed`, `aborted`, `deferred`, `overflow` | outcome `retry` or `failed` |
-| `pi.harness.tool` | `pi.harness.turn` for live work or `pi.harness.run` for reconciliation | `pi.lane.name`!, `pi.operation.id`!, `pi.turn.id`? string high-cardinality, `pi.tool.name`! string, `pi.tool.call_id`! string high-cardinality, `pi.tool.replay`!: `never`, `safe`; `pi.tool.recovery`! boolean | `pi.tool.is_error` boolean for the raw phase-2 execution result | `pi.tool.is_error: true` |
-| `pi.harness.hook` | root or the current harness/AI scope | `pi.lane.name`!, `pi.operation.id`? string high-cardinality, `pi.hook.name`! string with values from `HookName`, `pi.hook.registration_id`? string | `pi.hook.outcome`: `completed`, `skipped`, `blocked`, `failed` | handler throw, including fail-closed `before_tool` |
-| `pi.harness.sleep` | `pi.harness.run`, `pi.harness.compaction`, or `pi.harness.navigation` | `pi.operation.id`!, `pi.sleep.delay_ms`! number | `pi.sleep.outcome`: `elapsed`, `aborted` | only throw/reject |
-| `pi.harness.event_handler` | root or the scope emitting the event | `pi.event.type`! low-cardinality string with the section 10 event discriminants, `pi.lane.name`? string high-cardinality | none | listener throw; the event system catches it after the span rejects |
-| `pi.session.write` | root or the current harness scope | `pi.lane.name`!, `pi.operation.id`? string high-cardinality, `pi.session.mutation`!: `entry`, `record`, `lane`, `fact`, `multi`; `pi.session.item_type`? string | `pi.session.seq` number for a single mutation or the first sequence in a multi-write append | storage rejection |
+| `ever.harness.run` | root or application span | common operation attributes plus `ever.operation.kind`: `run` | `ever.operation.outcome`: `completed`, `aborted`, `failed`, `suspended` | outcome `failed` |
+| `ever.harness.compaction` | root or application span | common operation attributes plus `ever.operation.kind`: `compaction` | `ever.operation.outcome`: `completed`, `declined`, `aborted`, `failed` | outcome `failed` |
+| `ever.harness.navigation` | root or application span | common operation attributes plus `ever.operation.kind`: `navigation` | `ever.operation.outcome`: `completed`, `declined`, `aborted`, `failed` | outcome `failed` |
+| `ever.harness.checkpoint` | `ever.harness.run` | `ever.lane.name`!, `ever.operation.id`!, `ever.checkpoint.kind`!: `normal`, `failure_drain`, `abort_reconcile` | none | only throw/reject |
+| `ever.harness.turn` | `ever.harness.run` | `ever.lane.name`!, `ever.operation.id`!, `ever.turn.id`! string, high cardinality | none | only throw/reject |
+| `ever.harness.step` | `ever.harness.run`, `ever.harness.turn`, `ever.harness.checkpoint`, `ever.harness.compaction`, or `ever.harness.navigation` | `ever.lane.name`!, `ever.operation.id`!, `ever.step.id`! string high-cardinality, `ever.step.kind`!: `assistant`, `deferred_fetch`, `compaction`, `branch_summary`; `ever.step.attempt`! number; `ever.compaction.reason`?: `manual`, `threshold`, `overflow` | `ever.step.outcome`: `succeeded`, `retry`, `failed`, `aborted`, `deferred`, `overflow` | outcome `retry` or `failed` |
+| `ever.harness.tool` | `ever.harness.turn` for live work or `ever.harness.run` for reconciliation | `ever.lane.name`!, `ever.operation.id`!, `ever.turn.id`? string high-cardinality, `ever.tool.name`! string, `ever.tool.call_id`! string high-cardinality, `ever.tool.replay`!: `never`, `safe`; `ever.tool.recovery`! boolean | `ever.tool.is_error` boolean for the raw phase-2 execution result | `ever.tool.is_error: true` |
+| `ever.harness.hook` | root or the current harness/AI scope | `ever.lane.name`!, `ever.operation.id`? string high-cardinality, `ever.hook.name`! string with values from `HookName`, `ever.hook.registration_id`? string | `ever.hook.outcome`: `completed`, `skipped`, `blocked`, `failed` | handler throw, including fail-closed `before_tool` |
+| `ever.harness.sleep` | `ever.harness.run`, `ever.harness.compaction`, or `ever.harness.navigation` | `ever.operation.id`!, `ever.sleep.delay_ms`! number | `ever.sleep.outcome`: `elapsed`, `aborted` | only throw/reject |
+| `ever.harness.event_handler` | root or the scope emitting the event | `ever.event.type`! low-cardinality string with the section 10 event discriminants, `ever.lane.name`? string high-cardinality | none | listener throw; the event system catches it after the span rejects |
+| `ever.session.write` | root or the current harness scope | `ever.lane.name`!, `ever.operation.id`? string high-cardinality, `ever.session.mutation`!: `entry`, `record`, `lane`, `fact`, `multi`; `ever.session.item_type`? string | `ever.session.seq` number for a single mutation or the first sequence in a multi-write append | storage rejection |
 
-Parent text maps directly to `TelemetryParentDefinition`: root/application is `root_or_external`, root/current or any caller is `any`, and finite lists are exact `spans`. Tool spans wrap only phase-two `fx.executeTool` and report raw `is_error`, not final `terminate`; plans are session-write spans. Blocked, invalid, genuine-length, aborted-before-start, and interrupted-without-replay results emit no tool span; every live execution or safe replay emits one. Live tools parent to turn with turn id; reconciliation omits turn id and parents to resumed run. `pi.hook.name` contains exactly `before_run`, `before_resume`, `before_run_end`, `transform_context`, `before_request`, `before_payload`, `after_response`, `before_tool`, `after_tool`, `before_compaction`, and `before_navigation`; `pi.event.type` contains exactly section 10 discriminants. Each handler invocation has its own span/status without failing its parent. Harness schema initially declares no span events.
+Parent text maps directly to `TelemetryParentDefinition`: root/application is `root_or_external`, root/current or any caller is `any`, and finite lists are exact `spans`. Tool spans wrap only phase-two `fx.executeTool` and report raw `is_error`, not final `terminate`; plans are session-write spans. Blocked, invalid, genuine-length, aborted-before-start, and interrupted-without-replay results emit no tool span; every live execution or safe replay emits one. Live tools parent to turn with turn id; reconciliation omits turn id and parents to resumed run. `ever.hook.name` contains exactly `before_run`, `before_resume`, `before_run_end`, `transform_context`, `before_request`, `before_payload`, `after_response`, `before_tool`, `after_tool`, `before_compaction`, and `before_navigation`; `ever.event.type` contains exactly section 10 discriminants. Each handler invocation has its own span/status without failing its parent. Harness schema initially declares no span events.
 
 One session-write span covers one append. Singles use their kind; arrays use `multi` and omit item type when mixed. Dynamic ids/names are attributes. One step span covers one in-process provider attempt; durable step id correlates attempts, and deferred fetch parents to resumed run. Hook structural sources emit hook/write but no step/AI span. Generated structural requests emit step/AI but no public message lifecycle. Prepared/post-move writes need no provider span. The schemas exhaust pi instrumentation vocabulary.
 
@@ -4139,13 +4139,13 @@ async function assistantAttempt(
 ): Promise<SettledAssistantMessage> {
   return startHarnessSpan(
     turnContext,
-    "pi.harness.step",
+    "ever.harness.step",
     {
-      "pi.lane.name": state.lane,
-      "pi.operation.id": op.id,
-      "pi.step.id": step.id,
-      "pi.step.kind": "assistant",
-      "pi.step.attempt": record.attempt,
+      "ever.lane.name": state.lane,
+      "ever.operation.id": op.id,
+      "ever.step.id": step.id,
+      "ever.step.kind": "assistant",
+      "ever.step.attempt": record.attempt,
     },
     async (stepContext) => {
       const started = await fx.startAttempt(record, stepContext);
@@ -4163,18 +4163,18 @@ async function assistantAttempt(
 }
 ```
 
-Section 14 `streamAssistant()` starts `pi.ai.request`, passes its span through Models request options, records only declared aggregates, and returns the same message. `Effects.executeTool()` wraps only phase 2; hook/event runners use the same explicit-parent pattern.
+Section 14 `streamAssistant()` starts `ever.ai.request`, passes its span through Models request options, records only declared aggregates, and returns the same message. `Effects.executeTool()` wraps only phase 2; hook/event runners use the same explicit-parent pattern.
 
 | owner / method | target telemetry |
 |---|---|
-| operation dispatcher | `pi.harness.run`, `pi.harness.compaction`, or `pi.harness.navigation` |
-| checkpoint / turn / step procedure scopes | corresponding `pi.harness.*` scope span |
-| `appendEntry`, `appendRecord`, `startStep`, `prepareBranchSummary`, `moveLane`, `setFact`, and a conditional commit that appends | one `pi.session.write` per underlying `Session.append()` call; a conditional no-append result emits no write span |
-| `streamAssistant`, `fetchDeferred`, `cancelDeferred` | `pi.ai.request` with the matching `pi.ai.operation` |
-| `executeTool` | `pi.harness.tool` |
-| `runHook` | one `pi.harness.hook` per registered handler |
-| `sleep` | `pi.harness.sleep` |
-| passive event delivery | one `pi.harness.event_handler` per listener |
+| operation dispatcher | `ever.harness.run`, `ever.harness.compaction`, or `ever.harness.navigation` |
+| checkpoint / turn / step procedure scopes | corresponding `ever.harness.*` scope span |
+| `appendEntry`, `appendRecord`, `startStep`, `prepareBranchSummary`, `moveLane`, `setFact`, and a conditional commit that appends | one `ever.session.write` per underlying `Session.append()` call; a conditional no-append result emits no write span |
+| `streamAssistant`, `fetchDeferred`, `cancelDeferred` | `ever.ai.request` with the matching `ever.ai.operation` |
+| `executeTool` | `ever.harness.tool` |
+| `runHook` | one `ever.harness.hook` per registered handler |
+| `sleep` | `ever.harness.sleep` |
+| passive event delivery | one `ever.harness.event_handler` per listener |
 
 Contexts/native spans are process-local and never persisted in records, entries, snapshots, events, or deferred handles.
 
@@ -4192,21 +4192,21 @@ Run outcome never uses `declined`; only structural schemas do. Trace context is 
 The span tree follows execution scopes:
 
 ```text
-pi.harness.run
-├─ pi.harness.step             deferred_fetch, numbered poll attempt
-├─ pi.harness.checkpoint
-│  └─ pi.harness.step          compaction, numbered attempt
-├─ pi.harness.turn
-│  ├─ pi.harness.step          assistant, attempt
-│  │  └─ pi.ai.request         provider, model, stop reason
-│  └─ pi.harness.tool          tool name, call id, replay
-├─ pi.harness.sleep            retry delay between attempts
-├─ pi.harness.hook
-├─ pi.harness.event_handler
-└─ pi.session.write            entry/record/lane/fact
+ever.harness.run
+├─ ever.harness.step             deferred_fetch, numbered poll attempt
+├─ ever.harness.checkpoint
+│  └─ ever.harness.step          compaction, numbered attempt
+├─ ever.harness.turn
+│  ├─ ever.harness.step          assistant, attempt
+│  │  └─ ever.ai.request         provider, model, stop reason
+│  └─ ever.harness.tool          tool name, call id, replay
+├─ ever.harness.sleep            retry delay between attempts
+├─ ever.harness.hook
+├─ ever.harness.event_handler
+└─ ever.session.write            entry/record/lane/fact
 
-pi.harness.compaction          manual operation
-pi.harness.navigation
+ever.harness.compaction          manual operation
+ever.harness.navigation
 ```
 
 Procedures own orchestration scopes; Effects own writes, phase-two tools, hooks, and sleep; Models dispatch owns AI request; event delivery owns handler spans. Parents are explicit.
@@ -4312,7 +4312,7 @@ Gate invariants, asserted across Tier C:
 ### Other suites
 
 - The telemetry reference adapter and every third-party adapter run the exported conformance cases for synchronous admission, result/rejection identity, automatic and explicit status, attribute merging, event order, post-settlement behavior, parentage, and unreadable-payload suppression.
-- Runtime telemetry tests use the in-memory reference to assert exact schema-conforming span trees and independently valid start/end/event bags on every status path. Assistant, generated compaction, generated branch-summary, and deferred-fetch attempts carry the stable durable `pi.step.id`, correct kind, and numbered attempt. Hook-sourced structural results emit hook/write spans but no step or AI-request span; a prepared branch-summary write and post-move append likewise emit no provider span. Unmarked `aborted` responses produce retry/failed step outcomes and never an aborted operation outcome; marker-backed settlement produces the abort outcome. End attributes remain optional. Content and secret fixtures assert absence, not merely redaction.
+- Runtime telemetry tests use the in-memory reference to assert exact schema-conforming span trees and independently valid start/end/event bags on every status path. Assistant, generated compaction, generated branch-summary, and deferred-fetch attempts carry the stable durable `ever.step.id`, correct kind, and numbered attempt. Hook-sourced structural results emit hook/write spans but no step or AI-request span; a prepared branch-summary write and post-move append likewise emit no provider span. Unmarked `aborted` responses produce retry/failed step outcomes and never an aborted operation outcome; marker-backed settlement produces the abort outcome. End attributes remain optional. Content and secret fixtures assert absence, not merely redaction.
 - The existing `agent-loop` and `agent` suites pass unchanged — the section 14 compatibility criterion.
 - Session/storage lifecycle and fork conformance runs against Memory, JSONL, and SQLite: one-mutation and non-empty-array `append()` returns, lane-free entry `LogItem`s with positional input correlation, consecutive non-interleaved sequence assignment; all-or-none validation, projection, and event publication in logical order; expanded `getLog()` results; exact immutable batched entry lookup; configured-lane `[lane, config]` and labeled-navigation `[fact, finish]` appends with neither half observable; separate built-in/custom fact namespaces; name/label/custom deletion versus JSON null; close during idle and queued appends; JSONL ordinary-object and physical array lines, whole torn-array removal, and complete-invalid transaction rejection; SQLite renewal stop and owner/fence-matched release; one coherent fork snapshot while source writes race; current facts/pointers/configurations from that snapshot; no copied orchestration or usage records; and zero fork token/cost totals with copied entry display usage intact.
 - Event ordering per section 10: direct and tool-result messages emit immediate start/end before append; streamed assistant/fetch responses run `after_response` before `message_end`; every successful message append then emits `entry_added`, and a fault after `message_end` but before append emits no such confirmation. Multi-write appends emit nothing before full success and then publish in logical order; labeled navigation emits `fact_update` before its operation-end event. Abort cases cover one `run_abort`, optional assistant message lifecycle only for an existing attempt, required reconciliation `entry_added` events, then `run_end` with matching paired optional final fields. Internal compaction and branch-summary streams emit no assistant-message events; only the committed typed entry emits `entry_added`.
@@ -4465,12 +4465,12 @@ These packages own `packages/agent/src/harness/session/jsonl/**`, the concrete `
 I0, I1, and I2 may proceed independently. I3 → I4 → I5 is serial and begins after D0 fixes the final `LaneState` shape. These packages use separate modules with focused unit tests; I5 remains primitive-only and does not edit `agent-harness.ts`.
 
 - [x] **I0 — telemetry contracts, typed schemas, and no-op context.** Dependencies: none.
-  - Primary files: `packages/telemetry/src/index.ts`, `packages/telemetry/src/memory.ts`, `packages/telemetry/src/testing/`, and focused tests; pi-ai request-option types/propagation and focused tests; `packages/agent/src/harness/telemetry.ts`, `packages/agent/src/index.ts`, focused tests, package scripts, `packages/agent/scripts/generate-telemetry-docs.ts`, and generated `packages/agent/docs/telemetry-schema.md`. Do not edit `agent-harness.ts`; its canonical context type is landed, while H0 owns option renaming/defaulting/storage and execution threading after convergence.
+  - Primary files: `packages/telemetry/src/index.ts`, `packages/telemetry/src/memory.ts`, `packages/telemetry/src/testing/`, and focused tests; ever-ai request-option types/propagation and focused tests; `packages/agent/src/harness/telemetry.ts`, `packages/agent/src/index.ts`, focused tests, package scripts, `packages/agent/scripts/generate-telemetry-docs.ts`, and generated `packages/agent/docs/telemetry-schema.md`. Do not edit `agent-harness.ts`; its canonical context type is landed, while H0 owns option renaming/defaulting/storage and execution threading after convergence.
   - In telemetry, implement the one canonical section 18 callback-based `TelemetryContext` / `TelemetrySpan` contract, shared no-op context, deterministic in-memory reference adapter, runner-independent adapter conformance cases, serializable `defineTelemetrySchema()` machinery, and `createTypedSpanStarter(context, schemas)` composition with child-bound starters.
-  - In pi-ai, add optional `telemetryContext` to `ProviderRequestOptions` so every stream, deferred, and image option inherits it; provider, `Models`, `ImagesModels`, direct dispatch, and simple-option conversion preserve it. Pi-ai owns no domain schema or helper.
+  - In ever-ai, add optional `telemetryContext` to `ProviderRequestOptions` so every stream, deferred, and image option inherits it; provider, `Models`, `ImagesModels`, direct dispatch, and simple-option conversion preserve it. Pi-ai owns no domain schema or helper.
   - In agent, define the landed `AI_TELEMETRY_SCHEMA` and `HARNESS_TELEMETRY_SCHEMA`, their inferred types, the readonly `AGENT_TELEMETRY_SCHEMAS` composition tuple, and typed `startAiSpan()` / `startHarnessSpan()` helpers. Export both schemas, the tuple, and helpers, and re-export the generic telemetry surface from the agent package root. Do not duplicate the generic contract and do not adopt OTel or another external semantic convention.
   - Generate the combined repository-only Markdown reference from the runtime schema values with the named agent package scripts. Production helpers perform no runtime schema validation; schemas compile-time-check each pi-written start/end/event call and remain importable as machine-readable data.
-  - Wire telemetry before pi-ai in workspace, local-release, publish, profiling, and coding-agent binary build order; add source-test aliases and refresh workspace/generated dependency locks.
+  - Wire telemetry before ever-ai in workspace, local-release, publish, profiling, and coding-agent binary build order; add source-test aliases and refresh workspace/generated dependency locks.
   - Landed coverage: focused tests exercise no-op synchronous admission, returned-value and sync/async rejection preservation, explicit no-op child propagation, one shared frozen inert span with no payload inspection, exact start/optional-end inference, multi-schema vocabulary composition, child-starter parent propagation, rejection of duplicate span names and missing, unknown, empty-schema, and invalid closed-set attributes, absence of declared span events, schema JSON serialization, the in-memory reference against every exported adapter conformance case, option propagation across provider/`Models` stream and deferred dispatch, direct and `ImagesModels` image dispatch, built-in simple-option conversion, and generated-document freshness. O2 will use the reference adapter to test pi's runtime status and nesting behavior with captured spans.
 - [ ] **I1 — hook registry and runner.** Dependencies: none.
   - Primary files: `packages/agent/src/harness/hooks.ts`, `packages/agent/test/harness/hooks.test.ts`.
@@ -4572,8 +4572,8 @@ These packages merge O1 → O2 → O3 → O4 after N1, with QA3 between O2 and O
   - Finish live lane/session snapshots, exact lane-versus-global event filtering, assistant drafts retained through the `message_end`-to-`entry_added` window, running-tool state, abort snapshots/results with no synthetic assistant requirement, `entry_added` for every committed entry, structural typed-entry events without internal summary-stream message events, and all section 10 event insertion points.
   - Acceptance: event nesting/order tests cover passive post-hook values, direct/tool-result lifecycles, `message_end` without a commit guarantee, and `entry_added` confirmation; attach-mid-operation and attach-between-end-and-commit snapshot tests have no subscription gap.
 - [ ] **O2 — runtime telemetry instrumentation.** Dependencies: O1, I0.
-  - Extend the landed harness schema only where the final execution model requires it: add stable `pi.step.id`, add `deferred_fetch` to the step kinds, reconcile the final step outcomes, add `multi` for one atomic append containing several logical mutations, and regenerate the schema reference. Do not otherwise redesign the landed schema.
-  - Insert operation/checkpoint/turn/attempt wrappers at their procedure scopes, effect and passive-handler spans at their owning boundaries with `startHarnessSpan()`, and logical model-request spans with `startAiSpan()`. Every provider-attempt span carries its durable `pi.step.id`, numbered attempt, and final kind including `deferred_fetch`; hook-sourced structural steps and post-move prepared-result completion emit no fabricated attempt span. Populate only schema-declared attributes, including parallel tool children, resumed operation correlation, marker-backed active-attempt abort, unmarked `aborted` interruption retry/failure, and abort-only recovery with no fabricated provider/step span; expected in-band failures set error status explicitly.
+  - Extend the landed harness schema only where the final execution model requires it: add stable `ever.step.id`, add `deferred_fetch` to the step kinds, reconcile the final step outcomes, add `multi` for one atomic append containing several logical mutations, and regenerate the schema reference. Do not otherwise redesign the landed schema.
+  - Insert operation/checkpoint/turn/attempt wrappers at their procedure scopes, effect and passive-handler spans at their owning boundaries with `startHarnessSpan()`, and logical model-request spans with `startAiSpan()`. Every provider-attempt span carries its durable `ever.step.id`, numbered attempt, and final kind including `deferred_fetch`; hook-sourced structural steps and post-move prepared-result completion emit no fabricated attempt span. Populate only schema-declared attributes, including parallel tool children, resumed operation correlation, marker-backed active-attempt abort, unmarked `aborted` interruption retry/failure, and abort-only recovery with no fabricated provider/step span; expected in-band failures set error status explicitly.
   - Acceptance: the generated schema reference is current; captured telemetry has exact schema-conforming span trees for success, failure, suspend/resume, retry, compaction, and parallel tools; every emitted start/end/event bag conforms independently, callback spans settle exactly once, and no undeclared names, content, or secrets appear in defaults.
 - [ ] **O3 — action-prefix and race audit.** Dependencies: O2, QA3.
   - Complete Tier C for every race row, mechanically reopen every live action prefix and every prefix created by an individual recovery write, compare automatic/manual logs, and verify reducer/live-state fixed points.

@@ -19,7 +19,7 @@ import {
 	SqliteTaskStore,
 	TaskContextBuilder,
 	VerifiedChangeBundle,
-} from "@ever/long-tasks";
+} from "@lioooooo123/ever-long-tasks";
 import { VERSION } from "../config.ts";
 import { WorkerRegistry } from "../daemon/worker-registry.ts";
 import type {
@@ -92,7 +92,7 @@ interface NativeLongTaskAgentOptions {
 	artifactsRoot: string;
 }
 
-/** The only module that joins Pi Session execution to durable Task facts. */
+/** The only module that joins Ever Session execution to durable Task facts. */
 class NativeLongTaskAgent implements AgentSessionLifecycle {
 	private readonly runtime: AgentSessionRuntime;
 	private readonly store: SqliteTaskStore;

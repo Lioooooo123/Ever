@@ -6,15 +6,15 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import { Agent } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@lioooooo123/ever-agent-core";
+import { Agent } from "@lioooooo123/ever-agent-core";
 import type {
 	FauxModelDefinition,
 	FauxProviderRegistration,
 	FauxResponseStep,
 	Model,
-} from "@earendil-works/pi-ai/compat";
-import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
+} from "@lioooooo123/ever-ai/compat";
+import { registerFauxProvider, streamSimple } from "@lioooooo123/ever-ai/compat";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import type { AgentSessionLifecycleRef } from "../../src/core/agent-session-lifecycle.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";

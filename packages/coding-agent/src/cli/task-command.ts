@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { SqliteTaskStore, type TaskRecord } from "@ever/long-tasks";
+import { SqliteTaskStore, type TaskRecord } from "@lioooooo123/ever-long-tasks";
 import chalk from "chalk";
 import { TaskApplication } from "../core/task-application.ts";
 import { resolveTaskModel } from "../core/task-model.ts";

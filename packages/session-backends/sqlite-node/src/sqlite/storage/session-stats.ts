@@ -1,5 +1,5 @@
-import { SessionError, type SessionStats } from "@earendil-works/pi-agent-core";
-import type { Usage } from "@earendil-works/pi-ai";
+import { SessionError, type SessionStats } from "@lioooooo123/ever-agent-core";
+import type { Usage } from "@lioooooo123/ever-ai";
 import { sql } from "../sql.ts";
 import type { SqliteDatabase } from "../types.ts";
 

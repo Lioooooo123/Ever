@@ -3,10 +3,11 @@
 	"compilerOptions": {
 		"noEmit": true,
 		"paths": {
-			"@earendil-works/pi-coding-agent": ["./src/index.ts"],
-			"@earendil-works/pi-coding-agent/hooks": ["./src/core/hooks/index.ts"],
-			"@earendil-works/pi-tui": ["../tui/src/index.ts"],
-			"@earendil-works/pi-ai": ["../ai/src/index.ts"],
+			"@lioooooo123/ever": ["./src/index.ts"],
+			"@lioooooo123/ever/hooks": ["./src/core/hooks/index.ts"],
+			"@lioooooo123/ever-long-tasks": ["../long-tasks/src/index.ts"],
+			"@lioooooo123/ever-tui": ["../tui/src/index.ts"],
+			"@lioooooo123/ever-ai": ["../ai/src/index.ts"],
 			"typebox": ["../../node_modules/typebox"]
 		},
 		"skipLibCheck": true

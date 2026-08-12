@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { getPublicWorkspacePackages } from "./release-packages.mjs";
+import { getReleasePackages } from "./release-packages.mjs";
 
 const RELEASES_PREFIX = "releases/v1";
 const REGISTRY_URL = "https://registry.npmjs.org";
@@ -93,16 +93,16 @@ async function verifyPackagesAreAvailable(packages) {
 			result.status === "rejected" ? [`${packages[index].name}: ${result.reason}`] : [],
 		);
 		if (failures.length === 0) {
-			console.log(`All ${packages.length} Pi packages are available from npm (attempt ${attempt}).`);
+			console.log(`All ${packages.length} Ever packages are available from npm (attempt ${attempt}).`);
 			return results.map((result) => result.value);
 		}
 
-		console.log(`Waiting for ${failures.length} Pi package${failures.length === 1 ? "" : "s"} on npm (attempt ${attempt}):`);
+		console.log(`Waiting for ${failures.length} Ever package${failures.length === 1 ? "" : "s"} on npm (attempt ${attempt}):`);
 		for (const failure of failures) console.log(`  ${failure}`);
 		if (Date.now() < deadline) await sleep(RETRY_DELAY_MS);
 	} while (Date.now() < deadline);
 
-	throw new Error(`Timed out waiting for Pi packages to become available from npm:\n${failures.map((failure) => `  ${failure}`).join("\n")}`);
+	throw new Error(`Timed out waiting for Ever packages to become available from npm:\n${failures.map((failure) => `  ${failure}`).join("\n")}`);
 }
 
 function gitSourceCommit() {
@@ -148,7 +148,7 @@ function readLatestRelease(bucket, endpoint, outputPath) {
 
 	const metadata = JSON.parse(head);
 	if (typeof metadata.ETag !== "string") {
-		throw new Error("Latest Pi release marker has no ETag.");
+		throw new Error("Latest Ever release marker has no ETag.");
 	}
 	runAws([
 		"s3api",
@@ -169,7 +169,7 @@ function readLatestRelease(bucket, endpoint, outputPath) {
 		typeof release.version !== "string" ||
 		!STABLE_SEMVER_RE.test(release.version)
 	) {
-		throw new Error("Latest Pi release marker has an invalid version.");
+		throw new Error("Latest Ever release marker has an invalid version.");
 	}
 	return { etag: metadata.ETag, version: release.version };
 }
@@ -220,12 +220,12 @@ export async function advanceLatestRelease(version, readLatest, writeLatest) {
 			return { advanced: true, version };
 		}
 	}
-	throw new Error(`Could not advance the Pi release marker to ${version} after ${MAX_POINTER_UPDATE_ATTEMPTS} attempts.`);
+	throw new Error(`Could not advance the Ever release marker to ${version} after ${MAX_POINTER_UPDATE_ATTEMPTS} attempts.`);
 }
 
 async function main() {
 	const options = parseArgs(process.argv.slice(2));
-	const packages = getPublicWorkspacePackages();
+	const packages = getReleasePackages();
 	for (const pkg of packages) {
 		if (pkg.version !== options.version) {
 			throw new Error(`${pkg.name} is ${pkg.version}; expected ${options.version}`);
@@ -240,7 +240,7 @@ async function main() {
 		publishedAt: new Date().toISOString(),
 		packages: publishedPackages,
 	};
-	const temporaryDirectory = mkdtempSync(join(tmpdir(), "pi-release-announcement-"));
+	const temporaryDirectory = mkdtempSync(join(tmpdir(), "ever-release-announcement-"));
 	try {
 		const releasePath = join(temporaryDirectory, "release.json");
 		const latestPath = join(temporaryDirectory, "latest.json");
@@ -274,8 +274,8 @@ async function main() {
 		);
 		console.log(
 			result.advanced
-				? `Announced Pi ${options.version} through s3://${options.bucket}/${RELEASES_PREFIX}/latest.json`
-				: `Pi ${result.version} is already the latest announced release.`,
+				? `Announced Ever ${options.version} through s3://${options.bucket}/${RELEASES_PREFIX}/latest.json`
+				: `Ever ${result.version} is already the latest announced release.`,
 		);
 	} finally {
 		rmSync(temporaryDirectory, { force: true, recursive: true });

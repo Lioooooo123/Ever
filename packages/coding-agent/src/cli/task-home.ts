@@ -1,4 +1,4 @@
-import type { TaskRecord } from "@ever/long-tasks";
+import type { TaskRecord } from "@lioooooo123/ever-long-tasks";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { TaskApplication } from "../core/task-application.ts";
 import { resolveTaskModel } from "../core/task-model.ts";

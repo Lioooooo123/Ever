@@ -2,8 +2,13 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { DEFAULT_CONTINUATION_POLICY, SqliteTaskStore, TaskController, VerifiedCompletion } from "@ever/long-tasks";
+import { fauxAssistantMessage } from "@lioooooo123/ever-ai";
+import {
+	DEFAULT_CONTINUATION_POLICY,
+	SqliteTaskStore,
+	TaskController,
+	VerifiedCompletion,
+} from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSessionLifecycle, AgentSessionLifecycleEvent } from "../src/core/agent-session-lifecycle.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";

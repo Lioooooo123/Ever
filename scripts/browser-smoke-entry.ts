@@ -1,6 +1,6 @@
-import { PiClient } from "@earendil-works/pi-client";
-import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
-import { complete, getModel, getProviders, streamSimple } from "@earendil-works/pi-ai/compat";
+import { EverClient } from "@lioooooo123/ever-client";
+import { createAssistantMessageEventStream, Type } from "@lioooooo123/ever-ai";
+import { complete, getModel, getProviders, streamSimple } from "@lioooooo123/ever-ai/compat";
 import {
 	Agent,
 	bashExecutionToText,
@@ -17,8 +17,8 @@ import {
 	streamProxy,
 	toError,
 	truncateHead,
-} from "@earendil-works/pi-agent-core";
-import { decodeCbor, encodeCbor, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
+} from "@lioooooo123/ever-agent-core";
+import { decodeCbor, encodeCbor, PROTOCOL_VERSION } from "@lioooooo123/ever-protocol";
 
 // Keep this entry browser-safe. It is bundled by scripts/check-browser-smoke.mjs
 // to catch accidental Node-only runtime imports in browser-facing package exports.
@@ -60,7 +60,7 @@ console.log(
 	new FileError("not_found", "missing").code,
 	toError("boom").message,
 	typeof streamProxy,
-	typeof PiClient,
+	typeof EverClient,
 	PROTOCOL_VERSION,
 	decodeCbor(encodeCbor({ browser: true })),
 );

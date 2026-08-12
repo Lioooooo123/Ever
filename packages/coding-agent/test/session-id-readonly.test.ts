@@ -79,7 +79,7 @@ async function runCli(
 			env: sourceProcessEnv({
 				...process.env,
 				[ENV_AGENT_DIR]: dirs.agentDir,
-				PI_OFFLINE: "1",
+				EVER_OFFLINE: "1",
 			}),
 			stdio: ["ignore", "ignore", "pipe"],
 		});

@@ -1153,7 +1153,7 @@ Public `recordUsage()` cannot supply `runId` although adjustment records permit 
 
 #### Wide deferred-fetch return type — note
 
-The landed `Models.fetchDeferred()` type may return wide `AssistantMessage`. The harness adapter must reject/narrow a final `pending` value before hooks, events, persistence, or state settlement. Do not assign unrelated pi-ai work without checking the landed API.
+The landed `Models.fetchDeferred()` type may return wide `AssistantMessage`. The harness adapter must reject/narrow a final `pending` value before hooks, events, persistence, or state settlement. Do not assign unrelated ever-ai work without checking the landed API.
 
 #### Temporary `HarnessNotImplemented` — note
 

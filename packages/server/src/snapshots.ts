@@ -4,13 +4,13 @@ import {
 	PROTOCOL_VERSION,
 	type ServerSnapshot,
 	type SessionMetadata,
-} from "@earendil-works/pi-protocol";
+} from "@lioooooo123/ever-protocol";
 import type { ConnectionState } from "./connection.ts";
-import type { PiServerService } from "./types.ts";
+import type { EverServerService } from "./types.ts";
 
 interface ServerSnapshotPublisherOptions {
 	serverId: string;
-	service: PiServerService;
+	service: EverServerService;
 	connections: Set<ConnectionState>;
 	isClosing: () => boolean;
 	listSessions: () => Promise<SessionMetadata[]>;

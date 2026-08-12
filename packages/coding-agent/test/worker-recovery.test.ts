@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInMemoryTaskStore, runtimeSnapshotHash, TaskController } from "@ever/long-tasks";
+import { createInMemoryTaskStore, runtimeSnapshotHash, TaskController } from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import { recoverExpiredLongTaskExecutions } from "../src/core/long-task-runtime.ts";
 import { type WorkerDescriptor, WorkerRegistry } from "../src/daemon/worker-registry.ts";

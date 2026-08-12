@@ -1,14 +1,14 @@
-# Pi evals
+# Ever evals
 
-Pi evals are behavioral, model-backed checks for Pi workflows. They adapt a real `AgentSession` to `vitest-evals`, run
-it in isolated temporary project and agent directories, and attach native Pi session artifacts.
+Ever evals are behavioral, model-backed checks for Ever workflows. They adapt a real `AgentSession` to `vitest-evals`, run
+it in isolated temporary project and agent directories, and attach native Ever session artifacts.
 Use them to measure end-to-end behavior and compare prompts, tools, skills, models, or other harness configurations.
 
 ## Running evals
 
 Eval has two execution profiles and one report command:
 
-- `quick`: lightweight Pi Agent checks through `vitest-evals`; no Docker. It defaults to one end-to-end smoke prompt.
+- `quick`: lightweight Ever Agent checks through `vitest-evals`; no Docker. It defaults to one end-to-end smoke prompt.
 - `benchmark`: Docker-isolated external benchmarks with official verifiers, Oracle gating, and resumable trials.
 - `report`: lists both job types or renders one normalized overview with the profile-specific comparison appended.
 
@@ -21,11 +21,11 @@ npm run eval -- quick --provider openai --model gpt-5.6-sol
 The equivalent environment variables are:
 
 ```bash
-PI_PROVIDER=openai PI_MODEL=gpt-5.6-sol npm run eval -- quick
+EVER_PROVIDER=openai EVER_MODEL=gpt-5.6-sol npm run eval -- quick
 ```
 
 CLI values take precedence over the environment. Provider and model must be supplied together so every quick job records an exact default model identity.
-Authentication comes from Pi's normal `ModelRuntime`, including Pi subscription credentials and provider API-key
+Authentication comes from Ever's normal `ModelRuntime`, including Ever subscription credentials and provider API-key
 environment variables.
 
 Use `--suite all` for every lightweight Eval, or pass advanced Vitest filters directly:
@@ -50,17 +50,17 @@ npm run eval -- report <job-id>
 ## Writing evals
 
 Follow [`vitest-evals`](https://github.com/getsentry/vitest-evals) for general suite, judge, assertion, and normalized
-trace guidance. Pi-specific evals use `createPiCodingAgentHarness(...)` from `src/pi-harness.ts`, with one harness bound
+trace guidance. Ever-specific evals use `createEverCodingAgentHarness(...)` from `src/ever-harness.ts`, with one harness bound
 to each `describeEval(...)` suite:
 
 ```ts
 import { expect } from "vitest";
 import { describeEval } from "vitest-evals";
-import { createPiCodingAgentHarness } from "./pi-harness.ts";
+import { createEverCodingAgentHarness } from "./ever-harness.ts";
 
-const harness = createPiCodingAgentHarness({ noTools: "all" });
+const harness = createEverCodingAgentHarness({ noTools: "all" });
 
-describeEval("Pi smoke", { harness }, (it) => {
+describeEval("Ever smoke", { harness }, (it) => {
 	it("answers a factual question", async ({ run }) => {
 		const result = await run("What is the capital of France? Reply with only the city name.");
 		expect(result.output).toBe("Paris");
@@ -68,31 +68,31 @@ describeEval("Pi smoke", { harness }, (it) => {
 });
 ```
 
-### Configuring the Pi harness
+### Configuring the Ever harness
 
-`createPiCodingAgentHarness(...)` accepts:
+`createEverCodingAgentHarness(...)` accepts:
 
 - `name`: stable harness identity used by reports and comparisons.
 - `model`: optional `{ provider, id }` selection. It overrides the runner's default model.
-- `noTools`: Pi's tool-disable configuration.
+- `noTools`: Ever's tool-disable configuration.
 - `transformSystemPrompt`: transforms the complete default prompt before the eval starts.
 - `output`: transforms the final response and `AgentSession` into a JSON-safe domain result.
 
 An explicitly selected model makes model-comparison harnesses independent of the runner default:
 
 ```ts
-const harness = createPiCodingAgentHarness({
+const harness = createEverCodingAgentHarness({
 	name: "claude-opus-4-6",
 	model: { provider: "anthropic", id: "claude-opus-4-6" },
 });
 ```
 
 A run accepts either one prompt or a sequence of prompt and reload steps. Reload steps are useful when the preceding
-prompt creates or changes Pi resources:
+prompt creates or changes Ever resources:
 
 ```ts
 const result = await run([
-	{ type: "prompt", content: "Create a Pi extension." },
+	{ type: "prompt", content: "Create an Ever extension." },
 	{ type: "reload" },
 	{ type: "prompt", content: "Use the extension." },
 ]);
@@ -100,10 +100,10 @@ const result = await run([
 
 ### Transforming harness output
 
-Use `output` to expose scenario-specific, JSON-safe behavior without adding that behavior to the generic Pi adapter:
+Use `output` to expose scenario-specific, JSON-safe behavior without adding that behavior to the generic Ever adapter:
 
 ```ts
-const harness = createPiCodingAgentHarness({
+const harness = createEverCodingAgentHarness({
 	output: ({ response, session }) => ({
 		response,
 		activeTools: session.getActiveToolNames(),
@@ -118,7 +118,7 @@ Assert application behavior on `result.output`. Assert model and tool traces on 
 ### Writing comparative eval sets
 
 Use `evalHarnessTable(...)` with Vitest's native `describe.for(...)` to run the same inputs against multiple harnesses.
-Harnesses may differ by prompt, tools, skills, model, or any other Pi configuration:
+Harnesses may differ by prompt, tools, skills, model, or any other Ever configuration:
 
 ```ts
 import { describe } from "vitest";
@@ -151,7 +151,7 @@ Comparative suites should record correctness with deterministic or model-backed 
 This keeps a low score as an observation instead of making the Vitest invocation fail. Use hard assertions only for
 suite invariants and infrastructure contracts. `expect.soft(...)` still fails the test and is not a scoring mechanism.
 
-The Pi harness snapshots native session JSONL before deleting its temporary workspace. An eval-only `afterEach` hook
+The Ever harness snapshots native session JSONL before deleting its temporary workspace. An eval-only `afterEach` hook
 registers that snapshot against the explicit Vitest test task before reporters run.
 
 Harness names must be stable and unique within an eval set. The grouping key combines repetition with a non-empty string
@@ -240,7 +240,7 @@ npm run eval -- benchmark --redact <job-id> --secret-env OPENAI_API_KEY
 Docker must be installed and `docker info` must succeed. The command rejects floating agent versions, floating model
 aliases, digest drift, mismatched models, missing budgets, benchmark symlinks, and hidden tests visible before execution.
 
-Fault injection is intentionally separate from official benchmark jobs. Use only a Ever agent, a profile name that
+Fault injection is intentionally separate from official benchmark jobs. Use only an Ever agent, a profile name that
 starts with `ever-reliability`, and a JSON schedule containing `kill_agent_process`, `kill_daemon_process`,
 `pause_agent_process`, or `terminate_container` entries:
 

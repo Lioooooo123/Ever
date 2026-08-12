@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type RuntimeSnapshot, runtimeSnapshotHash, SqliteTaskStore } from "@ever/long-tasks";
+import { type RuntimeSnapshot, runtimeSnapshotHash, SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import { afterEach, expect, it } from "vitest";
 import { submitInteractiveTask } from "../src/cli/ever-command.ts";
 import { activateTaskRun } from "../src/core/task-run.ts";

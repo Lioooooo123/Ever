@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-export interface PiManifest {
+export interface EverManifest {
 	extensions?: string[];
 	skills?: string[];
 	prompts?: string[];
@@ -13,16 +13,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function readPiManifest(packageJsonPath: string): PiManifest | null {
+/** Read the Ever package manifest, falling back to the legacy `pi` key without writing it. */
+export function readEverManifest(packageJsonPath: string): EverManifest | null {
 	try {
 		const pkg: unknown = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-		if (!isObject(pkg) || !isObject(pkg.pi)) {
-			return null;
-		}
+		if (!isObject(pkg)) return null;
+		const source = isObject(pkg.ever) ? pkg.ever : isObject(pkg.pi) ? pkg.pi : undefined;
+		if (!source) return null;
 
-		const manifest: PiManifest = {};
+		const manifest: EverManifest = {};
 		for (const field of RESOURCE_FIELDS) {
-			const entries = pkg.pi[field];
+			const entries = source[field];
 			if (Array.isArray(entries) && entries.every((entry) => typeof entry === "string")) {
 				manifest[field] = entries;
 			}

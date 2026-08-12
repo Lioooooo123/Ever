@@ -7,7 +7,7 @@ import { ENV_AGENT_DIR } from "../src/config.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
 describe("shouldRunFirstTimeSetup", () => {
-	const originalPiExperimental = process.env.PI_EXPERIMENTAL;
+	const originalPiExperimental = process.env.EVER_EXPERIMENTAL;
 	const originalAgentDir = process.env[ENV_AGENT_DIR];
 	let tempDir: string;
 	let settingsPath: string;
@@ -15,16 +15,16 @@ describe("shouldRunFirstTimeSetup", () => {
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "pi-first-time-setup-"));
 		settingsPath = join(tempDir, "settings.json");
-		process.env.PI_EXPERIMENTAL = "1";
+		process.env.EVER_EXPERIMENTAL = "1";
 		delete process.env[ENV_AGENT_DIR];
 	});
 
 	afterEach(() => {
 		rmSync(tempDir, { recursive: true, force: true });
 		if (originalPiExperimental === undefined) {
-			delete process.env.PI_EXPERIMENTAL;
+			delete process.env.EVER_EXPERIMENTAL;
 		} else {
-			process.env.PI_EXPERIMENTAL = originalPiExperimental;
+			process.env.EVER_EXPERIMENTAL = originalPiExperimental;
 		}
 		if (originalAgentDir === undefined) {
 			delete process.env[ENV_AGENT_DIR];
@@ -33,12 +33,12 @@ describe("shouldRunFirstTimeSetup", () => {
 		}
 	});
 
-	it("stays disabled for the Ever distribution", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+	it("runs for the official Ever distribution", () => {
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
 	});
 
 	it("returns false when experimental features are disabled", () => {
-		delete process.env.PI_EXPERIMENTAL;
+		delete process.env.EVER_EXPERIMENTAL;
 
 		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
 	});

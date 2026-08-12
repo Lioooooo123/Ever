@@ -9,7 +9,7 @@ import {
 	type ExecutionEnv,
 	type ExecutionToolContext,
 	type HarnessTool,
-} from "@earendil-works/pi-agent-core";
+} from "@lioooooo123/ever-agent-core";
 import type { Static, TSchema } from "typebox";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "../core/system-prompt.ts";
 import { bashToolSystemPromptContribution } from "../core/tools/bash.ts";
@@ -38,7 +38,7 @@ function createCodingAgentHarnessTool<TParameters extends TSchema, TDetails>(
 export interface CreateCodingAgentHarnessOptions extends Omit<AgentHarnessOptions, "toolContext" | "tools"> {
 	env: ExecutionEnv;
 	bashCommandPrefix?: string;
-	/** Path to the JSONL session file exposed to default bash commands as PI_SESSION_FILE. */
+	/** Path to the JSONL session file exposed to default bash commands as EVER_SESSION_FILE. */
 	sessionFile?: string;
 	tools?: CodingAgentHarnessTool[];
 	systemPromptOptions?: Omit<BuildSystemPromptOptions, "cwd" | "promptGuidelines" | "selectedTools" | "toolSnippets">;
@@ -109,11 +109,11 @@ export async function createCodingAgentHarness(options: CreateCodingAgentHarness
 							currentHarness.getModel(),
 							currentHarness.getThinkingLevel(),
 						]);
-						execution.env.PI_SESSION_ID = metadata.id;
-						execution.env.PI_SESSION_FILE = sessionFile ?? "";
-						execution.env.PI_PROVIDER = model.provider;
-						execution.env.PI_MODEL = model.id;
-						execution.env.PI_REASONING_LEVEL = thinkingLevel;
+						execution.env.EVER_SESSION_ID = metadata.id;
+						execution.env.EVER_SESSION_FILE = sessionFile ?? "";
+						execution.env.EVER_PROVIDER = model.provider;
+						execution.env.EVER_MODEL = model.id;
+						execution.env.EVER_REASONING_LEVEL = thinkingLevel;
 					},
 				}),
 				toolContext,

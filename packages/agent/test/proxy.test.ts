@@ -1,4 +1,4 @@
-import type { AssistantMessage, AssistantMessageEvent, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent, Model } from "@lioooooo123/ever-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ProxyAssistantMessageEvent, streamProxy } from "../src/proxy.ts";
 
@@ -7,7 +7,7 @@ const model: Model<"openai-responses"> = {
 	name: "GPT-5.4",
 	api: "openai-responses",
 	provider: "openai",
-	baseUrl: "https://api.openai.com/v1",
+	baseUrl: "https://aever.openai.com/v1",
 	reasoning: true,
 	input: ["text"],
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

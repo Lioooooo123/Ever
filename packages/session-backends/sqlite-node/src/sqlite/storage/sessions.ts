@@ -1,4 +1,4 @@
-import { assertJsonSerializable, SessionError } from "@earendil-works/pi-agent-core";
+import { assertJsonSerializable, SessionError } from "@lioooooo123/ever-agent-core";
 import { sql } from "../sql.ts";
 import type { SqliteDatabase, SqliteSessionMetadata } from "../types.ts";
 

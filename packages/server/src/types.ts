@@ -7,12 +7,12 @@ import type {
 	SessionSnapshot,
 	ThinkingLevel,
 	TranscriptProgress,
-} from "@earendil-works/pi-protocol";
-import type { PiServerError } from "./errors.ts";
-import type { PiServerListener } from "./listener.ts";
+} from "@lioooooo123/ever-protocol";
+import type { EverServerError } from "./errors.ts";
+import type { EverServerListener } from "./listener.ts";
 
-export interface PiServerOptions {
-	listeners: readonly PiServerListener[];
+export interface EverServerOptions {
+	listeners: readonly EverServerListener[];
 	maxFrameLength?: number;
 	handshakeTimeoutMs?: number;
 	serverId?: string;
@@ -25,7 +25,7 @@ export type PromptInput = Omit<Extract<Command, { command: "prompt" }>, "command
 export type SteerInput = Omit<Extract<Command, { command: "steer" }>, "command" | "sessionId">;
 
 export interface CreateSessionOptions {
-	/** A collision-resistant ID assigned by PiServer. The service must persist this exact ID. */
+	/** A collision-resistant ID assigned by EverServer. The service must persist this exact ID. */
 	id: string;
 	cwd?: string;
 	name?: string;
@@ -33,13 +33,13 @@ export interface CreateSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 }
 
-export type PiSessionRuntimeEvent =
+export type EverSessionRuntimeEvent =
 	| { type: "snapshot" }
 	| { type: "progress"; progress: TranscriptProgress }
-	| { type: "error"; error: PiServerError };
+	| { type: "error"; error: EverServerError };
 
 /** One acquired durable session. Conflicting operations must reject rather than queue. */
-export interface PiSessionRuntime {
+export interface EverSessionRuntime {
 	snapshot(): MaybePromise<SessionSnapshot>;
 	getPhase(): SessionPhase;
 	prompt(input: PromptInput): Promise<void>;
@@ -47,17 +47,17 @@ export interface PiSessionRuntime {
 	abort(): Promise<void>;
 	setModel(model: ModelRef): Promise<void>;
 	setThinking(thinkingLevel: ThinkingLevel): Promise<void>;
-	subscribe(listener: (event: PiSessionRuntimeEvent) => void): () => void;
+	subscribe(listener: (event: EverSessionRuntimeEvent) => void): () => void;
 	dispose(): Promise<void>;
 }
 
 /** Service boundary for durable sessions and exclusively acquired runtimes. */
-export interface PiServerService {
+export interface EverServerService {
 	listSessions(): Promise<SessionMetadata[]>;
 	listModels(): Promise<ModelMetadata[]>;
-	createSession(options: CreateSessionOptions): Promise<PiSessionRuntime>;
-	openSession(sessionId: string): Promise<PiSessionRuntime>;
+	createSession(options: CreateSessionOptions): Promise<EverSessionRuntime>;
+	openSession(sessionId: string): Promise<EverSessionRuntime>;
 }
 
-export type SessionRuntime = PiSessionRuntime;
-export type SessionRuntimeEvent = PiSessionRuntimeEvent;
+export type SessionRuntime = EverSessionRuntime;
+export type SessionRuntimeEvent = EverSessionRuntimeEvent;

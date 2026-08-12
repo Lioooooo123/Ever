@@ -10,7 +10,7 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 	type UserMessage,
-} from "@earendil-works/pi-ai";
+} from "@lioooooo123/ever-ai";
 import type {
 	AssistantTranscriptItem,
 	JsonValue,
@@ -19,7 +19,7 @@ import type {
 	ToolTranscriptItem,
 	Usage,
 	UserTranscriptItem,
-} from "@earendil-works/pi-protocol";
+} from "@lioooooo123/ever-protocol";
 
 type Assert<T extends true> = T;
 type ExactKeys<T, Keys extends keyof T> = keyof T extends Keys ? true : false;
@@ -30,7 +30,7 @@ type ProtocolModelInput = ModelMetadata["input"][number];
 type _AiModelInputsFitProtocol = Assert<AiModelInput extends ProtocolModelInput ? true : false>;
 type _ProtocolModelInputsFitAi = Assert<ProtocolModelInput extends AiModelInput ? true : false>;
 /**
- * Enumerate mapped and intentionally omitted pi-ai fields so additions fail compilation here.
+ * Enumerate mapped and intentionally omitted Ever-ai fields so additions fail compilation here.
  * Provider replay metadata, diagnostics, cache-write retention splits, model transport settings,
  * model sampling defaults, pricing tiers, and deferred-tool availability remain intentionally
  * server-side.

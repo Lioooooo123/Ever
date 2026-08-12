@@ -18,7 +18,7 @@ function printHelp(): void {
   npm run eval -- report [job-id]
 
 Profiles:
-  quick      Lightweight Pi Agent eval. Defaults to src/smoke.eval.ts and does not use Docker.
+  quick      Lightweight Ever Agent eval. Defaults to src/smoke.eval.ts and does not use Docker.
   benchmark  Docker-isolated external benchmark with official verifier and Oracle gate.
   report     List Eval jobs or render one unified report.`);
 }
@@ -53,11 +53,11 @@ function quickSelection(args: string[]): {
 			suite = value;
 		} else vitestArgs.push(arg);
 	}
-	provider = provider?.trim() || process.env.PI_PROVIDER?.trim() || undefined;
-	model = model?.trim() || process.env.PI_MODEL?.trim() || undefined;
+	provider = provider?.trim() || process.env.EVER_PROVIDER?.trim() || undefined;
+	model = model?.trim() || process.env.EVER_MODEL?.trim() || undefined;
 	if (Boolean(provider) !== Boolean(model)) throw new Error("Quick Eval requires both provider and model");
 	if (provider === undefined || model === undefined) {
-		throw new Error("Quick Eval requires --provider and --model, or PI_PROVIDER and PI_MODEL");
+		throw new Error("Quick Eval requires --provider and --model, or EVER_PROVIDER and EVER_MODEL");
 	}
 	return { provider, model, suite, vitestArgs };
 }
@@ -66,11 +66,11 @@ async function runQuick(args: string[]): Promise<number> {
 	if (args.includes("--help") || args.includes("-h")) {
 		console.log(`Usage: npm run eval -- quick --provider <provider> --model <model> [--suite smoke|all] [vitest-options]
 
-The smoke suite runs one end-to-end Pi Agent prompt. The all suite runs every src/**/*.eval.ts file.`);
+The smoke suite runs one end-to-end Ever Agent prompt. The all suite runs every src/**/*.eval.ts file.`);
 		return 0;
 	}
 	const selection = quickSelection(args);
-	const configuredDirectory = process.env.PI_EVAL_ARTIFACT_DIR?.trim();
+	const configuredDirectory = process.env.EVER_EVAL_ARTIFACT_DIR?.trim();
 	const jobId = configuredDirectory
 		? basename(resolve(packageRoot, configuredDirectory))
 		: `${new Date().toISOString().replaceAll(":", "-")}_${randomUUID()}`;
@@ -90,12 +90,12 @@ The smoke suite runs one end-to-end Pi Agent prompt. The all suite runs every sr
 		selection.vitestArgs.length > 0 ? selection.vitestArgs : selection.suite === "smoke" ? ["src/smoke.eval.ts"] : [];
 	const childEnvironment: NodeJS.ProcessEnv = {
 		...process.env,
-		PI_EVAL_ARTIFACT_DIR: jobDirectory,
-		PI_EVAL_JOB_ID: jobId,
-		PI_EVAL_PROFILE: "quick",
+		EVER_EVAL_ARTIFACT_DIR: jobDirectory,
+		EVER_EVAL_JOB_ID: jobId,
+		EVER_EVAL_PROFILE: "quick",
 	};
-	childEnvironment.PI_PROVIDER = selection.provider;
-	childEnvironment.PI_MODEL = selection.model;
+	childEnvironment.EVER_PROVIDER = selection.provider;
+	childEnvironment.EVER_MODEL = selection.model;
 	mkdirSync(jobDirectory, { recursive: true, mode: 0o700 });
 	console.error(`[eval] profile=quick job=${jobId}`);
 	console.error(`[eval] model=${selection.provider}/${selection.model}`);

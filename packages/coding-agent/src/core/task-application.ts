@@ -10,7 +10,7 @@ import {
 	type TaskRecord,
 	VerifiedChangeBundle,
 	type VerifiedChangeBundleResult,
-} from "@ever/long-tasks";
+} from "@lioooooo123/ever-long-tasks";
 import { probeUnattendedSandbox } from "./unattended-sandbox.ts";
 
 export interface UnattendedTaskSubmission {

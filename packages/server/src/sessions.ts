@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { Command, EventEnvelope, SessionMetadata, SessionSnapshot } from "@earendil-works/pi-protocol";
+import type { Command, EventEnvelope, SessionMetadata, SessionSnapshot } from "@lioooooo123/ever-protocol";
 import type { ByteConnection, ConnectionState } from "./connection.ts";
-import { PiServerError } from "./errors.ts";
-import type { CreateSessionOptions, PiServerService, PiSessionRuntime, PiSessionRuntimeEvent } from "./types.ts";
+import { EverServerError } from "./errors.ts";
+import type { CreateSessionOptions, EverServerService, EverSessionRuntime, EverSessionRuntimeEvent } from "./types.ts";
 
 interface LiveSession {
 	id: string;
-	runtime: PiSessionRuntime;
+	runtime: EverSessionRuntime;
 	connections: Set<ConnectionState>;
 	unsubscribe: () => void;
 	operationCount: number;
@@ -16,7 +16,7 @@ interface LiveSession {
 }
 
 interface LiveSessionManagerOptions {
-	service: PiServerService;
+	service: EverServerService;
 	isClosing: () => boolean;
 	sendMessage: (connection: ConnectionState, message: EventEnvelope) => Promise<boolean>;
 	closeConnection: (connection: ByteConnection) => Promise<void>;
@@ -183,11 +183,11 @@ export class LiveSessionManager {
 		}
 	}
 
-	private async acquire(id: string, acquireRuntime: () => Promise<PiSessionRuntime>): Promise<LiveSession> {
+	private async acquire(id: string, acquireRuntime: () => Promise<EverSessionRuntime>): Promise<LiveSession> {
 		for (;;) {
 			const existing = this.liveSessions.get(id);
 			if (existing) {
-				if (existing.terminal) throw new PiServerError("session_locked", `Session runtime is terminating: ${id}`);
+				if (existing.terminal) throw new EverServerError("session_locked", `Session runtime is terminating: ${id}`);
 				if (existing.disposing) {
 					await existing.disposing;
 					continue;
@@ -206,17 +206,17 @@ export class LiveSessionManager {
 		}
 	}
 
-	private async create(id: string, acquireRuntime: () => Promise<PiSessionRuntime>): Promise<LiveSession> {
+	private async create(id: string, acquireRuntime: () => Promise<EverSessionRuntime>): Promise<LiveSession> {
 		const runtime = await acquireRuntime();
 		if (this.options.isClosing()) {
 			await runtime.dispose();
-			throw new Error("PiServer closed while acquiring a session runtime");
+			throw new Error("EverServer closed while acquiring a session runtime");
 		}
 		let live: LiveSession | undefined;
 		try {
 			const snapshot = await runtime.snapshot();
 			if (snapshot.id !== id) {
-				throw new PiServerError(
+				throw new EverServerError(
 					"invalid_request",
 					`Service returned session ${snapshot.id} for server-assigned session ${id}`,
 				);
@@ -245,7 +245,7 @@ export class LiveSessionManager {
 		}
 	}
 
-	private handleRuntimeEvent(live: LiveSession, event: PiSessionRuntimeEvent): void {
+	private handleRuntimeEvent(live: LiveSession, event: EverSessionRuntimeEvent): void {
 		if (event.type === "error") {
 			void this.terminate(live, event.error).catch((error: unknown) => this.options.reportError(error));
 			return;
@@ -262,7 +262,7 @@ export class LiveSessionManager {
 		this.scheduleMaybeDispose(live);
 	}
 
-	private async terminate(live: LiveSession, error: PiServerError): Promise<void> {
+	private async terminate(live: LiveSession, error: EverServerError): Promise<void> {
 		if (live.terminal) return;
 		live.terminal = true;
 		this.options.reportError(error);
@@ -276,7 +276,7 @@ export class LiveSessionManager {
 	private async normalizedSnapshot(live: LiveSession): Promise<SessionSnapshot> {
 		const snapshot = await live.runtime.snapshot();
 		if (snapshot.id !== live.id) {
-			throw new PiServerError("invalid_request", `Runtime session ID changed from ${live.id} to ${snapshot.id}`);
+			throw new EverServerError("invalid_request", `Runtime session ID changed from ${live.id} to ${snapshot.id}`);
 		}
 		return {
 			...snapshot,
@@ -300,7 +300,7 @@ export class LiveSessionManager {
 	private async attach(connection: ConnectionState, live: LiveSession): Promise<void> {
 		if (connection.disconnected || connection.stage !== "ready" || connection.connection.closed) {
 			await this.maybeDispose(live);
-			throw new PiServerError("invalid_request", "Connection closed while attaching to a session");
+			throw new EverServerError("invalid_request", "Connection closed while attaching to a session");
 		}
 		connection.sessionIds.add(live.id);
 		live.connections.add(connection);
@@ -308,11 +308,11 @@ export class LiveSessionManager {
 
 	private requireAttached(connection: ConnectionState, sessionId: string): LiveSession {
 		if (!connection.sessionIds.has(sessionId)) {
-			throw new PiServerError("invalid_request", `Connection is not attached to session ${sessionId}`);
+			throw new EverServerError("invalid_request", `Connection is not attached to session ${sessionId}`);
 		}
 		const live = this.liveSessions.get(sessionId);
 		if (!live || live.terminal || live.disposing) {
-			throw new PiServerError("not_found", `Session is not live: ${sessionId}`);
+			throw new EverServerError("not_found", `Session is not live: ${sessionId}`);
 		}
 		return live;
 	}

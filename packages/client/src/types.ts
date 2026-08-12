@@ -1,4 +1,4 @@
-import type { ModelRef, ThinkingLevel } from "@earendil-works/pi-protocol";
+import type { ModelRef, ThinkingLevel } from "@lioooooo123/ever-protocol";
 import type { ByteTransportFactory } from "./transport.ts";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected";
@@ -11,7 +11,7 @@ export interface ConnectionStateChange {
 export type Unsubscribe = () => void;
 export type ListenerErrorHandler = (error: Error) => void;
 
-export interface PiClientOptions {
+export interface EverClientOptions {
 	transportFactory: ByteTransportFactory;
 	maxFrameLength?: number;
 	/** Reports subscriber failures without allowing them to corrupt client state. */

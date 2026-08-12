@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 describe("unified Eval reports", () => {
-	it("normalizes a quick Pi Agent job and persists a common report", async () => {
+	it("normalizes a quick Ever Agent job and persists a common report", async () => {
 		const root = await mkdtemp(join(tmpdir(), "eval-product-"));
 		roots.push(root);
 		const jobId = "quick-job";

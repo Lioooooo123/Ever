@@ -7,9 +7,9 @@ import {
 	type ServerMessage,
 	type ServerSnapshot,
 	type SessionSnapshot,
-} from "@earendil-works/pi-protocol";
-import type { ByteTransport, ByteTransportHandlers, PiSessionHandle } from "../src/index.ts";
-import { PiClient } from "../src/index.ts";
+} from "@lioooooo123/ever-protocol";
+import type { ByteTransport, ByteTransportHandlers, EverSessionHandle } from "../src/index.ts";
+import { EverClient } from "../src/index.ts";
 
 export class MemoryByteServer {
 	private handlers: ByteTransportHandlers | undefined;
@@ -104,13 +104,13 @@ export function sessionSnapshot(id: string, overrides: Partial<SessionSnapshot> 
 	};
 }
 
-export function createClient(server: MemoryByteServer): PiClient {
-	return new PiClient({
+export function createClient(server: MemoryByteServer): EverClient {
+	return new EverClient({
 		transportFactory: (handlers) => server.connect(handlers),
 	});
 }
 
-export async function connectClient(server: MemoryByteServer): Promise<PiClient> {
+export async function connectClient(server: MemoryByteServer): Promise<EverClient> {
 	const client = createClient(server);
 	server.onMessage((message) => {
 		if (message.type === "hello") {
@@ -135,10 +135,10 @@ export function collectRequests(server: MemoryByteServer): RequestEnvelope[] {
 }
 
 export async function attachSession(
-	client: PiClient,
+	client: EverClient,
 	server: MemoryByteServer,
 	snapshot: SessionSnapshot,
-): Promise<PiSessionHandle> {
+): Promise<EverSessionHandle> {
 	const requests = collectRequests(server);
 	const attaching = client.attachSession(snapshot.id);
 	const request = requests.find((candidate) => candidate.request.command === "attach");
