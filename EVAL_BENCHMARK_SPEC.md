@@ -1,40 +1,40 @@
-# Karissa External Benchmark Eval Specification
+# Ever External Benchmark Eval Specification
 
 Status: Proposed
 Schema version: 1
-Scope: Karissa Eval Runner, external benchmark adapters, agent comparison, and reproducible artifacts
+Scope: Ever Eval Runner, external benchmark adapters, agent comparison, and reproducible artifacts
 
 ## 1. Decision
 
-Karissa owns a TypeScript Eval Runner inside the existing monorepo. External benchmarks are connected through adapters. The runner does not reimplement or reinterpret an external benchmark's verifier. It executes the official verifier, preserves official metrics, and records additional Karissa runtime observations separately.
+Ever owns a TypeScript Eval Runner inside the existing monorepo. External benchmarks are connected through adapters. The runner does not reimplement or reinterpret an external benchmark's verifier. It executes the official verifier, preserves official metrics, and records additional Ever runtime observations separately.
 
-V1 integrates Terminal-Bench 2.1 and compares Karissa with Codex and Terminus-2 under the same model, task set, limits, environment, and repetition count.
+V1 integrates Terminal-Bench 2.1 and compares Ever with Codex and Terminus-2 under the same model, task set, limits, environment, and repetition count.
 
-The Eval implementation remains under `packages/evals`. It is process-isolated from the Karissa runtime but is not moved to a separate repository until its adapter and result contracts have stabilized.
+The Eval implementation remains under `packages/evals`. It is process-isolated from the Ever runtime but is not moved to a separate repository until its adapter and result contracts have stabilized.
 
 ## 2. Problem
 
-Karissa currently has:
+Ever currently has:
 
 - deterministic tests for Task state, leases, recovery, coordination, and asynchronous submission;
 - model-backed `vitest-evals` for ordinary `AgentSession` behavior;
-- no external benchmark integration that can compare Karissa with other agents;
-- no black-box harness that drives the installed `karissa` command through a long-running task lifecycle.
+- no external benchmark integration that can compare Ever with other agents;
+- no black-box harness that drives the installed `ever` command through a long-running task lifecycle.
 
-Internal tests can show that Karissa follows its own contract, but they cannot show whether it performs better or worse than other agents on the same public tasks. Running a public benchmark directly can produce a comparison, but without a Karissa-owned normalization layer it cannot combine official reward with Karissa-specific recovery, checkpoint, cost, and event evidence.
+Internal tests can show that Ever follows its own contract, but they cannot show whether it performs better or worse than other agents on the same public tasks. Running a public benchmark directly can produce a comparison, but without a Ever-owned normalization layer it cannot combine official reward with Ever-specific recovery, checkpoint, cost, and event evidence.
 
 ## 3. Goals
 
 V1 must:
 
-1. Load a versioned external benchmark without copying its scoring logic into Karissa.
-2. Run the same task against Karissa, Codex, and Terminus-2.
+1. Load a versioned external benchmark without copying its scoring logic into Ever.
+2. Run the same task against Ever, Codex, and Terminus-2.
 3. Pin and record benchmark identity, agent version, model identity, environment, permissions, budgets, and repetition.
 4. Execute every trial in an isolated Docker environment.
 5. Keep benchmark tests and reference solutions unavailable to the agent during execution.
 6. Preserve the official benchmark reward unchanged.
 7. Record normalized timing, token, cost, terminal state, artifacts, and errors.
-8. Record Karissa-specific checkpoint, recovery, Turn, Task, Agent, and event evidence without using it to rewrite the official reward.
+8. Record Ever-specific checkpoint, recovery, Turn, Task, Agent, and event evidence without using it to rewrite the official reward.
 9. Support deterministic subsets and resumable batch execution.
 10. Produce machine-readable JSONL plus a concise comparison report.
 
@@ -49,7 +49,7 @@ V1 does not:
 - support SWE-bench, METR Task Standard, or private tasks;
 - add an LLM-as-judge score;
 - run more than one trial concurrently by default;
-- add Python to Karissa runtime packages;
+- add Python to Ever runtime packages;
 - evaluate macOS notifications or launchd behavior inside Linux benchmark containers;
 - claim long-term reliability from a single benchmark run.
 
@@ -57,7 +57,7 @@ V1 does not:
 
 ### 5.1 External score authority
 
-The external benchmark owns its task meaning and official score. Karissa may normalize the score into its result schema but must retain the original metric names and values.
+The external benchmark owns its task meaning and official score. Ever may normalize the score into its result schema but must retain the original metric names and values.
 
 ### 5.2 Black-box agent execution
 
@@ -68,7 +68,7 @@ The runner starts an installed, pinned agent executable. It must not import `Tas
 An adapter is valid only after:
 
 1. its oracle/reference solution produces the benchmark's expected reward;
-2. one supported baseline agent produces materially equivalent results in the official harness and the Karissa runner on the same parity subset;
+2. one supported baseline agent produces materially equivalent results in the official harness and the Ever runner on the same parity subset;
 3. environment, prompt, model, limits, and verifier inputs are shown to be equal.
 
 ### 5.4 Hard gates before soft metrics
@@ -103,10 +103,10 @@ External Benchmark Registry
        |
        +--> Official benchmark metrics
        +--> Comparable common metrics
-       +--> Karissa-only runtime metrics
+       +--> Ever-only runtime metrics
 ```
 
-There is no dependency from the Karissa runtime back to `packages/evals`.
+There is no dependency from the Ever runtime back to `packages/evals`.
 
 ## 7. Repository layout
 
@@ -121,7 +121,7 @@ packages/evals/
 │   │   ├── artifacts.ts
 │   │   ├── agents/
 │   │   │   ├── agent-adapter.ts
-│   │   │   ├── karissa-agent.ts
+│   │   │   ├── ever-agent.ts
 │   │   │   ├── codex-agent.ts
 │   │   │   └── terminus-agent.ts
 │   │   ├── benchmarks/
@@ -260,27 +260,27 @@ V1 fault types are:
 - `pause_agent_process` with a bounded duration;
 - `terminate_container`, used only by recovery-negative tests.
 
-External benchmark comparison runs use no injected faults. Karissa reliability runs use a separately named profile so their scores cannot be confused with official benchmark results.
+External benchmark comparison runs use no injected faults. Ever reliability runs use a separately named profile so their scores cannot be confused with official benchmark results.
 
-## 9. Karissa black-box control protocol
+## 9. Ever black-box control protocol
 
 The Eval Runner requires stable JSON output from the product CLI. V1 adds:
 
 ```text
-karissa task submit --manifest <path> --yes --json
-karissa task show <task-id> --json
-karissa task events <task-id> --after <seq> --json
-karissa daemon status --json
-karissa daemon stop --json
+ever task submit --manifest <path> --yes --json
+ever task show <task-id> --json
+ever task events <task-id> --after <seq> --json
+ever daemon status --json
+ever daemon stop --json
 ```
 
 `task submit` accepts a local manifest containing goal, workspace root, registered verification command, limits, and unattended authorization. It prints one JSON object containing `schemaVersion`, `taskId`, `state`, and `createdAt`.
 
 The Eval Runner never parses human-readable command output. Unknown JSON schema versions are rejected.
 
-For a Harbor-style container trial, `KarissaAgent.run()`:
+For a Harbor-style container trial, `EverAgent.run()`:
 
-1. starts or confirms the Karissa Daemon;
+1. starts or confirms the Ever Daemon;
 2. submits the benchmark instruction;
 3. polls Task state with bounded exponential backoff from 250 ms to 5 seconds;
 4. streams new Task events into the trial trajectory;
@@ -316,7 +316,7 @@ Before model-backed runs, the oracle agent must achieve the expected reward on a
 
 V1 comparison agents are:
 
-- Karissa;
+- Ever;
 - Codex;
 - Terminus-2.
 
@@ -388,7 +388,7 @@ interface EvalRunResult {
     artifactsDigest: string;
     violations: string[];
   };
-  karissa?: {
+  ever?: {
     taskId: string;
     terminalState: string;
     turns: number;
@@ -426,9 +426,9 @@ The report includes:
 
 No composite score mixes reward, cost, and latency.
 
-### 13.3 Karissa reliability metrics
+### 13.3 Ever reliability metrics
 
-Karissa-only observations are reported separately:
+Ever-only observations are reported separately:
 
 - checkpoint count;
 - recovery count and latency;
@@ -437,7 +437,7 @@ Karissa-only observations are reported separately:
 - Task terminal-state distribution;
 - Task event integrity violations.
 
-These metrics explain Karissa behavior but do not change Terminal-Bench reward.
+These metrics explain Ever behavior but do not change Terminal-Bench reward.
 
 ### 13.4 Hard invalidation
 
@@ -481,7 +481,7 @@ Artifacts may contain prompts, source code, tool output, credentials accidentall
 V1 extends the existing root Eval command:
 
 ```text
-npm run eval -- benchmark --benchmark terminal-bench-2-1 --agents karissa,codex,terminus-2 --model <exact-model> --max-cost-usd <amount>
+npm run eval -- benchmark --benchmark terminal-bench-2-1 --agents ever,codex,terminus-2 --model <exact-model> --max-cost-usd <amount>
 npm run eval -- benchmark --benchmark terminal-bench-2-1 --agents oracle --subset development
 npm run eval -- benchmark --resume <job-id>
 npm run eval -- report <job-id>
@@ -514,7 +514,7 @@ The current development machine has `uv` and Python but no available `docker` co
 - Docker build contexts are constrained to the resolved benchmark task.
 - Adapter commands use argument arrays, not shell interpolation.
 - Host paths mounted into containers are explicit and read-only unless the task requires a writable workspace.
-- Agent containers do not mount the Karissa repository, user home, Docker socket, or the Eval artifact root.
+- Agent containers do not mount the Ever repository, user home, Docker socket, or the Eval artifact root.
 - The runner refuses privileged containers and host networking in V1.
 - Test and oracle paths are verified absent before the agent starts.
 
@@ -548,7 +548,7 @@ Each phase is independently usable and mergeable.
 
 Deliver:
 
-- stable Karissa JSON task-control commands;
+- stable Ever JSON task-control commands;
 - versioned `EvalCase` and `EvalRunResult` schemas;
 - `EvalRunner`, artifact storage, resume, and report generation;
 - fake benchmark, fake environment, and fake agent adapters;
@@ -559,7 +559,7 @@ Acceptance:
 - a fake three-agent comparison produces deterministic JSONL and Markdown reports;
 - interrupted jobs resume without duplicating completed trials;
 - malformed schemas, floating versions, missing budgets, and artifact digest errors fail before execution;
-- the runner has no import from Karissa long-task internals.
+- the runner has no import from Ever long-task internals.
 
 ### Phase 2: Terminal-Bench 2.1 and Docker
 
@@ -570,7 +570,7 @@ Deliver:
 - deterministic 10-task subset;
 - hidden-verifier injection;
 - oracle validation;
-- Karissa, Codex, and Terminus-2 adapters.
+- Ever, Codex, and Terminus-2 adapters.
 
 Acceptance:
 
@@ -580,19 +580,19 @@ Acceptance:
 - the same resolved model and environment digests are recorded for all compared agents;
 - one model-backed case can run end to end and produce official reward plus normalized artifacts.
 
-### Phase 3: Repeated comparison and Karissa fault profiles
+### Phase 3: Repeated comparison and Ever fault profiles
 
 Deliver:
 
 - three-repetition comparison jobs;
 - cost, token, latency, and success summaries;
-- Karissa process-fault injection profiles;
+- Ever process-fault injection profiles;
 - checkpoint, recovery, duplicate-side-effect, and unknown-outcome reporting.
 
 Acceptance:
 
 - the 10-case, three-agent, three-repetition job can resume after runner interruption;
-- official no-fault results remain separate from Karissa fault-profile results;
+- official no-fault results remain separate from Ever fault-profile results;
 - hard-gate failures cannot be hidden by average reward;
 - comparison output identifies incomplete telemetry rather than treating it as zero.
 
@@ -620,11 +620,11 @@ Acceptance:
 
 ### Model-backed acceptance
 
-- one Terminal-Bench task with Karissa;
+- one Terminal-Bench task with Ever;
 - the same task and model with one baseline agent;
 - development subset oracle run;
 - development subset parity comparison;
-- one Karissa Daemon restart fault run, reported outside official comparison.
+- one Ever Daemon restart fault run, reported outside official comparison.
 
 No paid model-backed run occurs in normal pull-request CI. Pull requests run unit and deterministic integration tests. Repeated live comparisons run manually or in a budgeted scheduled workflow.
 
@@ -632,19 +632,19 @@ No paid model-backed run occurs in normal pull-request CI. Pull requests run uni
 
 The project is successful when:
 
-1. Karissa, Codex, and Terminus-2 can run the same resolved Terminal-Bench 2.1 subset through one command.
+1. Ever, Codex, and Terminus-2 can run the same resolved Terminal-Bench 2.1 subset through one command.
 2. Official verifier outputs remain unchanged and reproducible.
 3. Oracle and baseline parity demonstrate adapter correctness.
 4. Every comparison records exact benchmark, model, agent, environment, prompt/configuration, limits, and artifact digests.
 5. Invalid infrastructure cannot be reported as an agent failure or pass.
 6. Results expose capability, cost, latency, and reliability without collapsing them into one opaque score.
-7. Karissa-specific long-task recovery data is available without contaminating public benchmark reward.
+7. Ever-specific long-task recovery data is available without contaminating public benchmark reward.
 
 ## 22. Rejected alternative
 
-V1 will not fork or embed Harbor as Karissa's Eval core. Doing so would introduce a second orchestration stack and Python control plane while still requiring Karissa-specific Task polling, recovery events, and artifact normalization. Harbor remains the official parity reference and a future export target.
+V1 will not fork or embed Harbor as Ever's Eval core. Doing so would introduce a second orchestration stack and Python control plane while still requiring Ever-specific Task polling, recovery events, and artifact normalization. Harbor remains the official parity reference and a future export target.
 
-If the primary goal changes from Karissa development to publishing and maintaining benchmarks for many unrelated agents, the Eval package should move to a separate repository and use Harbor directly as its execution core.
+If the primary goal changes from Ever development to publishing and maintaining benchmarks for many unrelated agents, the Eval package should move to a separate repository and use Harbor directly as its execution core.
 
 ## 23. Fragile assumption
 

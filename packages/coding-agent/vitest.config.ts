@@ -23,7 +23,7 @@ export default mergeConfig(
 		resolve: {
 			alias: [
 				{
-					find: /^@karissa\/long-tasks$/,
+					find: /^@ever\/long-tasks$/,
 					replacement: fileURLToPath(new URL("../long-tasks/src/index.ts", import.meta.url)),
 				},
 				{

@@ -57,7 +57,7 @@ describe("legacy --session handling", () => {
 		const result = await runCli(["--session", sessionFile, "-p", "hi"], projectDir, agentDir);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 		expect(result.stderr).not.toContain("SessionManager.open");
 		expect(result.stderr).not.toContain("at ");
 		expect(readFileSync(sessionFile, "utf8")).toBe(originalContent);

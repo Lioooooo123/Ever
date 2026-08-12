@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { NotificationAdapter, TaskNotification } from "@karissa/long-tasks";
+import type { NotificationAdapter, TaskNotification } from "@ever/long-tasks";
 
 const execFileAsync = promisify(execFile);
 

@@ -28,9 +28,9 @@ import {
 } from "./cli/auth-command.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { handleDaemonCommand } from "./cli/daemon-command.ts";
+import { handleEverCommand } from "./cli/ever-command.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
-import { handleKarissaCommand } from "./cli/karissa-command.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
@@ -623,7 +623,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (await handleConfigCommand(args, { extensionFactories })) {
 		return;
 	}
-	if (await handleKarissaCommand(args, agentDir, cwd)) {
+	if (await handleEverCommand(args, agentDir, cwd)) {
 		return;
 	}
 
@@ -971,9 +971,21 @@ export async function main(args: string[], options?: MainOptions) {
 				longTaskSettings.continuation,
 			)
 		: undefined;
+	let taskRuntimeClosePromise: Promise<void> | undefined;
+	const closeTaskRuntime = async (): Promise<void> => {
+		if (!taskRuntime) return;
+		taskRuntimeClosePromise ??= taskRuntime.drainAndClose().then(() => undefined);
+		await taskRuntimeClosePromise;
+	};
 	try {
-		if (process.env.KARISSA_RESIDENT_WORKER === "1") {
-			await runResidentWorkerFromEnvironment(runtime, taskRunContext, initialMessage, initialImages);
+		if (process.env.EVER_RESIDENT_WORKER === "1") {
+			await runResidentWorkerFromEnvironment(
+				runtime,
+				taskRunContext,
+				initialMessage,
+				initialImages,
+				closeTaskRuntime,
+			);
 		} else if (appMode === "rpc") {
 			printTimings();
 			await runRpcMode(runtime);
@@ -987,6 +999,7 @@ export async function main(args: string[], options?: MainOptions) {
 				initialMessages: parsed.messages,
 				verbose: parsed.verbose,
 				tuiMode: parsed.tuiMode,
+				onBeforeExit: closeTaskRuntime,
 			});
 			if (startupBenchmark) {
 				await interactiveMode.init();
@@ -1024,6 +1037,6 @@ export async function main(args: string[], options?: MainOptions) {
 			return;
 		}
 	} finally {
-		await taskRuntime?.drainAndClose();
+		await closeTaskRuntime();
 	}
 }

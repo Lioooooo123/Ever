@@ -117,7 +117,7 @@ describe("startup session name", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.signal).toBeNull();
-		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 		expect(readSessionInfoNames(dirs.sessionFile)).toEqual([]);
 	});
 
@@ -130,7 +130,7 @@ describe("startup session name", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.signal).toBeNull();
-		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 		expect(readSessionInfoNames(dirs.sessionFile)).toEqual([]);
 	});
 });

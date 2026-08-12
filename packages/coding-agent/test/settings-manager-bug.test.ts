@@ -25,7 +25,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 			rmSync(testDir, { recursive: true });
 		}
 		mkdirSync(agentDir, { recursive: true });
-		mkdirSync(join(projectDir, ".karissa"), { recursive: true });
+		mkdirSync(join(projectDir, ".ever"), { recursive: true });
 	});
 
 	afterEach(() => {
@@ -100,7 +100,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 	});
 
 	it("should preserve external project settings changes when updating unrelated project field", async () => {
-		const projectSettingsPath = join(projectDir, ".karissa", "settings.json");
+		const projectSettingsPath = join(projectDir, ".ever", "settings.json");
 		writeFileSync(
 			projectSettingsPath,
 			JSON.stringify({
@@ -124,7 +124,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 	});
 
 	it("should let in-memory project changes override external changes for the same project field", async () => {
-		const projectSettingsPath = join(projectDir, ".karissa", "settings.json");
+		const projectSettingsPath = join(projectDir, ".ever", "settings.json");
 		writeFileSync(
 			projectSettingsPath,
 			JSON.stringify({

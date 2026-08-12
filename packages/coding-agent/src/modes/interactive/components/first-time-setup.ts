@@ -26,7 +26,7 @@ const ANALYTICS_OPTIONS: Array<{ value: boolean; label: string }> = [
 	{ value: false, label: "Don't share" },
 ];
 
-const SETUP_LOGO_LINES = ["KARISSA", "LONG-HORIZON AGENT RUNTIME"];
+const SETUP_LOGO_LINES = ["EVER", "LONG-HORIZON AGENT RUNTIME"];
 
 /** First-time setup dialog: theme choice and analytics opt-in. */
 export class FirstTimeSetupComponent extends Container {
@@ -71,7 +71,7 @@ export class FirstTimeSetupComponent extends Container {
 				new Text(
 					theme.fg(
 						"muted",
-						"Opting in stores a tracking identifier in settings.json and enables anonymous\nusage analytics. This helps diagnose and reproduce Karissa runtime issues.\nYou can inspect what is shared using /privacy and change this anytime in\nsettings.json.",
+						"Opting in stores a tracking identifier in settings.json and enables anonymous\nusage analytics. This helps diagnose and reproduce Ever runtime issues.\nYou can inspect what is shared using /privacy and change this anytime in\nsettings.json.",
 					),
 					1,
 					0,

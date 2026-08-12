@@ -34,6 +34,8 @@ export interface ResidentWorkerOptions {
 	eventReplayMaxBytes?: number;
 	snapshotChunkBytes?: number;
 	heartbeatSeconds?: number;
+	/** Drain the durable Task runtime and release its lease before acknowledging stop. */
+	onBeforeStop?: () => Promise<void>;
 }
 
 const WORKER_SOCKET_TIMEOUT_MS = 5_000;
@@ -51,36 +53,38 @@ export async function runResidentWorkerFromEnvironment(
 	taskRunContext: TaskRunContext | undefined,
 	initialMessage?: string,
 	initialImages?: ImageContent[],
+	onBeforeStop?: () => Promise<void>,
 ): Promise<void> {
 	const token = getWorkerStartup().token;
-	const startedAt = requiredEnvironment("KARISSA_WORKER_STARTED_AT");
+	const startedAt = requiredEnvironment("EVER_WORKER_STARTED_AT");
 	if (!taskRunContext) throw new Error("Resident worker has no claimed Task run context");
 	await runResidentWorkerHost(runtime, {
-		runDirectory: requiredEnvironment("KARISSA_RUN_DIRECTORY"),
+		runDirectory: requiredEnvironment("EVER_RUN_DIRECTORY"),
 		token,
 		initialMessage,
 		initialImages,
-		eventReplayMaxCount: Number(process.env.KARISSA_EVENT_REPLAY_MAX_COUNT ?? 10_000),
-		eventReplayMaxBytes: Number(process.env.KARISSA_EVENT_REPLAY_MAX_BYTES ?? 16_777_216),
-		snapshotChunkBytes: Number(process.env.KARISSA_SNAPSHOT_CHUNK_BYTES ?? 524_288),
-		heartbeatSeconds: Number(process.env.KARISSA_WORKER_HEARTBEAT_SECONDS ?? 5),
+		onBeforeStop,
+		eventReplayMaxCount: Number(process.env.EVER_EVENT_REPLAY_MAX_COUNT ?? 10_000),
+		eventReplayMaxBytes: Number(process.env.EVER_EVENT_REPLAY_MAX_BYTES ?? 16_777_216),
+		snapshotChunkBytes: Number(process.env.EVER_SNAPSHOT_CHUNK_BYTES ?? 524_288),
+		heartbeatSeconds: Number(process.env.EVER_WORKER_HEARTBEAT_SECONDS ?? 5),
 		descriptor: {
 			schemaVersion: 1,
-			workerId: requiredEnvironment("KARISSA_WORKER_ID"),
-			executionId: requiredEnvironment("KARISSA_EXECUTION_ID"),
+			workerId: requiredEnvironment("EVER_WORKER_ID"),
+			executionId: requiredEnvironment("EVER_EXECUTION_ID"),
 			agentId: taskRunContext.agentId,
 			taskId: taskRunContext.taskId,
 			activeSessionId: runtime.session.sessionId,
 			...(runtime.session.sessionFile === undefined ? {} : { sessionPath: runtime.session.sessionFile }),
 			pid: process.pid,
 			processGroupId: process.pid,
-			supervisorGeneration: requiredEnvironment("KARISSA_SUPERVISOR_GENERATION"),
-			privateSocketPath: requiredEnvironment("KARISSA_WORKER_SOCKET"),
+			supervisorGeneration: requiredEnvironment("EVER_SUPERVISOR_GENERATION"),
+			privateSocketPath: requiredEnvironment("EVER_WORKER_SOCKET"),
 			tokenSha256: createHash("sha256").update(token).digest("hex"),
 			workspaceRoot: runtime.cwd,
-			...(process.env.KARISSA_SANDBOX_ID ? { sandboxId: process.env.KARISSA_SANDBOX_ID } : {}),
-			...(process.env.KARISSA_SANDBOX_PROFILE_SHA256
-				? { sandboxProfileSha256: process.env.KARISSA_SANDBOX_PROFILE_SHA256 }
+			...(process.env.EVER_SANDBOX_ID ? { sandboxId: process.env.EVER_SANDBOX_ID } : {}),
+			...(process.env.EVER_SANDBOX_PROFILE_SHA256
+				? { sandboxProfileSha256: process.env.EVER_SANDBOX_PROFILE_SHA256 }
 				: {}),
 			lifecycle: "resident",
 			state: "starting",
@@ -309,6 +313,9 @@ export async function runResidentWorkerHost(
 						descriptor = { ...descriptor, state: "stopping", heartbeatAt: new Date().toISOString() };
 						registry.write(descriptor);
 						await runtime.session.abort();
+						await options.onBeforeStop?.();
+						descriptor = { ...descriptor, state: "exited", heartbeatAt: new Date().toISOString() };
+						registry.write(descriptor);
 						socket.end(JSON.stringify({ ok: true }));
 						server.close();
 					}

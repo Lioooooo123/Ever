@@ -22,11 +22,12 @@ async function waitForPath(path: string): Promise<void> {
 
 describe("ResidentWorkerHost", () => {
 	it("stays alive without a client and accepts attach, prompt, and graceful stop", async () => {
-		const directory = mkdtempSync(join(tmpdir(), "karissa-worker-host-"));
+		const directory = mkdtempSync(join(tmpdir(), "ever-worker-host-"));
 		temporaryDirectories.push(directory, workerSocketDirectory(directory));
 		const socketPath = createWorkerSocketPath(directory, "worker");
 		const prompts: string[] = [];
 		let disposed = false;
+		let taskRuntimeDrained = false;
 		const runtime = {
 			cwd: "/repo",
 			session: {
@@ -53,6 +54,9 @@ describe("ResidentWorkerHost", () => {
 		const host = runResidentWorkerHost(runtime, {
 			runDirectory: directory,
 			token: "private-token",
+			onBeforeStop: async () => {
+				taskRuntimeDrained = true;
+			},
 			descriptor: {
 				schemaVersion: 1,
 				workerId: "worker-1",
@@ -102,13 +106,14 @@ describe("ResidentWorkerHost", () => {
 				command: "stop",
 			}),
 		).toEqual({ ok: true });
+		expect(taskRuntimeDrained).toBe(true);
 		await host;
 		expect(disposed).toBe(true);
 		expect(existsSync(socketPath)).toBe(false);
 	});
 
 	it("bounds snapshot transcripts and retains the newest messages", async () => {
-		const directory = mkdtempSync(join(tmpdir(), "karissa-worker-snapshot-"));
+		const directory = mkdtempSync(join(tmpdir(), "ever-worker-snapshot-"));
 		temporaryDirectories.push(directory, workerSocketDirectory(directory));
 		const socketPath = createWorkerSocketPath(directory, "worker");
 		const runtime = {

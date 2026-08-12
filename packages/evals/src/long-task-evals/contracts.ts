@@ -31,7 +31,7 @@ export interface EnvironmentAdapter {
 export interface AgentRunOutcome {
 	outcome: EvalRunResult["outcome"];
 	usage: Omit<EvalRunResult["usage"], "wallTimeMs">;
-	karissa?: EvalRunResult["karissa"];
+	ever?: EvalRunResult["ever"];
 	errors: EvalRunResult["errors"];
 }
 

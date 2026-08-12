@@ -91,7 +91,7 @@ export const EvalRunResultSchema = Type.Object({
 		artifactsDigest: DigestSchema,
 		violations: Type.Array(Type.String()),
 	}),
-	karissa: Type.Optional(
+	ever: Type.Optional(
 		Type.Object({
 			taskId: Type.String({ minLength: 1 }),
 			terminalState: Type.String({ minLength: 1 }),

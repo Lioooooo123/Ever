@@ -74,7 +74,7 @@ export class WorkspaceAllocator {
 			const relativePath = assertInside(repoRoot, absolutePath);
 			return relativePath === "" ? "." : relativePath;
 		});
-		const branch = `karissa/task/${input.taskId.slice(0, 8)}/${input.agentId.slice(0, 8)}`;
+		const branch = `ever/task/${input.taskId.slice(0, 8)}/${input.agentId.slice(0, 8)}`;
 		try {
 			git(repoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
 			throw new Error(`Worktree branch already exists: ${branch}`);

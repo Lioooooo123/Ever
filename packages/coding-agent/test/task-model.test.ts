@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe("Task model pinning", () => {
 	it("resolves an explicit authenticated model to a durable exact identity", async () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-task-model-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-task-model-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
 		const cwd = join(root, "workspace");

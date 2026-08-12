@@ -33,7 +33,7 @@ describe("shouldRunFirstTimeSetup", () => {
 		}
 	});
 
-	it("stays disabled for the Karissa distribution", () => {
+	it("stays disabled for the Ever distribution", () => {
 		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
 	});
 

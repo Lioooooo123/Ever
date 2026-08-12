@@ -52,7 +52,7 @@ export class CommandAgentAdapter implements AgentAdapter {
 			cwd: testCase.environment.workingDirectory,
 			env: {
 				...(typeof this.#config.environment === "function" ? this.#config.environment() : this.#config.environment),
-				...(budget.maxCostUsd === undefined ? {} : { KARISSA_EVAL_MAX_COST_USD: String(budget.maxCostUsd) }),
+				...(budget.maxCostUsd === undefined ? {} : { EVER_EVAL_MAX_COST_USD: String(budget.maxCostUsd) }),
 			},
 			timeoutSeconds: testCase.limits.trialTimeoutSeconds,
 		});

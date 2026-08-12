@@ -1,14 +1,14 @@
-# Karissa 原生长程任务与多 Agent 运行时技术规范
+# Ever 原生长程任务与多 Agent 运行时技术规范
 
 - 状态：Draft
 - 版本：0.5
 - 日期：2026-08-10
 - 目标上游：[`earendil-works/pi`](https://github.com/earendil-works/pi)
-- 目标读者：Karissa 维护者、实现工程师、代码评审者
+- 目标读者：Ever 维护者、实现工程师、代码评审者
 
 ## 1. 摘要
 
-Karissa 是 Pi Agent Harness 的低侵入式 fork。主要能力放在独立模块中，只对 Pi core 增加必要的通用接口。首个核心改动是在现有 Agent Session、工具系统、compaction 和 provider 之上增加持久任务运行时，使一个任务可以跨会话、跨上下文压缩、跨进程退出继续执行。
+Ever 是 Pi Agent Harness 的低侵入式 fork。主要能力放在独立模块中，只对 Pi core 增加必要的通用接口。首个核心改动是在现有 Agent Session、工具系统、compaction 和 provider 之上增加持久任务运行时，使一个任务可以跨会话、跨上下文压缩、跨进程退出继续执行。
 
 长程任务在本规范中指持续数小时或数天、允许等待外部条件、能够在失败后恢复的工作。扩大上下文窗口不能满足这些要求。运行时需要保存目标、验收条件、执行历史、checkpoint、预算、等待条件和副作用状态，并在每次恢复前判断哪些操作可以重试。
 
@@ -116,7 +116,7 @@ flowchart TD
 
 ### 6.1 模块边界
 
-新增 workspace package：`packages/long-tasks`，包名为 `@karissa/long-tasks`。该包不单独发布到 npm，由 Karissa monorepo 内部使用。
+新增 workspace package：`packages/long-tasks`，包名为 `@ever/long-tasks`。该包不单独发布到 npm，由 Ever monorepo 内部使用。
 
 模块职责如下：
 
@@ -157,7 +157,7 @@ interface AgentCoordinator {
 - `packages/coding-agent/src/cli.ts`
 - `packages/coding-agent/src/main.ts`
 
-对 Pi core 的新增接口必须保持通用，不得包含 Karissa 数据库类型。计划增加两个能力：
+对 Pi core 的新增接口必须保持通用，不得包含 Ever 数据库类型。计划增加两个能力：
 
 ```ts
 interface AgentSessionRuntime {
@@ -175,7 +175,7 @@ interface SessionCheckpoint {
 }
 
 interface RuntimeSnapshot {
-  karissaVersion: string;
+  everVersion: string;
   upstreamCommit: string;
   protocolVersion: number;
   model: {
@@ -700,7 +700,7 @@ subagent 支持两种工作区模式：
 ~/.pi/agent/worktrees/<repo-fingerprint>/<task-id>/<agent-id>/
 ```
 
-对应分支名为 `karissa/task/<task-short-id>/<agent-short-id>`。分配器创建 worktree 前必须确认分支名不存在，存在时暂停 Agent 并要求用户处理，不能复用未知分支。
+对应分支名为 `ever/task/<task-short-id>/<agent-short-id>`。分配器创建 worktree 前必须确认分支名不存在，存在时暂停 Agent 并要求用户处理，不能复用未知分支。
 
 写入型 subagent 只提交 diff、commit hash、验证证据和 worktree 路径。V1 不自动 merge、rebase 或删除 worktree。主 Agent 检查结果后决定如何整合。非 Git 工作区只能创建 `read_only_shared` subagent。
 
@@ -744,7 +744,7 @@ interface WorkspaceSnapshot {
 `WorkspaceAllocator` 按以下协议分配：
 
 1. 先为主 Agent 创建 settled checkpoint。
-2. 获得短时 workspace snapshot mutex，阻止快照期间的 Karissa 写入。
+2. 获得短时 workspace snapshot mutex，阻止快照期间的 Ever 写入。
 3. 记录 `baseCommit`，捕获 staged 和 unstaged tracked patch，再按路径、密钥规则和大小上限收集范围内的 untracked 文件。
 4. 从 `baseCommit` 创建 worktree，应用 patch 并复制收集的 untracked 文件。
 5. 校验每个 hash，将快照内容和 hash 写入 Delegation，再允许子 Agent 入队。
@@ -957,7 +957,7 @@ type TaskUpdateInput =
 
 ### 13.2 compaction 规则
 
-Pi 原生 compaction 继续管理会话消息。Karissa 不创建第二套会话摘要系统。
+Pi 原生 compaction 继续管理会话消息。Ever 不创建第二套会话摘要系统。
 
 `session_before_compact` 处理器必须先请求 checkpoint。checkpoint 失败时取消 compaction，并把 Task 暂停为 `checkpoint_failed`。compaction 完成后记录 `CompactionFinished`，其中包含新的 compaction entry ID 和 checkpoint ID。
 
@@ -1128,7 +1128,7 @@ pi task schedule <task-id> --at <iso-time>
 pi task logs <task-id> --follow
 ```
 
-daemon 使用本地 Unix socket 与 CLI 通信。socket 默认位于 `~/.pi/agent/run/karissa.sock`，目录权限为 `0700`。V1 不开放 TCP 监听。
+daemon 使用本地 Unix socket 与 CLI 通信。socket 默认位于 `~/.pi/agent/run/ever.sock`，目录权限为 `0700`。V1 不开放 TCP 监听。
 
 `pi daemon stop` 先停止接收新任务，等待正在执行的 Turn settled，写 checkpoint 后退出。超过 30 秒仍未 settled 时停止 worker，并按副作用恢复规则更新 Task。
 
@@ -1419,8 +1419,8 @@ npm run check
 新增 package 的定向验证命令：
 
 ```bash
-npm test --workspace=@karissa/long-tasks
-npm run build --workspace=@karissa/long-tasks
+npm test --workspace=@ever/long-tasks
+npm run build --workspace=@ever/long-tasks
 ```
 
 不新增其他语言或运行时。优先复用 monorepo 已有 SQLite backend、TypeBox、测试框架和日志基础设施。新增直接依赖必须固定精确版本，并通过上游 pinned dependency 检查。
@@ -1434,7 +1434,7 @@ npm run build --workspace=@karissa/long-tasks
 1. 暂停所有非终态 Task 及其 Agent。
 2. 停止 daemon 并确认 lease 已释放。
 3. 将 `longTasks.enabled` 设置为 `false`。
-4. 回退 Karissa 二进制。
+4. 回退 Ever 二进制。
 5. 保留 `long-tasks.sqlite` 和 artifacts，不自动删除。
 
 旧版本发现长程任务数据库时应忽略，不得移动或改写。重新升级后可以继续读取已保存 Task。
@@ -1451,7 +1451,7 @@ V1 将 `bash` 默认归类为 `process`。这会产生更多人工核对，但�
 
 ### 29.3 上游持续变化导致 fork 难以同步
 
-Karissa 对 core 的修改集中在少量恢复钩子。Task 控制面保留在独立 package。每次同步 upstream 时先运行 Pi 原测试，再运行 long-tasks 测试。
+Ever 对 core 的修改集中在少量恢复钩子。Task 控制面保留在独立 package。每次同步 upstream 时先运行 Pi 原测试，再运行 long-tasks 测试。
 
 ### 29.4 无人值守权限过大
 
@@ -1471,7 +1471,7 @@ Karissa 对 core 的修改集中在少量恢复钩子。Task 控制面保留在�
 
 ### 29.8 Lease 过期产生双 worker
 
-心跳超时不能证明旧 worker 死亡。Karissa 将 fencing token 用于拒绝晚到的持久化写入，同时使用 recovery barrier 终止旧执行体并核对未完成工具。无法证明旧执行体已停止时，安全性优先于可用性，不启动新 Turn。
+心跳超时不能证明旧 worker 死亡。Ever 将 fencing token 用于拒绝晚到的持久化写入，同时使用 recovery barrier 终止旧执行体并核对未完成工具。无法证明旧执行体已停止时，安全性优先于可用性，不启动新 Turn。
 
 ### 29.9 恢复时运行环境已改变
 
@@ -1479,7 +1479,7 @@ Karissa 对 core 的修改集中在少量恢复钩子。Task 控制面保留在�
 
 ## 30. 已确定的产品边界
 
-- 产品名使用 Karissa，CLI 在 V1 继续兼容 `pi`。
+- 产品名使用 Ever，CLI 在 V1 继续兼容 `pi`。
 - Task 是顶层持久实体，Session 是其执行记录之一。
 - 每个 Task 有且只有一个主 Agent，可以拥有多个持久 subagent。
 - Agent 通过持久 inbox 通信，消息采用 at-least-once delivery。

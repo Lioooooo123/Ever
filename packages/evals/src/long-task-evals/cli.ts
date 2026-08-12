@@ -13,8 +13,8 @@ import {
 } from "./command-agent.ts";
 import { formatComparisonMarkdown, summarizeResults } from "./comparison.ts";
 import { DockerEnvironmentAdapter } from "./docker-environment.ts";
+import { EverAgentAdapter } from "./ever-agent.ts";
 import { type FaultSpec, ProcessFaultInjector } from "./faults.ts";
-import { KarissaAgentAdapter } from "./karissa-agent.ts";
 import { exportRedactedJob } from "./redaction.ts";
 import { LongTaskEvalRunner } from "./runner.ts";
 import type { AgentIdentity, EvalCase } from "./schemas.ts";
@@ -22,7 +22,7 @@ import { selectDeterministicCases } from "./task-selection.ts";
 import { TerminalBench21Adapter } from "./terminal-bench-2-1.ts";
 
 interface StoredAgentConfig {
-	kind: "karissa" | "command";
+	kind: "ever" | "command";
 	name: string;
 	version: string;
 	executableDigest: string;
@@ -85,8 +85,8 @@ function assertAgentConfig(value: unknown): asserts value is StoredAgentConfig[]
 			throw new Error("Agent executableDigest must be SHA-256");
 		if (!/^[a-f0-9]{64}$/.test(String(Reflect.get(agent, "configurationDigest"))))
 			throw new Error("Agent configurationDigest must be SHA-256");
-		if (Reflect.get(agent, "kind") !== "karissa" && Reflect.get(agent, "kind") !== "command")
-			throw new Error("Agent kind must be karissa or command");
+		if (Reflect.get(agent, "kind") !== "ever" && Reflect.get(agent, "kind") !== "command")
+			throw new Error("Agent kind must be ever or command");
 	}
 }
 
@@ -128,10 +128,10 @@ function makeAgents(config: StoredJobConfig) {
 	return config.agents.map((agent) => {
 		const identity = makeIdentity(agent, config.provider, config.model);
 		const environment = (): Record<string, string> => environmentFor(agent.forwardEnvironment);
-		if (agent.kind === "karissa") {
-			if (agent.command.length !== 1) throw new Error("Karissa agent command must contain exactly one executable");
-			if (config.maxCostUsd === undefined) throw new Error("Karissa agent requires a job cost budget");
-			return new KarissaAgentAdapter({
+		if (agent.kind === "ever") {
+			if (agent.command.length !== 1) throw new Error("Ever agent command must contain exactly one executable");
+			if (config.maxCostUsd === undefined) throw new Error("Ever agent requires a job cost budget");
+			return new EverAgentAdapter({
 				identity,
 				command: agent.command[0],
 				environment,
@@ -264,8 +264,8 @@ export async function executeLongTaskCommand(args: string[]): Promise<void> {
 		let faults: StoredJobConfig["faults"];
 		if (values["fault-profile"] !== undefined || values["fault-schedule"] !== undefined) {
 			const profile = required(values["fault-profile"], "--fault-profile");
-			if (!profile.startsWith("karissa-reliability"))
-				throw new Error("--fault-profile must start with karissa-reliability");
+			if (!profile.startsWith("ever-reliability"))
+				throw new Error("--fault-profile must start with ever-reliability");
 			const schedule = JSON.parse(
 				await readFile(resolve(required(values["fault-schedule"], "--fault-schedule")), "utf8"),
 			) as unknown;

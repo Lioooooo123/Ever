@@ -1,4 +1,4 @@
-# Karissa 架构优化规格
+# Ever 架构优化规格
 
 > 状态：Draft
 >
@@ -6,22 +6,22 @@
 >
 > 目标版本：V0.1 起分阶段实现
 >
-> 关联文档：[KARISSA_PRD_V0.1.md](./KARISSA_PRD_V0.1.md)、[NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md](./NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md)、[TECHNICAL_SPEC.md](./TECHNICAL_SPEC.md)、[LONG_RUNNING_CONTROL_PLANE_SPEC.md](./LONG_RUNNING_CONTROL_PLANE_SPEC.md)
+> 关联文档：[EVER_PRD_V0.1.md](./EVER_PRD_V0.1.md)、[NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md](./NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md)、[TECHNICAL_SPEC.md](./TECHNICAL_SPEC.md)、[LONG_RUNNING_CONTROL_PLANE_SPEC.md](./LONG_RUNNING_CONTROL_PLANE_SPEC.md)
 
 ## 1. 架构决策
 
-Karissa 基于 Pi Agent 深度开发。Pi 是 Karissa 的原生执行内核，继续负责模型 Provider、认证、模型目录、流式协议、Agent Loop、Session、工具、Extension、上下文压缩和 Eval。Karissa 在 Pi 的原生 seam 上增加持久 Task、常驻 Worker、预算、策略、恢复和验收。
+Ever 基于 Pi Agent 深度开发。Pi 是 Ever 的原生执行内核，继续负责模型 Provider、认证、模型目录、流式协议、Agent Loop、Session、工具、Extension、上下文压缩和 Eval。Ever 在 Pi 的原生 seam 上增加持久 Task、常驻 Worker、预算、策略、恢复和验收。
 
 V0.1 采用以下决定：
 
-1. Task 是 Karissa 的顶层实体，Session 是 Task 内一次 Attempt 的执行记录。
+1. Task 是 Ever 的顶层实体，Session 是 Task 内一次 Attempt 的执行记录。
 2. `NativeLongTaskAgent` 是唯一长程执行模块，内部直接拥有 Pi Harness 和 Pi Session。
 3. 不增加 `AgentBackend`、`ProviderGateway` 或第二套生命周期协议。
 4. 长程正确性进入 Pi Harness 的 awaited hooks，不再由内置 Extension、环境变量和异步 listener 拼装。
-5. Pi Session log 保存会话事实，Karissa Task Store 保存跨进程任务事实。两者通过稳定 ID 和 settled checkpoint 绑定，不复制两套恢复状态机。
-6. Provider 路由和成本策略复用 Pi `Models` 与 `Provider`。未来的 Karissa Managed Provider 也实现为 Pi Provider。
+5. Pi Session log 保存会话事实，Ever Task Store 保存跨进程任务事实。两者通过稳定 ID 和 settled checkpoint 绑定，不复制两套恢复状态机。
+6. Provider 路由和成本策略复用 Pi `Models` 与 `Provider`。未来的 Ever Managed Provider 也实现为 Pi Provider。
 7. Pi Eval 继续作为统一 Eval 基础设施。Acceptance 只判断一个 Task 是否完成。
-8. Karissa 的公开执行入口全部创建或操作持久 Task，不保留公开的 transient Session 模式。
+8. Ever 的公开执行入口全部创建或操作持久 Task，不保留公开的 transient Session 模式。
 
 ## 2. 设计范围
 
@@ -34,7 +34,7 @@ V0.1 采用以下决定：
 - 无法确认结果的工具或 Provider 调用进入 `unknown_outcome`，系统不自动重放。
 - 预算、deadline、Provider allowlist、隐私策略和验收条件由主机侧执行。
 - 用户 Extension 可以增加工具、Prompt 和资源，但不能修改 Task 状态或降低安全策略。
-- 所有 Karissa 执行路径都能追溯到 Task ID、Attempt ID 和 execution ID。
+- 所有 Ever 执行路径都能追溯到 Task ID、Attempt ID 和 execution ID。
 
 ### 2.2 非目标
 
@@ -54,10 +54,10 @@ V0.1 采用以下决定：
 | --- | --- | --- |
 | Task、Attempt、checkpoint、budget、tool durability | `TECHNICAL_SPEC.md` | V0.1 固定为单 Main Agent，删除 `longTasks.enabled` |
 | Supervisor、Worker、命令日志、事件重连、recovery barrier | `LONG_RUNNING_CONTROL_PLANE_SPEC.md` | 保留协议，V0.1 不实现 Cron 和多 Agent 调度 |
-| Pi 与 Karissa 的模块关系 | 本规格 | Pi 是原生内核，不是可替换 Backend |
-| Provider 与模型调用 | Pi `packages/ai` | Karissa 只增加路由策略和费用账本 |
+| Pi 与 Ever 的模块关系 | 本规格 | Pi 是原生内核，不是可替换 Backend |
+| Provider 与模型调用 | Pi `packages/ai` | Ever 只增加路由策略和费用账本 |
 | Eval | Pi `packages/evals` | 增加长程恢复、成本和质量评测，不另建框架 |
-| 产品范围和验收指标 | `KARISSA_PRD_V0.1.md` | 本规格不扩大产品范围 |
+| 产品范围和验收指标 | `EVER_PRD_V0.1.md` | 本规格不扩大产品范围 |
 
 被本规格明确取代的旧设计包括：公开 transient Session、`longTasks.enabled`、任务模式环境变量、内置长任务 Extension，以及把 Pi 包装成通用 Agent Backend 的方案。
 
@@ -65,7 +65,7 @@ V0.1 采用以下决定：
 
 ```mermaid
 flowchart LR
-    CLI["Karissa CLI / TUI / RPC"] --> APP["Task Application"]
+    CLI["Ever CLI / TUI / RPC"] --> APP["Task Application"]
     APP --> STORE["Durable Task Store"]
     APP --> SUP["Supervisor"]
     SUP --> REG["Worker Registry"]
@@ -103,14 +103,14 @@ Task Store 不解释 Provider 流或 Pi 内部事件。Pi Runtime 也不直接�
 
 ## 5. Pi Native Runtime
 
-Pi Native Runtime 是 Karissa 的执行底座，包含以下现有能力：
+Pi Native Runtime 是 Ever 的执行底座，包含以下现有能力：
 
 - `packages/ai`：Provider 注册、认证、模型发现、流式调用、普通完成调用和 deferred 请求。
 - `packages/agent`：Agent Loop、工具调用、上下文转换和 Harness 生命周期。
 - `packages/coding-agent`：Session、Extension、工具资源、compaction 和交互运行时。
 - `packages/evals`：Pi Harness、质量评分、对比实验、成本与延迟统计、可恢复 benchmark。
 
-Karissa 对 Pi 的改动应进入这些原生 seam，不在外面镜像一套 BackendEvent：
+Ever 对 Pi 的改动应进入这些原生 seam，不在外面镜像一套 BackendEvent：
 
 - 补齐并严格等待 `before_request`、`after_response`、`before_tool`、`after_tool`、`before_compaction` 和 settled hook。
 - hook 接收稳定的 request ID、operation ID、Attempt identity 和 execution permit。
@@ -118,9 +118,9 @@ Karissa 对 Pi 的改动应进入这些原生 seam，不在外面镜像一套 Ba
 - Provider 请求只能在 `before_request` 完成预算预留后发出。
 - Session 只有在 settled 状态下才能导出可恢复 checkpoint。
 
-Pi SDK 仍可独立创建普通 Session。这个兼容面属于 Pi，不属于 Karissa 的公开产品入口。
+Pi SDK 仍可独立创建普通 Session。这个兼容面属于 Pi，不属于 Ever 的公开产品入口。
 
-## 6. Karissa 长程运行模块
+## 6. Ever 长程运行模块
 
 ### 6.1 Task Application
 
@@ -184,13 +184,37 @@ interface NativeLongTaskAgent {
 
 - 校验 Attempt claim 并加载不可变运行快照；
 - 创建或恢复 Pi Harness 和 Pi Session；
-- 安装 Karissa durable hooks；
+- 安装 Ever durable hooks；
 - 驱动预算、工具安全、checkpoint、continuation 和 recovery；
 - 运行 AcceptancePlan；
 - 生成 Verified Change Bundle；
 - 将结果归约为明确的 `AttemptOutcome`。
 
 停止、转向和暂停不通过公开 `close()` 或 `control()` 直接调用。控制命令先持久化，Worker 消费后再触发内部 abort 或 safe-turn delivery。
+
+#### 6.5.1 持续执行循环
+
+`NativeLongTaskAgent` 不建立第二套基础 Agent Loop。它在 Pi Agent 每个 settled Turn 外维护 Task 级循环：
+
+```text
+Reason / Plan
+  -> Execute
+  -> Observe
+  -> Verify
+  -> Done
+       or Repair -> next Reason / Plan
+```
+
+- `Reason / Plan`：基于 Task goal、当前 checkpoint、未完成项和历史失败选择下一段有界工作。
+- `Execute`：由 Pi Agent Loop 调用模型与工具；Ever 只在原生 awaited hooks 上执行预算、权限和副作用约束。
+- `Observe`：把 Pi Session、工具结果、Provider usage、工作区变化和控制命令归并为持久 Progress。
+- `Verify`：运行 AcceptancePlan，检查证据完整性、状态一致性和未知副作用。
+- `Done`：仅在验收通过、必需证据齐全且不存在 `unknown_outcome` 时成立。
+- `Repair`：根据失败分类改变计划、实现或验证方法，再回到下一轮 `Reason / Plan`；不得原样重放未知副作用。
+
+每轮只在 Pi Session settled 后提交 checkpoint 和 continuation decision。Session 中断只结束本次执行上下文，不结束 Task。
+
+失败沉淀为结构化 Experience Record，至少包含失败签名、适用上下文、根因分类、无效尝试、修复动作、验证证据和来源 Task。后续 Task 只能检索与当前上下文匹配的记录。运行时缺陷、安全违规、未知副作用和未经验证的推测不得自动晋升为 Prompt、Skill 或策略；稳定经验必须经过重放 Eval 和人工批准后才能晋升，原始记录保持可回滚。
 
 ### 6.6 Policy Kernel
 
@@ -223,7 +247,7 @@ Verified Change Bundle 至少包含：
 
 ### 7.1 两类事实源
 
-Pi Session log 是对话与 Agent 执行上下文的事实源，保存消息、tool result、compaction 和 Session 分支。Karissa Task Store 是跨进程任务控制的事实源，保存 Task 状态、lease、工具 operation、Provider request、预算、命令和验收。
+Pi Session log 是对话与 Agent 执行上下文的事实源，保存消息、tool result、compaction 和 Session 分支。Ever Task Store 是跨进程任务控制的事实源，保存 Task 状态、lease、工具 operation、Provider request、预算、命令和验收。
 
 两类事实通过以下稳定标识关联：
 
@@ -234,7 +258,7 @@ Pi Session log 是对话与 Agent 执行上下文的事实源，保存消息、t
 - tool operation ID 与 Pi tool call ID；
 - provider request ID 与 budget reservation ID。
 
-Karissa 不把 Pi event stream 再保存成一套可独立恢复的 BackendEvent 状态机。
+Ever 不把 Pi event stream 再保存成一套可独立恢复的 BackendEvent 状态机。
 
 ### 7.2 Attempt 运行快照
 
@@ -288,9 +312,9 @@ Pi 解析 tool call
 
 ### 9.1 复用 Pi Provider
 
-Pi `Provider` 和 `Models` 继续负责认证、模型目录、流式调用、普通完成、deferred 请求和取消。Karissa 不定义平行的 `InferenceRequest` 或 `ProviderGateway`。
+Pi `Provider` 和 `Models` 继续负责认证、模型目录、流式调用、普通完成、deferred 请求和取消。Ever 不定义平行的 `InferenceRequest` 或 `ProviderGateway`。
 
-Karissa Cost Optimizer 输出 Pi 能直接使用的模型选择与请求策略：
+Ever Cost Optimizer 输出 Pi 能直接使用的模型选择与请求策略：
 
 ```ts
 type CostPolicy = {
@@ -310,7 +334,7 @@ RoutingPlan 在 Attempt 开始时冻结允许的 Provider、模型、服务等�
 
 低价时段调度只影响 Task 何时启动或进入下一阶段，不改变工具安全和验收语义。Batch 只用于彼此独立的评审、日志分析和候选评分，不能批处理带工具反馈的顺序 Agent Loop。
 
-未来的 Karissa Managed Provider 必须实现 Pi `Provider` interface，并使用独立认证模式。BYOK 和平台凭据不能混用。
+未来的 Ever Managed Provider 必须实现 Pi `Provider` interface，并使用独立认证模式。BYOK 和平台凭据不能混用。
 
 ### 9.2 Provider 请求日志
 
@@ -399,7 +423,7 @@ Fencing token 只能阻止旧 Worker 写数据库，不能停止已开始的 she
 
 ## 13. Extension 边界
 
-删除 `karissa-long-tasks` 内置 Extension。以下行为进入 Pi Harness durable hooks 或 `NativeLongTaskAgent`：
+删除 `ever-long-tasks` 内置 Extension。以下行为进入 Pi Harness durable hooks 或 `NativeLongTaskAgent`：
 
 - Task 上下文和 continuation；
 - inbox 领取和确认；
@@ -414,7 +438,7 @@ Extension 不能直接写 Task Store、确认 inbox、结算预算、改变 acce
 
 ## 14. Eval 与 Acceptance 分工
 
-Acceptance 是单个 Task 的运行时完成判定，Eval 是 Pi 和 Karissa 变更的发布门禁。
+Acceptance 是单个 Task 的运行时完成判定，Eval 是 Pi 和 Ever 变更的发布门禁。
 
 `packages/evals` 继续作为统一 Eval Plane，覆盖：
 
@@ -533,7 +557,7 @@ CI 使用 Fake Provider、可控子进程和临时工作区，不调用真实 Pr
 - 将最新已抓取的 `upstream/main` 合入架构分支。
 - 解决 Harness、Session、Extension 和 Provider interface 漂移。
 - 记录基准 SHA，不在长期规格中保存提交数量。
-- 保留现有 Karissa Task 行为。
+- 保留现有 Ever Task 行为。
 - 运行 `npm run check`、`./test.sh` 和 CLI 冒烟验证。
 
 完成标准：基线改动可单独合并，现有长任务能力没有回归，后续开发基于当前 Pi core。
@@ -551,17 +575,17 @@ CI 使用 Fake Provider、可控子进程和临时工作区，不调用真实 Pr
 
 完成标准：长程正确性不依赖 Extension、环境变量或异步 listener 时序；Pi Session log 与 Task Store 对工具、Provider 和 checkpoint 的结论一致。
 
-### 阶段三：收拢 Karissa 唯一入口
+### 阶段三：收拢 Ever 唯一入口
 
-- `karissa <goal>` 创建 Task、启动 Worker 并附着事件流。
-- `karissa` 打开 Task 创建与管理界面。
+- `ever <goal>` 创建 Task、启动 Worker 并附着事件流。
+- `ever` 打开 Task 创建与管理界面。
 - 用户命令收敛为 `run`、`status`、`attach` 和 `stop`。
 - `--print`、JSON 和 RPC 使用同一个 Task Application。
 - 删除公开 transient Session 路由、`longTasks.enabled`、兼容 shim 和任务模式环境变量。
 - attach 升级为 snapshot 加可重连事件流。
 - 更新 README、帮助文本、规范、回归测试和 changelog。
 
-完成标准：所有 Karissa 执行都能追溯到 Task ID、Attempt ID 和 execution ID，不存在绕开 Task Policy 的公开入口。
+完成标准：所有 Ever 执行都能追溯到 Task ID、Attempt ID 和 execution ID，不存在绕开 Task Policy 的公开入口。
 
 Cost Optimizer 可以在阶段二之后独立演进。Managed Provider 等商业能力不阻塞长程可靠性迁移，也不能另建一套 Provider 协议。
 
@@ -604,7 +628,7 @@ Cost Optimizer 可以在阶段二之后独立演进。Managed Provider 等商业
 满足以下条件后，架构迁移才算完成：
 
 1. Pi 的 Provider、Models、Agent Loop、Session、Extension 和 Eval 仍是唯一原生实现。
-2. Karissa 没有 `AgentBackend`、`ProviderGateway` 或平行生命周期协议。
+2. Ever 没有 `AgentBackend`、`ProviderGateway` 或平行生命周期协议。
 3. `NativeLongTaskAgent` 只暴露 `run(claim)`，调用方不参与内部状态机。
 4. 所有 Provider 请求和工具调用都经过 awaited、持久化的执行屏障。
 5. checkpoint 只在 Pi Session settled seam 提交。
@@ -613,7 +637,7 @@ Cost Optimizer 可以在阶段二之后独立演进。Managed Provider 等商业
 8. Worker kill、Provider unknown、tool unknown、checkpoint 和 Acceptance 故障测试通过。
 9. Verified Change Bundle 可以从持久化事实重建。
 10. `packages/evals` 对质量、成本、延迟和恢复提供发布门禁。
-11. 所有 Karissa 用户入口都创建或操作 Task。
+11. 所有 Ever 用户入口都创建或操作 Task。
 12. 内置长任务 Extension、`longTasks.enabled` 和任务模式环境变量已删除。
 
 ## 23. 成本能力参考

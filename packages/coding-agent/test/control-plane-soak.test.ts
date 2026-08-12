@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createInMemoryTaskStore, ScheduleEngine, TaskController } from "@karissa/long-tasks";
+import { createInMemoryTaskStore, ScheduleEngine, TaskController } from "@ever/long-tasks";
 import { describe, expect, it } from "vitest";
 import { SequencedEventBuffer } from "../src/daemon/event-stream.ts";
 import { createDaemonCommand, daemonCommandPayloadSha256, parseDaemonCommand } from "../src/daemon/protocol.ts";
@@ -11,10 +11,10 @@ describe("eight-hour control-plane soak", () => {
 	it(
 		"keeps replay and recovery state bounded across one-second cycles with injected failures",
 		async () => {
-			const realtime = process.env.KARISSA_SOAK_REALTIME === "1";
-			const configuredSeconds = Number(process.env.KARISSA_SOAK_DURATION_SECONDS ?? EIGHT_HOURS_IN_SECONDS);
+			const realtime = process.env.EVER_SOAK_REALTIME === "1";
+			const configuredSeconds = Number(process.env.EVER_SOAK_DURATION_SECONDS ?? EIGHT_HOURS_IN_SECONDS);
 			if (!Number.isSafeInteger(configuredSeconds) || configuredSeconds < 1)
-				throw new Error("Invalid KARISSA_SOAK_DURATION_SECONDS");
+				throw new Error("Invalid EVER_SOAK_DURATION_SECONDS");
 			let now = new Date("2026-08-11T00:00:00.000Z");
 			const store = createInMemoryTaskStore(() => now);
 			const task = new TaskController(store).create({

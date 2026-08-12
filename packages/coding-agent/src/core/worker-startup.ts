@@ -36,7 +36,7 @@ export function parseWorkerStartupEnvelope(value: unknown): WorkerStartupEnvelop
 
 /** Read the owner-only startup envelope exactly once, before normal CLI initialization. */
 export function loadWorkerStartup(): void {
-	if (process.env.KARISSA_DAEMON_WORKER !== "1" || startupEnvelope) return;
+	if (process.env.EVER_DAEMON_WORKER !== "1" || startupEnvelope) return;
 	const serialized = readFileSync(3, "utf8").trim();
 	if (serialized === "") throw new Error("Resident Worker received an empty startup envelope");
 	startupEnvelope = parseWorkerStartupEnvelope(JSON.parse(serialized) as unknown);

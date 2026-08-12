@@ -33,7 +33,7 @@ export function createDaemonServiceDefinition(options: {
 	nodePath: string;
 	cliEntry: string;
 }): DaemonServiceDefinition {
-	const label = "com.karissa.agent";
+	const label = "com.ever.agent";
 	if (options.platform === "darwin") {
 		return {
 			platform: "darwin",
@@ -55,9 +55,9 @@ export function createDaemonServiceDefinition(options: {
 	return {
 		platform: "linux",
 		label,
-		path: join(options.homeDirectory, ".config/systemd/user/karissa.service"),
+		path: join(options.homeDirectory, ".config/systemd/user/ever.service"),
 		content: `[Unit]
-Description=Karissa durable task daemon
+Description=Ever durable task daemon
 After=default.target
 
 [Service]
@@ -96,7 +96,7 @@ export async function isDaemonServiceLoaded(
 		if (uid === undefined) throw new Error("Cannot determine uid for launchd user domain");
 		return runner("launchctl", ["print", `gui/${uid}/${definition.label}`]);
 	}
-	return runner("systemctl", ["--user", "is-active", "--quiet", "karissa.service"]);
+	return runner("systemctl", ["--user", "is-active", "--quiet", "ever.service"]);
 }
 
 export async function installDaemonService(
@@ -116,7 +116,7 @@ export async function installDaemonService(
 		return;
 	}
 	await runner("systemctl", ["--user", "daemon-reload"]);
-	await runner("systemctl", ["--user", "enable", "--now", "karissa.service"]);
+	await runner("systemctl", ["--user", "enable", "--now", "ever.service"]);
 }
 
 export async function uninstallDaemonService(
@@ -130,7 +130,7 @@ export async function uninstallDaemonService(
 		rmSync(definition.path, { force: true });
 		return;
 	}
-	await runner("systemctl", ["--user", "disable", "--now", "karissa.service"], true);
+	await runner("systemctl", ["--user", "disable", "--now", "ever.service"], true);
 	rmSync(definition.path, { force: true });
 	await runner("systemctl", ["--user", "daemon-reload"]);
 }

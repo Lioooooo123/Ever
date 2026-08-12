@@ -12,12 +12,12 @@ describe("unattended shell environment", () => {
 			GITHUB_TOKEN: "github-secret",
 			SSH_AUTH_SOCK: "/tmp/agent.sock",
 			GOOGLE_APPLICATION_CREDENTIALS: "/tmp/google.json",
-			KARISSA_TASK_ID: "task-1",
+			EVER_TASK_ID: "task-1",
 		};
 
 		expect(sanitizeUnattendedShellEnvironment(input, true)).toEqual({
 			PATH: "/usr/bin",
-			KARISSA_TASK_ID: "task-1",
+			EVER_TASK_ID: "task-1",
 		});
 		expect(input.OPENAI_API_KEY).toBe("provider-secret");
 	});

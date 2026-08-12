@@ -40,7 +40,7 @@ describe("daemon command journal", () => {
 	});
 
 	it("persists terminal results for retry replay", () => {
-		const directory = mkdtempSync(join(tmpdir(), "karissa-control-plane-"));
+		const directory = mkdtempSync(join(tmpdir(), "ever-control-plane-"));
 		temporaryDirectories.push(directory);
 		const databasePath = join(directory, "tasks.db");
 		const payload = { taskId: "task-1" };
@@ -121,7 +121,7 @@ describe("daemon command journal", () => {
 	});
 
 	it("migrates legacy nextWakeAt values into once schedules without deleting the old field", () => {
-		const directory = mkdtempSync(join(tmpdir(), "karissa-control-plane-migration-"));
+		const directory = mkdtempSync(join(tmpdir(), "ever-control-plane-migration-"));
 		temporaryDirectories.push(directory);
 		const databasePath = join(directory, "tasks.db");
 		const database = new DatabaseSync(databasePath);

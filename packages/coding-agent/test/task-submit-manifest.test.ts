@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe("Task submit manifest", () => {
 	it("accepts a pinned model and resolves the current workspace", () => {
-		const workspace = mkdtempSync(join(tmpdir(), "karissa-task-manifest-"));
+		const workspace = mkdtempSync(join(tmpdir(), "ever-task-manifest-"));
 		temporaryDirectories.push(workspace);
 		const manifestPath = join(workspace, "task.json");
 		writeFileSync(
@@ -33,7 +33,7 @@ describe("Task submit manifest", () => {
 	});
 
 	it("rejects a workspace outside the current directory", () => {
-		const workspace = mkdtempSync(join(tmpdir(), "karissa-task-manifest-"));
+		const workspace = mkdtempSync(join(tmpdir(), "ever-task-manifest-"));
 		temporaryDirectories.push(workspace);
 		const outside = join(workspace, "outside");
 		const current = join(workspace, "current");

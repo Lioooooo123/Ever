@@ -18,7 +18,7 @@ const NOW = new Date("2026-08-10T00:00:00.000Z");
 
 function runtimeSnapshot(): RuntimeSnapshot {
 	return {
-		karissaVersion: "0.1.0",
+		everVersion: "0.1.0",
 		upstreamCommit: "31b513e",
 		protocolVersion: 1,
 		model: { provider: "test", id: "faux" },
@@ -282,11 +282,11 @@ describe("recovery barrier", () => {
 
 describe("workspace allocator", () => {
 	it("creates an isolated worktree from a verified dirty snapshot", () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-workspace-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-workspace-"));
 		const repo = join(root, "repo");
 		execFileSync("git", ["init", repo]);
-		execFileSync("git", ["config", "user.email", "karissa@example.test"], { cwd: repo });
-		execFileSync("git", ["config", "user.name", "Karissa Test"], { cwd: repo });
+		execFileSync("git", ["config", "user.email", "ever@example.test"], { cwd: repo });
+		execFileSync("git", ["config", "user.name", "Ever Test"], { cwd: repo });
 		writeFileSync(join(repo, "tracked.txt"), "base\n");
 		execFileSync("git", ["add", "tracked.txt"], { cwd: repo });
 		execFileSync("git", ["commit", "-m", "base"], { cwd: repo });

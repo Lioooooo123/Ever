@@ -1,4 +1,4 @@
-import type { TaskRecord } from "@karissa/long-tasks";
+import type { TaskRecord } from "@ever/long-tasks";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { TaskApplication } from "../core/task-application.ts";
 import { resolveTaskModel } from "../core/task-model.ts";
@@ -21,7 +21,7 @@ function taskLabel(task: TaskRecord): string {
 function homeTitle(tasks: TaskRecord[]): string {
 	const active = tasks.filter((task) => !TERMINAL_STATES.has(task.state)).length;
 	return [
-		"KARISSA / NIGHT SHIFT",
+		"EVER / NIGHT SHIFT",
 		`TASK QUEUE  ${String(active).padStart(2, "0")} active  ${String(tasks.length).padStart(2, "0")} total`,
 		"选择一个持久 Task，或登记新的长程目标。",
 	].join("\n");
@@ -77,7 +77,7 @@ async function manageTask(
 		console.log(JSON.stringify({ schemaVersion: 1, ...application.resolve(task.id) }, null, 2));
 		return "quit";
 	}
-	application.control({ action, taskRef: task.id }, { clientId: "karissa-task-home" });
+	application.control({ action, taskRef: task.id }, { clientId: "ever-task-home" });
 	return "refresh";
 }
 

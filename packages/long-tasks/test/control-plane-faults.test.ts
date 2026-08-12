@@ -17,7 +17,7 @@ describe("control-plane fault injection", () => {
 		controller.submit(task.id);
 		const agent = store.listAgents(task.id)[0]!;
 		const snapshot = {
-			karissaVersion: "0.1.0",
+			everVersion: "0.1.0",
 			upstreamCommit: "test",
 			protocolVersion: 1,
 			model: { provider: "test", id: "faux" },
@@ -69,7 +69,7 @@ describe("control-plane fault injection", () => {
 		store.transitionTask(task.id, "running");
 		const agent = store.listAgents(task.id)[0]!;
 		const snapshot = {
-			karissaVersion: "0.1.0",
+			everVersion: "0.1.0",
 			upstreamCommit: "test",
 			protocolVersion: 1,
 			model: { provider: "test", id: "faux" },

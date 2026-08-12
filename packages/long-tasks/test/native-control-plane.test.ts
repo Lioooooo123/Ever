@@ -12,7 +12,7 @@ import {
 
 function snapshot(): RuntimeSnapshot {
 	return {
-		karissaVersion: "0.1.0",
+		everVersion: "0.1.0",
 		upstreamCommit: "test",
 		protocolVersion: 1,
 		model: { provider: "test", id: "faux" },
@@ -76,7 +76,7 @@ describe("native Attempt control plane", () => {
 	});
 
 	it("resolves file evidence and rejects missing or escaping refs", () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-evidence-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-evidence-"));
 		writeFileSync(join(root, "result.txt"), "verified\n");
 		const store = createInMemoryTaskStore();
 		const task = new TaskController(store).create({

@@ -5,14 +5,14 @@
 ### Added
 
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
-- Added the `karissa` guided asynchronous task command, persistent daemon consumption, and desktop task notifications.
+- Added the `ever` guided asynchronous task command, persistent daemon consumption, and desktop task notifications.
 - Added versioned JSON task submission, inspection, event streaming, and daemon control for black-box Eval runners.
-- Added the branded Task Home, Task-first JSONL RPC, durable steering, verified completion bundles, resident Worker recovery, and OS-level unattended execution sandbox.
+- Added Task-aware reuse of the inherited Pi TUI, Task-first JSONL RPC, durable steering, verified completion bundles, resident Worker recovery, and OS-level unattended execution sandbox.
 
 ### Changed
 
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
-- Changed the public `karissa` CLI to create and manage durable Tasks; transient Pi Sessions remain an internal SDK/runtime primitive.
+- Changed `ever` to open the inherited Pi TUI directly, while explicit command-line goals are promoted to durable Tasks in the same interface.
 - Centralized Task submission and control behind an idempotent Task Application boundary and made completion verification execute exactly once.
 - Pinned unattended Task models at submission and isolated Resident Worker credentials to a one-time, Provider-scoped startup channel instead of inheriting the host environment.
 

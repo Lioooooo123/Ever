@@ -8,7 +8,7 @@ export function workerSocketDirectory(agentDir: string): string {
 	const owner = process.getuid?.() ?? "user";
 	const identity = createHash("sha256").update(agentDir).digest("hex").slice(0, 16);
 	const socketRoot = process.platform === "win32" ? tmpdir() : "/tmp";
-	return join(socketRoot, `karissa-${owner}-${identity}`);
+	return join(socketRoot, `ever-${owner}-${identity}`);
 }
 
 export function createWorkerSocketPath(agentDir: string, agentId: string): string {

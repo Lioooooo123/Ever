@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { DEFAULT_CONTINUATION_POLICY, SqliteTaskStore, TaskController, VerifiedCompletion } from "@karissa/long-tasks";
+import { DEFAULT_CONTINUATION_POLICY, SqliteTaskStore, TaskController, VerifiedCompletion } from "@ever/long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSessionLifecycle, AgentSessionLifecycleEvent } from "../src/core/agent-session-lifecycle.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
@@ -62,7 +62,7 @@ function createRuntimeAdapter(workspaceRoot: string, sessionId: string) {
 
 describe("NativeLongTaskAgent", () => {
 	it("journals Provider and tool boundaries through the awaited lifecycle", async () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-native-agent-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-native-agent-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
 		const workspaceRoot = join(root, "workspace");
@@ -144,14 +144,14 @@ describe("NativeLongTaskAgent", () => {
 	});
 
 	it("completes through a faux Provider boundary and emits a verified change bundle", async () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-native-agent-complete-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-native-agent-complete-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
 		const workspaceRoot = join(root, "workspace");
 		mkdirSync(workspaceRoot);
 		execFileSync("git", ["init"], { cwd: workspaceRoot });
-		execFileSync("git", ["config", "user.name", "Karissa Test"], { cwd: workspaceRoot });
-		execFileSync("git", ["config", "user.email", "karissa@example.invalid"], { cwd: workspaceRoot });
+		execFileSync("git", ["config", "user.name", "Ever Test"], { cwd: workspaceRoot });
+		execFileSync("git", ["config", "user.email", "ever@example.invalid"], { cwd: workspaceRoot });
 		writeFileSync(join(workspaceRoot, "result.txt"), "before\n");
 		execFileSync("git", ["add", "result.txt"], { cwd: workspaceRoot });
 		execFileSync("git", ["commit", "-m", "base"], { cwd: workspaceRoot });
