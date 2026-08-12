@@ -3,10 +3,12 @@ import { createInterface } from "node:readline/promises";
 import { SqliteTaskStore, type TaskRecord } from "@lioooooo123/ever-long-tasks";
 import chalk from "chalk";
 import { TaskApplication } from "../core/task-application.ts";
-import { resolveTaskModel } from "../core/task-model.ts";
+import { resolveTaskModel, TaskModelConfigurationError, type TaskModelIdentity } from "../core/task-model.ts";
 import { activateTaskRun } from "../core/task-run.ts";
 import { getTaskRunContext } from "../core/task-run-context.ts";
 import { requestDaemon, startDaemon } from "./daemon-command.ts";
+import { runProviderAndModelSetup } from "./provider-setup.ts";
+import { runTaskHome } from "./task-home.ts";
 import { runTaskRpc } from "./task-rpc.ts";
 
 const VALUE_OPTIONS = new Set([
@@ -86,7 +88,7 @@ function printHelp(): void {
 	console.log(`Ever long-running agent
 
 Usage:
-	  ever                              引导创建 Task 后进入 Ever Task Home
+	  ever                              打开 Task Home
   ever <goal>                       创建 Task 并进入同一个 TUI
   ever <goal> --detach --yes        创建 Task 后转入后台
   ever new                          引导式创建 Task
@@ -99,7 +101,7 @@ Task:
   ever task <command>               高级 Task 命令
 
 Runtime:
-  /login                               在 Ever TUI 内登录 Provider
+	  Provider 与模型                    在 Task Home 内完成登录和模型选择
   /model                               在 Ever TUI 内选择模型
   ever models [search]              查看可用模型
   ever --mode rpc                   启动 Task JSONL RPC
@@ -174,6 +176,46 @@ export function submitInteractiveTask(input: {
 	});
 }
 
+async function resolveCommandModel(input: {
+	agentDir: string;
+	cwd: string;
+	provider?: string;
+	model?: string;
+}): Promise<TaskModelIdentity> {
+	try {
+		return await resolveTaskModel(input);
+	} catch (error) {
+		if (!(error instanceof TaskModelConfigurationError)) throw error;
+		if (process.stdin.isTTY !== true) {
+			throw new Error(`${error.message}。请先在交互终端运行 ever 配置 Provider 与模型`);
+		}
+		if (!(await runProviderAndModelSetup(input.agentDir, input.cwd))) {
+			throw new Error("尚未配置 Provider 与模型");
+		}
+		return resolveTaskModel(input);
+	}
+}
+
+async function activateForegroundTask(input: {
+	agentDir: string;
+	taskRef: string;
+	acceptRuntimeDrift: boolean;
+	clientId: string;
+}): Promise<string[]> {
+	const current = new TaskApplication(input.agentDir).resolve(input.taskRef);
+	if (current.state === "running") {
+		const stopped = await requestDaemon(input.agentDir, { command: "stop-agent", taskId: current.id });
+		if (!stopped.ok) throw new Error(stopped.message ?? "Daemon 拒绝 Task 交接");
+	}
+	return activateTaskRun({
+		agentDir: input.agentDir,
+		taskRef: current.id,
+		print: false,
+		acceptRuntimeDrift: input.acceptRuntimeDrift,
+		clientId: input.clientId,
+	});
+}
+
 export async function handleEverCommand(args: string[], agentDir: string, cwd: string): Promise<boolean> {
 	if (getTaskRunContext() || process.env.EVER_DAEMON_WORKER === "1") return false;
 	if (args[0] === "models") {
@@ -198,21 +240,15 @@ export async function handleEverCommand(args: string[], agentDir: string, cwd: s
 	if (args[0] === "attach") {
 		const taskRef = args[1];
 		if (!taskRef) throw new Error("attach requires a Task ID");
-		const current = new TaskApplication(agentDir).resolve(taskRef);
-		if (current.state === "running") {
-			const stopped = await requestDaemon(agentDir, { command: "stop-agent", taskId: current.id });
-			if (!stopped.ok) throw new Error(stopped.message ?? "Daemon rejected Task handoff");
-		}
 		args.splice(
 			0,
 			args.length,
-			...activateTaskRun({
+			...(await activateForegroundTask({
 				agentDir,
-				taskRef,
-				print: false,
+				taskRef: taskRef,
 				acceptRuntimeDrift: args.includes("--accept-runtime-drift"),
 				clientId: "ever-cli",
-			}),
+			})),
 		);
 		return false;
 	}
@@ -248,6 +284,21 @@ export async function handleEverCommand(args: string[], agentDir: string, cwd: s
 		console.log(JSON.stringify(response));
 		return true;
 	}
+	if ((args.length === 0 || (args[0] === "new" && args.length === 1)) && process.stdin.isTTY === true) {
+		const home = await runTaskHome(agentDir, cwd, args[0] === "new");
+		if (home.kind === "quit") return true;
+		args.splice(
+			0,
+			args.length,
+			...(await activateForegroundTask({
+				agentDir,
+				taskRef: home.taskId,
+				acceptRuntimeDrift: false,
+				clientId: "ever-task-home",
+			})),
+		);
+		return false;
+	}
 	const explicitRun = args[0] === "run" || args[0] === "new";
 	const runArgs = explicitRun ? args.slice(1) : args;
 	const guided = runArgs.length === 0 && process.stdin.isTTY === true;
@@ -279,7 +330,7 @@ export async function handleEverCommand(args: string[], agentDir: string, cwd: s
 		const maxWallTimeMinutes = optionalLimit(args, "--max-wall-time-minutes", true);
 		const maxCostUsd = optionalLimit(args, "--max-cost-usd", false);
 		const unsafeNoSandbox = args.includes("--unsafe-no-sandbox");
-		const model = await resolveTaskModel({
+		const model = await resolveCommandModel({
 			agentDir,
 			cwd,
 			provider: option(args, "--provider"),

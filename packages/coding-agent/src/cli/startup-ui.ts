@@ -99,10 +99,11 @@ async function applyDetectedStartupTheme(ui: TUI, settingsManager: SettingsManag
 	ui.requestRender();
 }
 
-async function clearStartupTui(ui: TUI): Promise<void> {
+export async function closeStartupTui(ui: TUI): Promise<void> {
 	ui.clear();
 	ui.requestRender();
 	await new Promise((resolve) => setTimeout(resolve, 25));
+	ui.stop();
 }
 
 /**
@@ -144,8 +145,7 @@ export async function showStartupSelector<T>(
 				return;
 			}
 			settled = true;
-			await clearStartupTui(ui);
-			ui.stop();
+			await closeStartupTui(ui);
 			resolve(result);
 		};
 
@@ -177,8 +177,7 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 				settingsManager.setEnableAnalytics(result.shareAnalytics);
 				await settingsManager.flush();
 			}
-			await clearStartupTui(ui);
-			ui.stop();
+			await closeStartupTui(ui);
 			resolve();
 		};
 
@@ -218,8 +217,7 @@ export async function showStartupInput(
 			}
 			settled = true;
 			input.dispose();
-			await clearStartupTui(ui);
-			ui.stop();
+			await closeStartupTui(ui);
 			resolve(result);
 		};
 

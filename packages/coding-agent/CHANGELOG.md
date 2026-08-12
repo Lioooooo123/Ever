@@ -13,7 +13,7 @@
 
 - Changed the directly developed coding-agent distribution to publish as `@lioooooo123/ever` with `ever-*` release artifacts, while retaining the in-repository Pi agent, AI, and TUI source modules as its execution kernel.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
-- Changed `ever` to open the inherited Pi TUI directly, while explicit command-line goals are promoted to durable Tasks in the same interface.
+- Changed bare `ever` to open a unified Task Home for Provider setup, model selection, Task creation, foreground entry, background submission, inspection, and recovery; explicit command-line goals still enter the inherited Pi TUI as durable Tasks.
 - Centralized Task submission and control behind an idempotent Task Application boundary and made completion verification execute exactly once.
 - Pinned unattended Task models at submission and isolated Resident Worker credentials to a one-time, Provider-scoped startup channel instead of inheriting the host environment.
 
