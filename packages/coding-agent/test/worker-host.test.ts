@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
+import { createWorkerSocketPath, workerSocketDirectory } from "../src/core/worker-socket.ts";
 import { requestWorker, runResidentWorkerHost } from "../src/daemon/worker-host.ts";
 
 const temporaryDirectories: string[] = [];
@@ -22,8 +23,8 @@ async function waitForPath(path: string): Promise<void> {
 describe("ResidentWorkerHost", () => {
 	it("stays alive without a client and accepts attach, prompt, and graceful stop", async () => {
 		const directory = mkdtempSync(join(tmpdir(), "karissa-worker-host-"));
-		temporaryDirectories.push(directory);
-		const socketPath = join(directory, "worker.sock");
+		temporaryDirectories.push(directory, workerSocketDirectory(directory));
+		const socketPath = createWorkerSocketPath(directory, "worker");
 		const prompts: string[] = [];
 		let disposed = false;
 		const runtime = {
@@ -55,6 +56,7 @@ describe("ResidentWorkerHost", () => {
 			descriptor: {
 				schemaVersion: 1,
 				workerId: "worker-1",
+				executionId: "execution-1",
 				agentId: "agent-1",
 				taskId: "task-1",
 				activeSessionId: "",
@@ -107,8 +109,8 @@ describe("ResidentWorkerHost", () => {
 
 	it("bounds snapshot transcripts and retains the newest messages", async () => {
 		const directory = mkdtempSync(join(tmpdir(), "karissa-worker-snapshot-"));
-		temporaryDirectories.push(directory);
-		const socketPath = join(directory, "worker.sock");
+		temporaryDirectories.push(directory, workerSocketDirectory(directory));
+		const socketPath = createWorkerSocketPath(directory, "worker");
 		const runtime = {
 			cwd: "/repo",
 			session: {
@@ -135,6 +137,7 @@ describe("ResidentWorkerHost", () => {
 			descriptor: {
 				schemaVersion: 1,
 				workerId: "worker-1",
+				executionId: "execution-1",
 				agentId: "agent-1",
 				taskId: "task-1",
 				activeSessionId: "",

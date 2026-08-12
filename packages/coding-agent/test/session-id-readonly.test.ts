@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { sourceProcessArgs, sourceProcessEnv } from "./source-process.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 const tempDirs: string[] = [];
@@ -73,14 +74,13 @@ async function runCli(
 
 	let stderr = "";
 	const code = await new Promise<number | null>((resolvePromise, reject) => {
-		const child = spawn(process.execPath, [cliPath, ...resolvedArgs], {
+		const child = spawn(process.execPath, sourceProcessArgs(cliPath, resolvedArgs), {
 			cwd: dirs.projectDir,
-			env: {
+			env: sourceProcessEnv({
 				...process.env,
 				[ENV_AGENT_DIR]: dirs.agentDir,
 				PI_OFFLINE: "1",
-				TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),
-			},
+			}),
 			stdio: ["ignore", "ignore", "pipe"],
 		});
 		child.stderr.on("data", (chunk) => {
@@ -100,18 +100,20 @@ function writeSession(sessionDir: string, cwd: string, id: string): void {
 	);
 }
 
-describe("--session-id read-only commands", () => {
-	it("does not reserve a session for --help", async () => {
+describe("legacy --session-id commands", () => {
+	it("rejects --session-id for --help without reserving a session", async () => {
 		const result = await runCli(["--session-id", "read-only-help", "--help"]);
 
-		expect(result.code).toBe(0);
+		expect(result.code).toBe(1);
+		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-help")).toBe(false);
 	});
 
-	it("allows --no-session with --session-id", async () => {
+	it("rejects --no-session with --session-id without reserving a session", async () => {
 		const result = await runCli(["--no-session", "--session-id", "ephemeral-id", "--help"]);
 
-		expect(result.code).toBe(0);
+		expect(result.code).toBe(1);
+		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "ephemeral-id")).toBe(false);
 	});
 
@@ -122,7 +124,7 @@ describe("--session-id read-only commands", () => {
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-models")).toBe(false);
 	});
 
-	it("warns when a missing --session-id creates a new session", async () => {
+	it("rejects a missing --session-id without creating a new session", async () => {
 		const result = await runCli((dirs) => [
 			"--session-dir",
 			dirs.sessionDir,
@@ -135,12 +137,11 @@ describe("--session-id read-only commands", () => {
 		]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain(
-			"Warning: No project session found with id 'missing-session-id'; creating a new session with that id.",
-		);
+		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(hasSessionWithId(result.agentDir, "missing-session-id")).toBe(false);
 	});
 
-	it("does not warn when --session-id opens an existing session", async () => {
+	it("rejects an existing --session-id without modifying the session", async () => {
 		const result = await runCli(
 			(dirs) => [
 				"--session-dir",
@@ -159,10 +160,10 @@ describe("--session-id read-only commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).not.toContain("No project session found with id 'existing-session-id'");
+		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
 	});
 
-	it("rejects an existing fork target session id", async () => {
+	it("rejects legacy fork arguments before opening either session", async () => {
 		const result = await runCli(
 			(dirs) => ["--session-dir", dirs.sessionDir, "--fork", "source-id", "--session-id", "existing-id", "-p", "hi"],
 			(dirs) => {
@@ -173,17 +174,17 @@ describe("--session-id read-only commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Session already exists with id 'existing-id'");
+		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
 	});
 });
 
-describe("--session-id validation", () => {
-	it("rejects ids invalid under SessionManager rules without stack traces", async () => {
+describe("legacy --session-id validation", () => {
+	it("rejects legacy ids without entering SessionManager", async () => {
 		for (const id of ["-bad", "bad id"]) {
 			const result = await runCli(["--session-id", id, "-p", "hi"]);
 
 			expect(result.code).toBe(1);
-			expect(result.stderr).toContain("Session id must be non-empty");
+			expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
 			expect(result.stderr).not.toContain("SessionManager.create");
 		}
 	});

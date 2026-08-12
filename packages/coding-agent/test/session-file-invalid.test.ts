@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { sourceProcessArgs, sourceProcessEnv } from "./source-process.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 const tempDirs: string[] = [];
@@ -23,14 +24,13 @@ function createTempDir(): string {
 async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ code: number | null; stderr: string }> {
 	let stderr = "";
 	const code = await new Promise<number | null>((resolvePromise, reject) => {
-		const child = spawn(process.execPath, [cliPath, ...args], {
+		const child = spawn(process.execPath, sourceProcessArgs(cliPath, args), {
 			cwd,
-			env: {
+			env: sourceProcessEnv({
 				...process.env,
 				[ENV_AGENT_DIR]: agentDir,
 				PI_OFFLINE: "1",
-				TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),
-			},
+			}),
 			stdio: ["ignore", "ignore", "pipe"],
 		});
 		child.stderr.on("data", (chunk) => {
@@ -43,8 +43,8 @@ async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ 
 	return { code, stderr };
 }
 
-describe("--session invalid file handling", () => {
-	it("prints a friendly error and preserves non-session file content", async () => {
+describe("legacy --session handling", () => {
+	it("rejects ordinary sessions and preserves the supplied file", async () => {
 		const tempRoot = createTempDir();
 		const agentDir = join(tempRoot, "agent");
 		const projectDir = join(tempRoot, "project");
@@ -57,7 +57,7 @@ describe("--session invalid file handling", () => {
 		const result = await runCli(["--session", sessionFile, "-p", "hi"], projectDir, agentDir);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain(`Error: Session file is not a valid pi session: ${sessionFile}`);
+		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
 		expect(result.stderr).not.toContain("SessionManager.open");
 		expect(result.stderr).not.toContain("at ");
 		expect(readFileSync(sessionFile, "utf8")).toBe(originalContent);

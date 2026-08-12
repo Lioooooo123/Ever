@@ -7,6 +7,7 @@ export type WorkerState = "starting" | "running" | "stopping" | "exited";
 export interface WorkerDescriptor {
 	schemaVersion: 1;
 	workerId: string;
+	executionId: string;
 	agentId: string;
 	taskId: string;
 	activeSessionId: string;
@@ -19,6 +20,8 @@ export interface WorkerDescriptor {
 	privateSocketPath: string;
 	tokenSha256: string;
 	workspaceRoot: string;
+	sandboxId?: string;
+	sandboxProfileSha256?: string;
 	lifecycle: WorkerLifecycle;
 	state: WorkerState;
 	heartbeatAt: string;
@@ -55,6 +58,10 @@ export class WorkerRegistry {
 					value.schemaVersion === 1 &&
 					"agentId" in value &&
 					typeof value.agentId === "string" &&
+					"workerId" in value &&
+					typeof value.workerId === "string" &&
+					"executionId" in value &&
+					typeof value.executionId === "string" &&
 					"pid" in value &&
 					typeof value.pid === "number"
 				) {

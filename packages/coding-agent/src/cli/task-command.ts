@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
 import { join } from "node:path";
-import { ScheduleEngine, SqliteTaskStore, TaskController, type TaskRecord } from "@karissa/long-tasks";
+import { SqliteTaskStore, type TaskRecord } from "@karissa/long-tasks";
 import chalk from "chalk";
+import { TaskApplication } from "../core/task-application.ts";
+import { resolveTaskModel } from "../core/task-model.ts";
+import { setTaskRunContext } from "../core/task-run-context.ts";
 import { requestDaemon, startDaemon } from "./daemon-command.ts";
 import { submitAsyncTask } from "./karissa-command.ts";
 import { readTaskSubmitManifest } from "./task-submit-manifest.ts";
@@ -26,39 +26,6 @@ function positiveInteger(value: string | undefined, fallback: number, label: str
 	return parsed;
 }
 
-function gitValue(cwd: string, args: string[]): string | undefined {
-	try {
-		return (
-			execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined
-		);
-	} catch {
-		return undefined;
-	}
-}
-
-function workspaceIdentity(cwd: string): { root: string; fingerprint: string; head?: string } {
-	const root = gitValue(cwd, ["rev-parse", "--show-toplevel"]) ?? realpathSync(cwd);
-	const remote =
-		gitValue(root, ["remote", "get-url", "origin"]) ??
-		gitValue(root, ["remote", "get-url", "upstream"]) ??
-		"no-remote";
-	const branch = gitValue(root, ["branch", "--show-current"]) ?? "detached";
-	const head = gitValue(root, ["rev-parse", "HEAD"]);
-	const fingerprint = createHash("sha256")
-		.update(`${realpathSync(root)}\0${remote}\0${branch}`)
-		.digest("hex");
-	return { root, fingerprint, ...(head === undefined ? {} : { head }) };
-}
-
-function resolveTask(store: SqliteTaskStore, id: string): TaskRecord {
-	const exact = store.getTask(id);
-	if (exact) return exact;
-	const matches = store.listTasks(10_000).filter((task) => task.id.startsWith(id));
-	if (matches.length === 1) return matches[0]!;
-	if (matches.length > 1) throw new Error(`Task ID prefix is ambiguous: ${id}`);
-	throw new Error(`Task not found: ${id}`);
-}
-
 function printTask(task: TaskRecord): void {
 	console.log(`${task.id}\t${task.state}\t${task.title}`);
 }
@@ -79,28 +46,15 @@ function printTaskHelp(): void {
   karissa task ls
   karissa task run <task-id> [--accept-runtime-drift]
   karissa task show <task-id>
+  karissa task bundle <task-id> [--json]
   karissa task pause|resume|cancel <task-id>
   karissa task stop <task-id> [--agent <agent-id>]
-  karissa task schedule add <task-id> --cron <expr> --timezone <iana>
-  karissa task schedule add <task-id> --interval <duration>
-  karissa task schedule ls <task-id>
-  karissa task schedule pause|resume|cancel <schedule-id>
   karissa task events <task-id> [--json]
   karissa task logs <task-id> [--follow]`);
 }
 
-export async function handleTaskCommand(
-	args: string[],
-	agentDir: string,
-	cwd: string,
-	enabled = true,
-): Promise<boolean> {
+export async function handleTaskCommand(args: string[], agentDir: string, cwd: string): Promise<boolean> {
 	if (args[0] !== "task") return false;
-	if (!enabled) {
-		console.error(chalk.red("Error: Long Tasks are disabled by longTasks.enabled"));
-		process.exitCode = 1;
-		return true;
-	}
 	const command = args[1];
 	if (!command || command === "--help" || command === "help") {
 		printTaskHelp();
@@ -110,6 +64,12 @@ export async function handleTaskCommand(
 		if (!args.includes("--yes")) throw new Error("task submit requires --yes for unattended workspace changes");
 		if (!args.includes("--json")) throw new Error("task submit requires --json");
 		const manifest = readTaskSubmitManifest(requiredOption(args, "--manifest"), cwd);
+		const model = await resolveTaskModel({
+			agentDir,
+			cwd: manifest.workspaceRoot,
+			provider: manifest.model?.provider,
+			model: manifest.model?.id,
+		});
 		const task = await submitAsyncTask({
 			agentDir,
 			cwd: manifest.workspaceRoot,
@@ -125,9 +85,10 @@ export async function handleTaskCommand(
 			maxTurns: manifest.limits.maxTurns,
 			maxWallTimeMinutes: manifest.limits.maxWallTimeMinutes,
 			...(manifest.limits.maxCostUsd === undefined ? {} : { maxCostUsd: manifest.limits.maxCostUsd }),
-			...(manifest.model === undefined ? {} : { model: manifest.model }),
+			model,
+			unsafeNoSandbox: args.includes("--unsafe-no-sandbox"),
 		});
-		await startDaemon(agentDir);
+		await startDaemon(agentDir, args.includes("--unsafe-no-sandbox"));
 		const response = await requestDaemon(agentDir, { command: "wake", taskId: task.id });
 		if (!response.ok) throw new Error(response.message ?? "Daemon rejected Task submission");
 		console.log(JSON.stringify({ schemaVersion: 1, taskId: task.id, state: task.state, createdAt: task.createdAt }));
@@ -137,9 +98,14 @@ export async function handleTaskCommand(
 		databasePath: join(agentDir, "long-tasks.sqlite"),
 		artifactsRoot: join(agentDir, "tasks"),
 	});
-	const controller = new TaskController(store);
-	const scheduleEngine = new ScheduleEngine(store);
+	const application = new TaskApplication(agentDir, store);
+	const commandIdentity = {
+		clientId: "karissa-cli",
+		...(option(args, "--command-id") ? { commandId: requiredOption(args, "--command-id") } : {}),
+	};
 	try {
+		if (["schedule", "agent", "agents", "messages"].includes(command))
+			throw new Error(`${command} is not available in the single-Agent V0.1 runtime`);
 		switch (command) {
 			case "create": {
 				const title = requiredOption(args, "--title");
@@ -155,32 +121,30 @@ export async function handleTaskCommand(
 				const maxCostUsd = maxCostText === undefined ? undefined : Number(maxCostText);
 				if (maxCostUsd !== undefined && (!Number.isFinite(maxCostUsd) || maxCostUsd < 0))
 					throw new Error("--max-cost-usd must be a non-negative number");
-				const workspace = workspaceIdentity(cwd);
-				const task = controller.create({
+				const task = application.submit({
+					kind: "manual",
+					workspaceRoot: cwd,
 					title,
 					goal,
-					acceptance: [{ id: "user-acceptance", kind: "manual", description: acceptance }],
-					budget: {
-						maxTurns,
-						maxWallTimeMinutes,
-						...(maxCostUsd === undefined ? {} : { maxCostUsd, mode: "hard" }),
-					},
-					workspaceRoot: workspace.root,
-					workspaceFingerprint: workspace.fingerprint,
-					...(workspace.head === undefined ? {} : { initialGitHead: workspace.head }),
+					acceptanceDescription: acceptance,
+					maxTurns,
+					maxWallTimeMinutes,
+					...(maxCostUsd === undefined ? {} : { maxCostUsd }),
 				});
-				controller.submit(task.id);
-				printTask(store.requireTask(task.id));
+				printTask(task);
 				break;
 			}
 			case "ls":
 				for (const task of store.listTasks()) printTask(task);
 				break;
 			case "run": {
-				let task = resolveTask(store, args[2] ?? "");
+				let task = application.resolve(args[2] ?? "");
 				const acceptRuntimeDrift = args.includes("--accept-runtime-drift");
 				if (task.state === "paused" || task.state === "waiting_input" || task.state === "waiting_external") {
-					task = controller.resume(task.id, acceptRuntimeDrift);
+					task = application.control(
+						{ action: "resume", taskRef: task.id, acceptRuntimeDrift },
+						commandIdentity,
+					).task;
 				}
 				if (task.state !== "queued" && task.state !== "running")
 					throw new Error(`Task cannot run from state ${task.state}`);
@@ -195,8 +159,7 @@ export async function handleTaskCommand(
 					)
 					.join("\n");
 				const durableContext = `<long_task>\n<goal>${task.goal}</goal>\n<acceptance>${acceptance}</acceptance>\n<constraints>${JSON.stringify(task.constraints)}</constraints>\n<budget>${JSON.stringify(task.budget)}</budget>\n</long_task>`;
-				process.env.KARISSA_TASK_RUN_ID = task.id;
-				if (acceptRuntimeDrift) process.env.KARISSA_ACCEPT_RUNTIME_DRIFT = "1";
+				setTaskRunContext({ taskId: task.id, agentId: mainAgent.id, acceptRuntimeDrift });
 				args.splice(
 					0,
 					args.length,
@@ -212,8 +175,9 @@ export async function handleTaskCommand(
 				return false;
 			}
 			case "start": {
-				let task = resolveTask(store, args[2] ?? "");
-				if (["paused", "waiting_input", "waiting_external"].includes(task.state)) task = controller.resume(task.id);
+				let task = application.resolve(args[2] ?? "");
+				if (["paused", "waiting_input", "waiting_external"].includes(task.state))
+					task = application.control({ action: "resume", taskRef: task.id }, commandIdentity).task;
 				if (task.state !== "queued") throw new Error(`Task cannot start from state ${task.state}`);
 				store.setNextWakeAt(task.id, undefined);
 				const response = await requestDaemon(agentDir, { command: "wake", taskId: task.id });
@@ -221,46 +185,8 @@ export async function handleTaskCommand(
 				printTask(store.requireTask(task.id));
 				break;
 			}
-			case "schedule": {
-				const action = args[2] ?? "";
-				if (action === "add") {
-					const task = resolveTask(store, args[3] ?? "");
-					const timezone = option(args, "--timezone") ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-					const cron = option(args, "--cron");
-					const interval = option(args, "--interval");
-					const at = option(args, "--at");
-					const selected = [cron, interval, at].filter((value) => value !== undefined);
-					if (selected.length !== 1)
-						throw new Error("schedule add requires exactly one of --cron, --interval, or --at");
-					const expression = cron ?? interval ?? at;
-					if (!expression) throw new Error("Schedule expression is required");
-					const schedule = scheduleEngine.create({
-						taskId: task.id,
-						...(option(args, "--agent") ? { agentId: requiredOption(args, "--agent") } : {}),
-						kind: cron ? "cron" : interval ? "interval" : "once",
-						expression,
-						timezone,
-						payload: { prompt: option(args, "--prompt") ?? "Evaluate the scheduled durable Task." },
-					});
-					console.log(JSON.stringify(schedule));
-				} else if (action === "ls") {
-					const task = resolveTask(store, args[3] ?? "");
-					for (const schedule of store.listSchedules(task.id)) console.log(JSON.stringify(schedule));
-				} else if (action === "pause" || action === "resume" || action === "cancel") {
-					const state = action === "pause" ? "paused" : action === "resume" ? "active" : "cancelled";
-					console.log(JSON.stringify(store.transitionSchedule(args[3] ?? "", state)));
-				} else {
-					throw new Error("Expected: karissa task schedule <add|ls|pause|resume|cancel>");
-				}
-				try {
-					await requestDaemon(agentDir, { command: "wake" });
-				} catch {
-					// The persisted schedule remains valid when the daemon is offline.
-				}
-				break;
-			}
 			case "stop": {
-				const task = resolveTask(store, args[2] ?? "");
+				const task = application.resolve(args[2] ?? "");
 				const response = await requestDaemon(agentDir, {
 					command: "stop-agent",
 					taskId: task.id,
@@ -271,7 +197,7 @@ export async function handleTaskCommand(
 				break;
 			}
 			case "logs": {
-				const task = resolveTask(store, args[2] ?? "");
+				const task = application.resolve(args[2] ?? "");
 				let afterSeq = 0;
 				let reading = true;
 				while (reading) {
@@ -284,40 +210,55 @@ export async function handleTaskCommand(
 				break;
 			}
 			case "show": {
-				const task = resolveTask(store, args[2] ?? "");
+				const task = application.resolve(args[2] ?? "");
 				console.log(JSON.stringify({ schemaVersion: 1, ...task, agents: store.listAgents(task.id) }, null, 2));
 				break;
 			}
+			case "bundle": {
+				const result = application.bundle(args[2] ?? "");
+				console.log(
+					args.includes("--json")
+						? JSON.stringify({ schemaVersion: 1, ...result }, null, 2)
+						: `${result.manifestPath}\t${result.manifestSha256}\t${result.manifest.verified ? "verified" : "unverified"}`,
+				);
+				break;
+			}
 			case "pause": {
-				const task = resolveTask(store, args[2] ?? "");
-				printTask(controller.pause(task.id));
+				const task = application.resolve(args[2] ?? "");
+				printTask(application.control({ action: "pause", taskRef: task.id }, commandIdentity).task);
 				break;
 			}
 			case "resume": {
-				const task = resolveTask(store, args[2] ?? "");
-				printTask(controller.resume(task.id, args.includes("--accept-runtime-drift")));
+				const task = application.resolve(args[2] ?? "");
+				printTask(
+					application.control(
+						{
+							action: "resume",
+							taskRef: task.id,
+							acceptRuntimeDrift: args.includes("--accept-runtime-drift"),
+						},
+						commandIdentity,
+					).task,
+				);
 				break;
 			}
 			case "cancel": {
-				const task = resolveTask(store, args[2] ?? "");
-				printTask(controller.cancel(task.id));
+				const task = application.resolve(args[2] ?? "");
+				printTask(application.control({ action: "cancel", taskRef: task.id }, commandIdentity).task);
 				break;
 			}
 			case "accept": {
-				const task = resolveTask(store, args[2] ?? "");
+				const task = application.resolve(args[2] ?? "");
 				const criterionId = args[3] ?? "";
 				const criterion = task.acceptance.find((candidate) => candidate.id === criterionId);
 				if (!criterion) throw new Error(`Acceptance criterion not found: ${criterionId}`);
 				if (criterion.kind !== "manual") throw new Error("Only manual acceptance criteria use karissa task accept");
-				controller.recordAcceptance(task.id, criterion.id, true, {
-					confirmedBy: "user",
-					confirmedAt: new Date().toISOString(),
-				});
+				application.control({ action: "accept", taskRef: task.id, criterionId: criterion.id }, commandIdentity);
 				console.log(criterion.id);
 				break;
 			}
 			case "events": {
-				const task = resolveTask(store, args[2] ?? "");
+				const task = application.resolve(args[2] ?? "");
 				const after = option(args, "--after");
 				const afterSeq = after === undefined ? 0 : Number(after);
 				if (!Number.isSafeInteger(afterSeq) || afterSeq < 0)
@@ -331,95 +272,15 @@ export async function handleTaskCommand(
 				}
 				break;
 			}
-			case "agents": {
-				const task = resolveTask(store, args[2] ?? "");
-				for (const agent of store.listAgents(task.id))
-					console.log(`${agent.id}\t${agent.kind}\t${agent.state}\t${agent.role}`);
-				break;
-			}
-			case "agent": {
-				if (!(["show", "run", "pause", "resume", "cancel"] as string[]).includes(args[2] ?? ""))
-					throw new Error("Expected: karissa task agent <show|run|pause|resume|cancel> <task-id> <agent-id>");
-				const task = resolveTask(store, args[3] ?? "");
-				const agentId = args[4] ?? "";
-				const matches = store
-					.listAgents(task.id)
-					.filter((candidate) => candidate.id === agentId || candidate.id.startsWith(agentId));
-				if (matches.length > 1) throw new Error(`Agent ID prefix is ambiguous: ${agentId}`);
-				const agent = matches[0];
-				if (!agent) throw new Error(`Agent not found: ${agentId}`);
-				if (args[2] === "run") {
-					if (agent.kind !== "subagent") throw new Error("Use karissa task run for the main Agent");
-					if (task.state !== "running" || agent.state !== "queued") {
-						throw new Error(`Subagent cannot run from Task ${task.state} / Agent ${agent.state}`);
-					}
-					const checkpoint = store.getLatestCheckpoint(agent.id);
-					process.env.KARISSA_TASK_RUN_ID = task.id;
-					process.env.KARISSA_AGENT_RUN_ID = agent.id;
-					args.splice(
-						0,
-						args.length,
-						...(checkpoint?.sessionCheckpoint.sessionPath
-							? ["--session", checkpoint.sessionCheckpoint.sessionPath]
-							: []),
-						"--append-system-prompt",
-						`<delegation><role>${agent.role}</role><objective>${agent.objective}</objective><workspace_mode>${agent.workspaceMode}</workspace_mode></delegation>`,
-						...(args.includes("--print") || process.env.KARISSA_DAEMON_WORKER === "1" ? ["--print"] : []),
-						agent.objective,
-					);
-					return false;
-				}
-				if (args[2] === "pause") {
-					console.log(JSON.stringify(store.transitionAgent(agent.id, "paused", "user_requested")));
-					break;
-				}
-				if (args[2] === "resume") {
-					console.log(JSON.stringify(store.transitionAgent(agent.id, "queued", "user_requested")));
-					break;
-				}
-				if (args[2] === "cancel") {
-					console.log(JSON.stringify(store.transitionAgent(agent.id, "cancelled", "user_requested")));
-					break;
-				}
-				console.log(
-					JSON.stringify(
-						{
-							...agent,
-							latestAttempt: store.getLatestAttempt(agent.id),
-							latestCheckpoint: store.getLatestCheckpoint(agent.id),
-						},
-						null,
-						2,
-					),
-				);
-				break;
-			}
-			case "messages": {
-				const task = resolveTask(store, args[2] ?? "");
-				const agentId = option(args, "--agent");
-				for (const message of store.listMessages(task.id, agentId, 10_000)) console.log(JSON.stringify(message));
-				break;
-			}
 			case "steer": {
-				const task = resolveTask(store, args[2] ?? "");
+				const task = application.resolve(args[2] ?? "");
 				const targetId = requiredOption(args, "--agent");
 				const body = requiredOption(args, "--message");
-				const agents = store.listAgents(task.id);
-				const main = agents.find((agent) => agent.kind === "main");
-				const target = agents.find((agent) => agent.id === targetId || agent.id.startsWith(targetId));
-				if (!main || !target) throw new Error("Main or target Agent not found");
-				const messageId = store.queueMessage({
-					actor: target.kind === "main" ? target : main,
-					recipient: target,
-					dedupeKey: createHash("sha256")
-						.update(`user-steer\0${task.id}\0${target.id}\0${body}\0${Date.now()}`)
-						.digest("hex"),
-					type: "steering",
-					priority: "high",
-					body,
-					artifactRefs: [],
-				});
-				console.log(messageId);
+				const result = application.control(
+					{ action: "steer", taskRef: task.id, agentRef: targetId, message: body },
+					commandIdentity,
+				);
+				console.log(result.commandId);
 				break;
 			}
 			default:

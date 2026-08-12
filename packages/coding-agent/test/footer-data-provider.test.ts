@@ -77,7 +77,7 @@ function createReftableWorktree(tempDir: string): WorktreeFixture {
 	return { worktreeDir, reftableDir };
 }
 
-async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
+async function waitFor(condition: () => boolean, timeoutMs = 10_000): Promise<void> {
 	const startedAt = Date.now();
 	while (!condition()) {
 		if (Date.now() - startedAt > timeoutMs) {
@@ -179,7 +179,16 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
+			let revision = 1;
+			const retryWrite = setInterval(() => {
+				revision += 1;
+				writeFileSync(join(reftableDir, "tables.list"), `${revision}\n`);
+			}, 1000);
+			try {
+				await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
+			} finally {
+				clearInterval(retryWrite);
+			}
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();

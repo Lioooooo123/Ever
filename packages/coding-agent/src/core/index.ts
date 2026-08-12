@@ -12,6 +12,13 @@ export {
 	type SessionStats,
 } from "./agent-session.ts";
 export {
+	type AgentSessionLifecycle,
+	type AgentSessionLifecycleDecision,
+	type AgentSessionLifecycleEvent,
+	type AgentSessionLifecycleRef,
+	NOOP_AGENT_SESSION_LIFECYCLE,
+} from "./agent-session-lifecycle.ts";
+export {
 	AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	type CreateAgentSessionRuntimeResult,
@@ -78,3 +85,18 @@ export {
 	type WorkingIndicatorOptions,
 } from "./extensions/index.ts";
 export { createSyntheticSourceInfo } from "./source-info.ts";
+export {
+	type ManualTaskSubmission,
+	TaskApplication,
+	type TaskCommandIdentity,
+	type TaskControlCommand,
+	type TaskControlResult,
+	type TaskSubmission,
+	type UnattendedTaskSubmission,
+} from "./task-application.ts";
+export {
+	probeUnattendedSandbox,
+	type SandboxCapability,
+	type SandboxedCommand,
+	UnattendedSandbox,
+} from "./unattended-sandbox.ts";

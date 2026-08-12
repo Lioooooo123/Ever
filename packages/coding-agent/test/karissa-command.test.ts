@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteTaskStore } from "@karissa/long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import { submitAsyncTask } from "../src/cli/karissa-command.ts";
+import { handleTaskCommand } from "../src/cli/task-command.ts";
+import { TaskApplication } from "../src/core/task-application.ts";
 
 const temporaryPaths: string[] = [];
 
@@ -12,6 +14,23 @@ afterEach(() => {
 });
 
 describe("karissa async submission", () => {
+	it("fails sandbox preflight before creating a Task database", async () => {
+		const root = mkdtempSync(join(tmpdir(), "karissa-submit-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspace = join(root, "workspace");
+		mkdirSync(workspace);
+		await expect(
+			submitAsyncTask({
+				agentDir,
+				cwd: workspace,
+				goal: "must not queue without a sandbox",
+				sandboxAvailable: false,
+			}),
+		).rejects.toThrow("后台任务需要可用 sandbox");
+		expect(existsSync(join(agentDir, "long-tasks.sqlite"))).toBe(false);
+	});
+
 	it("creates an authorized queued task with agent evidence acceptance", async () => {
 		const root = mkdtempSync(join(tmpdir(), "karissa-submit-"));
 		temporaryPaths.push(root);
@@ -23,6 +42,7 @@ describe("karissa async submission", () => {
 			cwd: workspace,
 			goal: "实现异步任务消费",
 			verificationCommand: "true",
+			sandboxAvailable: true,
 		});
 		expect(task.state).toBe("queued");
 		expect(task.constraints.unattendedApproved).toBe(true);
@@ -32,5 +52,27 @@ describe("karissa async submission", () => {
 		const store = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
 		expect(store.listAgents(task.id)[0]?.state).toBe("queued");
 		store.close();
+	});
+
+	it("routes manual task creation through the same Task Application", async () => {
+		const root = mkdtempSync(join(tmpdir(), "karissa-submit-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspace = join(root, "workspace");
+		mkdirSync(workspace);
+
+		const handled = await handleTaskCommand(
+			["task", "create", "--title", "人工验收任务", "--goal", "统一提交入口", "--acceptance", "用户确认结果"],
+			agentDir,
+			workspace,
+		);
+
+		expect(handled).toBe(true);
+		const store = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
+		const task = store.listTasks()[0]!;
+		expect(task).toMatchObject({ state: "queued", workspaceRoot: realpathSync(workspace) });
+		expect(task.acceptance).toEqual([{ id: "user-acceptance", kind: "manual", description: "用户确认结果" }]);
+		store.close();
+		expect(new TaskApplication(agentDir).resolve(task.id.slice(0, 8)).id).toBe(task.id);
 	});
 });

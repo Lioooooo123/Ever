@@ -75,11 +75,7 @@ export interface LongTaskContinuationSettings {
 }
 
 export interface LongTaskSettings {
-	enabled?: boolean;
 	maxConcurrentTasks?: number;
-	maxConcurrentAgentsPerTask?: number;
-	maxAgentDepth?: number;
-	subagentDefaultTurnBudget?: number;
 	taskMaxTurns?: number;
 	attemptMaxTurns?: number;
 	attemptMaxWallTimeMinutes?: number;
@@ -866,11 +862,7 @@ export class SettingsManager {
 		continuation: Required<LongTaskContinuationSettings>;
 	} {
 		return {
-			enabled: this.settings.longTasks?.enabled ?? true,
 			maxConcurrentTasks: this.settings.longTasks?.maxConcurrentTasks ?? 1,
-			maxConcurrentAgentsPerTask: this.settings.longTasks?.maxConcurrentAgentsPerTask ?? 4,
-			maxAgentDepth: this.settings.longTasks?.maxAgentDepth ?? 1,
-			subagentDefaultTurnBudget: this.settings.longTasks?.subagentDefaultTurnBudget ?? 20,
 			taskMaxTurns: this.settings.longTasks?.taskMaxTurns ?? 200,
 			attemptMaxTurns: this.settings.longTasks?.attemptMaxTurns ?? 50,
 			attemptMaxWallTimeMinutes: this.settings.longTasks?.attemptMaxWallTimeMinutes ?? 240,

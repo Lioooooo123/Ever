@@ -47,6 +47,7 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
+		"@anthropic-ai/sandbox-runtime": "0.0.26",
 		"@karissa/long-tasks": "0.1.0",
 		"@earendil-works/pi-agent-core": "^0.84.1",
 		"@earendil-works/pi-ai": "^0.84.1",

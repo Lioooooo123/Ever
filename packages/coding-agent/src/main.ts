@@ -5,6 +5,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
@@ -36,6 +37,7 @@ import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
 import { handleTaskCommand } from "./cli/task-command.ts";
 import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
+import type { AgentSessionLifecycleRef } from "./core/agent-session-lifecycle.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -50,6 +52,7 @@ import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dis
 import { attachLongTaskRuntime } from "./core/long-task-runtime.ts";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
+import { createNativeTaskTool } from "./core/native-task-tool.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
@@ -61,8 +64,10 @@ import {
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { getTaskRunContext } from "./core/task-run-context.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
+import { getWorkerStartupIfLoaded } from "./core/worker-startup.ts";
 import { runResidentWorkerFromEnvironment } from "./daemon/worker-host.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
@@ -592,11 +597,10 @@ export async function main(args: string[], options?: MainOptions) {
 	const agentDir = getAgentDir();
 	const commandSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 	const longTaskSettings = commandSettingsManager.getLongTaskSettings();
-	const longTasksEnabled = longTaskSettings.enabled;
-	if (await handleDaemonCommand(args, agentDir, longTasksEnabled, longTaskSettings)) {
+	if (await handleDaemonCommand(args, agentDir, longTaskSettings)) {
 		return;
 	}
-	if (await handleTaskCommand(args, agentDir, cwd, longTasksEnabled)) {
+	if (await handleTaskCommand(args, agentDir, cwd)) {
 		return;
 	}
 	const bootstrapSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
@@ -619,7 +623,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (await handleConfigCommand(args, { extensionFactories })) {
 		return;
 	}
-	if (await handleKarissaCommand(args, agentDir, cwd, longTasksEnabled)) {
+	if (await handleKarissaCommand(args, agentDir, cwd)) {
 		return;
 	}
 
@@ -729,6 +733,12 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
+	const lifecycleRef: AgentSessionLifecycleRef = {};
+	const taskRunContext = getTaskRunContext();
+	const workerStartup = getWorkerStartupIfLoaded();
+	const workerCredentials = workerStartup
+		? AuthStorage.inMemory({ [workerStartup.provider]: workerStartup.credential })
+		: undefined;
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
@@ -748,10 +758,19 @@ export async function main(args: string[], options?: MainOptions) {
 				parsed.projectTrustOverride ??
 				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
 		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+		const workerModelRuntime = workerCredentials
+			? await ModelRuntime.create({
+					credentials: workerCredentials,
+					modelsPath: join(agentDir, "models.json"),
+					allowModelNetwork: false,
+					signal: AbortSignal.timeout(15_000),
+				})
+			: undefined;
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
 			settingsManager: runtimeSettingsManager,
+			...(workerModelRuntime ? { modelRuntime: workerModelRuntime } : {}),
 			modelRuntimeSignal: AbortSignal.timeout(15_000),
 			extensionFlagValues: parsed.unknownFlags,
 			resourceLoaderReloadOptions: shouldResolveProjectTrust
@@ -843,7 +862,11 @@ export async function main(args: string[], options?: MainOptions) {
 			tools: sessionOptions.tools,
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
-			customTools: sessionOptions.customTools,
+			customTools: [
+				...(sessionOptions.customTools ?? []),
+				...(taskRunContext ? [createNativeTaskTool(agentDir, taskRunContext.taskId)] : []),
+			],
+			lifecycleRef,
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
@@ -861,6 +884,7 @@ export async function main(args: string[], options?: MainOptions) {
 		cwd: sessionManager.getCwd(),
 		agentDir,
 		sessionManager,
+		lifecycleRef,
 	});
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;
@@ -937,18 +961,19 @@ export async function main(args: string[], options?: MainOptions) {
 			.finally(() => clearTimeout(timeout));
 	}
 
-	const taskRuntime = process.env.KARISSA_TASK_RUN_ID
+	const taskRuntime = taskRunContext
 		? await attachLongTaskRuntime(
 				runtime,
 				agentDir,
-				process.env.KARISSA_TASK_RUN_ID,
-				process.env.KARISSA_ACCEPT_RUNTIME_DRIFT === "1",
+				taskRunContext.taskId,
+				taskRunContext.agentId,
+				taskRunContext.acceptRuntimeDrift,
 				longTaskSettings.continuation,
 			)
 		: undefined;
 	try {
 		if (process.env.KARISSA_RESIDENT_WORKER === "1") {
-			await runResidentWorkerFromEnvironment(runtime, initialMessage, initialImages);
+			await runResidentWorkerFromEnvironment(runtime, taskRunContext, initialMessage, initialImages);
 		} else if (appMode === "rpc") {
 			printTimings();
 			await runRpcMode(runtime);

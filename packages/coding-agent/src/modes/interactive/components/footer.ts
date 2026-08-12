@@ -3,6 +3,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/p
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import { getTaskRunContext } from "../../../core/task-run-context.ts";
 import { addUsageToTotals, createUsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
 
@@ -226,7 +227,13 @@ export class FooterComponent implements Component {
 		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
 		const dimRemainder = theme.fg("dim", remainder);
 
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+		const taskRun = getTaskRunContext();
+		const scope = taskRun ? `TASK ${taskRun.taskId.slice(0, 8)}` : "SESSION";
+		const pwdLine = truncateToWidth(
+			theme.bold(theme.fg("accent", scope)) + theme.fg("dim", `  ${pwd}`),
+			width,
+			theme.fg("dim", "..."),
+		);
 		const lines = [pwdLine, dimStatsLeft + dimRemainder];
 
 		// Add extension statuses on a single line, sorted by key alphabetically

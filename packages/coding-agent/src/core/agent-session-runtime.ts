@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
+import type { AgentSessionLifecycle, AgentSessionLifecycleRef } from "./agent-session-lifecycle.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
 import type {
 	ProjectTrustContext,
@@ -104,6 +105,7 @@ export class AgentSessionRuntime {
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
+	private readonly lifecycleRef: AgentSessionLifecycleRef;
 
 	constructor(
 		_session: AgentSession,
@@ -111,12 +113,14 @@ export class AgentSessionRuntime {
 		createRuntime: CreateAgentSessionRuntimeFactory,
 		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
 		_modelFallbackMessage?: string,
+		lifecycleRef: AgentSessionLifecycleRef = {},
 	) {
 		this._session = _session;
 		this._services = _services;
 		this.createRuntime = createRuntime;
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
+		this.lifecycleRef = lifecycleRef;
 	}
 
 	get services(): AgentSessionServices {
@@ -153,6 +157,15 @@ export class AgentSessionRuntime {
 	 */
 	setBeforeSessionInvalidate(beforeSessionInvalidate?: () => void): void {
 		this.beforeSessionInvalidate = beforeSessionInvalidate;
+	}
+
+	installLifecycle(lifecycle: AgentSessionLifecycle): () => void {
+		if (this.lifecycleRef.current && this.lifecycleRef.current !== lifecycle)
+			throw new Error("Agent Session lifecycle is already installed");
+		this.lifecycleRef.current = lifecycle;
+		return () => {
+			if (this.lifecycleRef.current === lifecycle) this.lifecycleRef.current = undefined;
+		};
 	}
 
 	/** Create a stable pointer to the current settled session boundary. */
@@ -499,6 +512,7 @@ export async function createAgentSessionRuntime(
 		agentDir: string;
 		sessionManager: SessionManager;
 		sessionStartEvent?: SessionStartEvent;
+		lifecycleRef?: AgentSessionLifecycleRef;
 	},
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);
@@ -509,6 +523,7 @@ export async function createAgentSessionRuntime(
 		createRuntime,
 		result.diagnostics,
 		result.modelFallbackMessage,
+		options.lifecycleRef,
 	);
 }
 

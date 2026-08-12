@@ -33,7 +33,7 @@ export class WorkingStatusIndicator extends StatusIndicator {
 			ui,
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
-			message,
+			`RUNNING  ${message}`,
 			indicator,
 		);
 	}
@@ -44,7 +44,7 @@ export class RetryStatusIndicator extends StatusIndicator {
 
 	constructor(ui: TUI, attempt: number, maxAttempts: number, delayMs: number) {
 		const retryMessage = (seconds: number) =>
-			`Retrying (${attempt}/${maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
+			`RETRY ${attempt}/${maxAttempts}  ${seconds}s  (${keyText("app.interrupt")} to cancel)`;
 		super(
 			"retry",
 			ui,
@@ -78,8 +78,8 @@ export class CompactionStatusIndicator extends StatusIndicator {
 		const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
 		const label =
 			reason === "manual"
-				? `Compacting context... ${cancelHint}`
-				: `${reason === "overflow" ? "Context overflow detected, " : ""}Auto-compacting... ${cancelHint}`;
+				? `CHECKPOINT  compacting context  ${cancelHint}`
+				: `CHECKPOINT  ${reason === "overflow" ? "overflow recovery" : "automatic compaction"}  ${cancelHint}`;
 		super(
 			"compaction",
 			ui,
@@ -97,7 +97,7 @@ export class BranchSummaryStatusIndicator extends StatusIndicator {
 			ui,
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
-			`Summarizing branch... (${keyText("app.interrupt")} to cancel)`,
+			`BRANCH  summarizing  (${keyText("app.interrupt")} to cancel)`,
 		);
 	}
 }

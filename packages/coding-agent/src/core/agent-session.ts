@@ -51,6 +51,7 @@ import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
+import { type AgentSessionLifecycleRef, withAgentSessionRequestKind } from "./agent-session-lifecycle.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
@@ -223,6 +224,8 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
+	/** Host-owned awaited lifecycle hooks. Extensions cannot replace this ref. */
+	lifecycleRef?: AgentSessionLifecycleRef;
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
 }
@@ -348,6 +351,7 @@ export class AgentSession {
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
+	private _lifecycleRef?: AgentSessionLifecycleRef;
 	private _initialActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
 	private _excludedToolNames?: Set<string>;
@@ -384,6 +388,7 @@ export class AgentSession {
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
 		this._extensionRunnerRef = config.extensionRunnerRef;
+		this._lifecycleRef = config.lifecycleRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
@@ -477,19 +482,35 @@ export class AgentSession {
 	 * happens here instead of in wrappers.
 	 */
 	private _installAgentToolHooks(): void {
-		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+		this.agent.beforeToolCall = async ({ assistantMessage, toolCall, args }) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
-			}
-
 			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
-					toolName: toolCall.name,
+				const input = args as Record<string, unknown>;
+				const extensionDecision = runner.hasHandlers("tool_call")
+					? await runner.emitToolCall({
+							type: "tool_call",
+							toolName: toolCall.name,
+							toolCallId: toolCall.id,
+							input,
+						})
+					: undefined;
+				if (extensionDecision?.block) return extensionDecision;
+				const operationId = `${this.sessionId}:${assistantMessage.responseId ?? assistantMessage.timestamp}:${toolCall.id}`;
+				const lifecycleDecision = await this._lifecycleRef?.current?.handle({
+					type: "before_tool",
+					sessionId: this.sessionId,
+					operationId,
 					toolCallId: toolCall.id,
-					input: args as Record<string, unknown>,
+					toolName: toolCall.name,
+					input,
 				});
+				return lifecycleDecision?.block
+					? {
+							block: true,
+							reason: lifecycleDecision.reason,
+							terminate: lifecycleDecision.terminate,
+						}
+					: undefined;
 			} catch (err) {
 				if (err instanceof Error) {
 					throw err;
@@ -498,7 +519,7 @@ export class AgentSession {
 			}
 		};
 
-		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+		this.agent.afterToolCall = async ({ assistantMessage, toolCall, args, result, isError }) => {
 			const runner = this._extensionRunner;
 			const hookResult = runner.hasHandlers("tool_result")
 				? await runner.emitToolResult({
@@ -518,6 +539,22 @@ export class AgentSession {
 			const normalizedContent = await normalizeToolResultImages(content, {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
 			});
+			const finalIsError = hookResult?.isError ?? isError;
+			const operationId = `${this.sessionId}:${assistantMessage.responseId ?? assistantMessage.timestamp}:${toolCall.id}`;
+			await this._lifecycleRef?.current?.handle({
+				type: "after_tool",
+				sessionId: this.sessionId,
+				operationId,
+				toolCallId: toolCall.id,
+				toolName: toolCall.name,
+				input: args as Record<string, unknown>,
+				isError: finalIsError,
+				resultSummary: normalizedContent
+					.filter((part): part is TextContent => part.type === "text")
+					.map((part) => part.text)
+					.join("\n")
+					.slice(0, 4_000),
+			});
 
 			if (!hookResult && normalizedContent === content) {
 				return undefined;
@@ -526,7 +563,7 @@ export class AgentSession {
 			return {
 				content: normalizedContent,
 				details: hookResult?.details,
-				isError: hookResult?.isError ?? isError,
+				isError: finalIsError,
 				usage: hookResult?.usage,
 			};
 		};
@@ -596,6 +633,7 @@ export class AgentSession {
 	private async _emitAgentSettled(): Promise<void> {
 		this._isAgentRunActive = false;
 		try {
+			await this._lifecycleRef?.current?.handle({ type: "settled", sessionId: this.sessionId });
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
 		} finally {
@@ -1230,10 +1268,16 @@ export class AgentSession {
 			this._pendingNextTurnMessages = [];
 
 			// Emit before_agent_start extension event
+			const lifecycleDecision = await this._lifecycleRef?.current?.handle({
+				type: "before_turn",
+				sessionId: this.sessionId,
+				baseSystemPrompt: this._baseSystemPrompt,
+			});
+			const lifecycleSystemPrompt = lifecycleDecision?.systemPrompt ?? this._baseSystemPrompt;
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
-				this._baseSystemPrompt,
+				lifecycleSystemPrompt,
 				this._baseSystemPromptOptions,
 			);
 			// Add all custom messages from extensions
@@ -1256,8 +1300,9 @@ export class AgentSession {
 				this.agent.state.systemPrompt = result.systemPrompt;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this._systemPromptOverride = undefined;
-				this.agent.state.systemPrompt = this._baseSystemPrompt;
+				this._systemPromptOverride =
+					lifecycleSystemPrompt === this._baseSystemPrompt ? undefined : lifecycleSystemPrompt;
+				this.agent.state.systemPrompt = lifecycleSystemPrompt;
 			}
 		} catch (error) {
 			preflightResult?.(false);
@@ -1793,6 +1838,11 @@ export class AgentSession {
 		this._emit({ type: "compaction_start", reason: "manual" });
 
 		try {
+			await this._lifecycleRef?.current?.handle({
+				type: "before_compaction",
+				sessionId: this.sessionId,
+				reason: "manual",
+			});
 			if (!this.model) {
 				throw new Error(formatNoModelSelectedMessage());
 			}
@@ -1851,18 +1901,20 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Generate compaction result
-				const result = await compact(
-					preparation,
-					requestModel,
-					apiKey,
-					headers,
-					customInstructions,
-					this._compactionAbortController.signal,
-					this.thinkingLevel,
-					this.agent.streamFunction,
-					env,
-					this.settingsManager.getRetrySettings(),
-					this._summarizationRetryCallbacks({ source: "compaction", reason: "manual" }),
+				const result = await withAgentSessionRequestKind("compaction", () =>
+					compact(
+						preparation,
+						requestModel,
+						apiKey,
+						headers,
+						customInstructions,
+						this._compactionAbortController!.signal,
+						this.thinkingLevel,
+						this.agent.streamFunction,
+						env,
+						this.settingsManager.getRetrySettings(),
+						this._summarizationRetryCallbacks({ source: "compaction", reason: "manual" }),
+					),
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -1893,6 +1945,14 @@ export class AgentSession {
 					fromExtension,
 					reason: "manual",
 					willRetry: false,
+				});
+			}
+			if (savedCompactionEntry) {
+				await this._lifecycleRef?.current?.handle({
+					type: "after_compaction",
+					sessionId: this.sessionId,
+					reason: "manual",
+					entryId: savedCompactionEntry.id,
 				});
 			}
 
@@ -2060,6 +2120,7 @@ export class AgentSession {
 		let started = false;
 
 		try {
+			await this._lifecycleRef?.current?.handle({ type: "before_compaction", sessionId: this.sessionId, reason });
 			if (!this.model) {
 				return false;
 			}
@@ -2123,18 +2184,20 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Generate compaction result
-				const compactResult = await compact(
-					preparation,
-					requestModel,
-					apiKey,
-					headers,
-					undefined,
-					this._autoCompactionAbortController.signal,
-					this.thinkingLevel,
-					this.agent.streamFunction,
-					env,
-					this.settingsManager.getRetrySettings(),
-					this._summarizationRetryCallbacks({ source: "compaction", reason }),
+				const compactResult = await withAgentSessionRequestKind("compaction", () =>
+					compact(
+						preparation,
+						requestModel,
+						apiKey,
+						headers,
+						undefined,
+						this._autoCompactionAbortController!.signal,
+						this.thinkingLevel,
+						this.agent.streamFunction,
+						env,
+						this.settingsManager.getRetrySettings(),
+						this._summarizationRetryCallbacks({ source: "compaction", reason }),
+					),
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
@@ -2172,6 +2235,14 @@ export class AgentSession {
 					fromExtension,
 					reason,
 					willRetry,
+				});
+			}
+			if (savedCompactionEntry) {
+				await this._lifecycleRef?.current?.handle({
+					type: "after_compaction",
+					sessionId: this.sessionId,
+					reason,
+					entryId: savedCompactionEntry.id,
 				});
 			}
 
@@ -2994,19 +3065,21 @@ export class AgentSession {
 				const model = this.model!;
 				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
-				const result = await generateBranchSummary(entriesToSummarize, {
-					model: requestModel,
-					apiKey,
-					headers,
-					env,
-					signal: this._branchSummaryAbortController.signal,
-					customInstructions,
-					replaceInstructions,
-					reserveTokens: branchSummarySettings.reserveTokens,
-					streamFn: this.agent.streamFunction,
-					retry: this.settingsManager.getRetrySettings(),
-					callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
-				});
+				const result = await withAgentSessionRequestKind("branch_summary", () =>
+					generateBranchSummary(entriesToSummarize, {
+						model: requestModel,
+						apiKey,
+						headers,
+						env,
+						signal: this._branchSummaryAbortController!.signal,
+						customInstructions,
+						replaceInstructions,
+						reserveTokens: branchSummarySettings.reserveTokens,
+						streamFn: this.agent.streamFunction,
+						retry: this.settingsManager.getRetrySettings(),
+						callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
+					}),
+				);
 				if (result.aborted) {
 					return { cancelled: true, aborted: true };
 				}

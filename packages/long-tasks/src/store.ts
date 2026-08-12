@@ -1,38 +1,60 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { DatabaseSync as DatabaseSyncType, SQLInputValue } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
 	type AcceptanceCriterion,
 	type AgentCheckpointCommit,
 	type AgentLease,
 	type AgentRecord,
+	type AttemptClaimContext,
 	type AttemptRecord,
 	assertSchema,
+	type BeginTaskCommandInput,
 	type Budget,
 	type CheckpointRecord,
+	type ClaimedAttempt,
 	type ContinuationDecision,
 	type CoordinationResult,
 	type CreateTaskInput,
 	type DaemonCommandRecord,
 	type InboxMessage,
 	type ReceiveDaemonCommandInput,
+	type RuntimeSnapshot,
 	type ScheduleClaim,
 	type ScheduleEventTrigger,
 	type ScheduleRecord,
 	type StaleExecution,
+	type TaskCommandRecord,
 	type TaskEvent,
 	type TaskNotification,
 	type TaskNotificationKind,
 	type TaskRecord,
 	type TaskState,
 	type ToolPolicy,
+	type UnfinishedProviderRequest,
 	type UnfinishedToolExecution,
 	type WorkspaceSnapshot,
 } from "./types.ts";
 
-const CURRENT_SCHEMA_VERSION = 4;
+type DatabaseSync = DatabaseSyncType;
+
+const originalEmitWarning = process.emitWarning;
+let DatabaseSync: typeof DatabaseSyncType;
+try {
+	// Node 22-24 labels the built-in SQLite API experimental even though Karissa
+	// deliberately owns and tests this dependency. Suppress only its synchronous
+	// module-load notice so the public TUI starts with product state, not runtime noise.
+	process.emitWarning = (() => {}) as typeof process.emitWarning;
+	DatabaseSync = (createRequire(import.meta.url)("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType })
+		.DatabaseSync;
+} finally {
+	process.emitWarning = originalEmitWarning;
+}
+
+const CURRENT_SCHEMA_VERSION = 6;
 
 const TASK_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
 	draft: ["queued", "cancelled"],
@@ -164,6 +186,19 @@ interface DaemonCommandRow {
 	dispatched_at: string | null;
 	completed_at: string | null;
 	acknowledged_at: string | null;
+}
+
+interface TaskCommandRow {
+	client_id: string;
+	command_id: string;
+	task_id: string;
+	command_type: string;
+	payload_sha256: string;
+	payload_json: string;
+	state: "dispatched" | "completed";
+	result_json: string | null;
+	dispatched_at: string;
+	completed_at: string | null;
 }
 
 interface ContinuationDecisionRow {
@@ -302,6 +337,21 @@ function daemonCommandFromRow(row: DaemonCommandRow): DaemonCommandRecord {
 	};
 }
 
+function taskCommandFromRow(row: TaskCommandRow): TaskCommandRecord {
+	return {
+		clientId: row.client_id,
+		commandId: row.command_id,
+		taskId: row.task_id,
+		commandType: row.command_type,
+		payloadSha256: row.payload_sha256,
+		payload: parseObject(row.payload_json, "task command payload"),
+		state: row.state,
+		...(row.result_json === null ? {} : { result: parseObject(row.result_json, "task command result") }),
+		dispatchedAt: row.dispatched_at,
+		...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+	};
+}
+
 function continuationDecisionFromRow(row: ContinuationDecisionRow): ContinuationDecision {
 	return {
 		id: row.id,
@@ -356,7 +406,14 @@ function executeTransaction<T>(database: DatabaseSync, operation: () => T): T {
 }
 
 function migrationSql(version: number): string {
-	const names = { 1: "long_tasks", 2: "multi_agent", 3: "notifications", 4: "control_plane" } as const;
+	const names = {
+		1: "long_tasks",
+		2: "multi_agent",
+		3: "notifications",
+		4: "control_plane",
+		5: "verified_completion",
+		6: "task_commands",
+	} as const;
 	return readFileSync(
 		fileURLToPath(new URL(`./migrations/00${version}_${names[version as keyof typeof names]}.sql`, import.meta.url)),
 		"utf8",
@@ -418,6 +475,66 @@ export class SqliteTaskStore {
 
 	close(): void {
 		this.database.close();
+	}
+
+	beginTaskCommand(input: BeginTaskCommandInput): { command: TaskCommandRecord; duplicate: boolean } {
+		if (
+			input.clientId.trim() === "" ||
+			input.commandId.trim() === "" ||
+			input.commandType.trim() === "" ||
+			!/^[a-f0-9]{64}$/.test(input.payloadSha256)
+		)
+			throw new TypeError("Invalid Task command identity");
+		this.requireTask(input.taskId);
+		return executeTransaction(this.database, () => {
+			const existing = this.getTaskCommand(input.clientId, input.commandId);
+			if (existing) {
+				if (
+					existing.taskId !== input.taskId ||
+					existing.commandType !== input.commandType ||
+					existing.payloadSha256 !== input.payloadSha256
+				)
+					throw new Error(`Task command identity conflict: ${input.clientId}/${input.commandId}`);
+				return { command: existing, duplicate: true };
+			}
+			this.database
+				.prepare(
+					`INSERT INTO task_commands
+					 (client_id, command_id, task_id, command_type, payload_sha256, payload_json, state, dispatched_at)
+					 VALUES (?, ?, ?, ?, ?, ?, 'dispatched', ?)`,
+				)
+				.run(
+					input.clientId,
+					input.commandId,
+					input.taskId,
+					input.commandType,
+					input.payloadSha256,
+					JSON.stringify(input.payload),
+					this.now().toISOString(),
+				);
+			return { command: this.requireTaskCommand(input.clientId, input.commandId), duplicate: false };
+		});
+	}
+
+	getTaskCommand(clientId: string, commandId: string): TaskCommandRecord | undefined {
+		const row = this.database
+			.prepare("SELECT * FROM task_commands WHERE client_id = ? AND command_id = ?")
+			.get(clientId, commandId) as TaskCommandRow | undefined;
+		return row ? taskCommandFromRow(row) : undefined;
+	}
+
+	completeTaskCommand(clientId: string, commandId: string, result: Record<string, unknown>): TaskCommandRecord {
+		return executeTransaction(this.database, () => {
+			const existing = this.requireTaskCommand(clientId, commandId);
+			if (existing.state === "completed") return existing;
+			this.database
+				.prepare(
+					`UPDATE task_commands SET state = 'completed', result_json = ?, completed_at = ?
+					 WHERE client_id = ? AND command_id = ? AND state = 'dispatched'`,
+				)
+				.run(JSON.stringify(result), this.now().toISOString(), clientId, commandId);
+			return this.requireTaskCommand(clientId, commandId);
+		});
 	}
 
 	receiveDaemonCommand(input: ReceiveDaemonCommandInput): { command: DaemonCommandRecord; duplicate: boolean } {
@@ -874,6 +991,12 @@ export class SqliteTaskStore {
 		return command;
 	}
 
+	private requireTaskCommand(clientId: string, commandId: string): TaskCommandRecord {
+		const command = this.getTaskCommand(clientId, commandId);
+		if (!command) throw new Error(`Task command not found: ${clientId}/${commandId}`);
+		return command;
+	}
+
 	createTask(input: CreateTaskInput): { task: TaskRecord; mainAgent: AgentRecord } {
 		assertSchema("acceptance", input.acceptance);
 		assertSchema("budget", input.budget);
@@ -883,18 +1006,7 @@ export class SqliteTaskStore {
 		const taskId = randomUUID();
 		const agentId = randomUUID();
 		const toolPolicy: ToolPolicy = input.toolPolicy ?? {
-			allowedTools: [
-				"read",
-				"grep",
-				"find",
-				"ls",
-				"bash",
-				"edit",
-				"write",
-				"task_update",
-				"delegate_task",
-				"message_agent",
-			],
+			allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "task_update"],
 			allowedPaths: [input.workspaceRoot],
 			readOnly: false,
 			sandboxRequired: false,
@@ -968,6 +1080,15 @@ export class SqliteTaskStore {
 			this.database
 				.prepare("SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?")
 				.all(limit) as unknown as TaskRow[]
+		).map(taskFromRow);
+	}
+
+	findTasksByIdPrefix(prefix: string, limit = 2): TaskRecord[] {
+		if (!/^[a-f0-9-]+$/i.test(prefix)) return [];
+		return (
+			this.database
+				.prepare("SELECT * FROM tasks WHERE id >= ? AND id < ? ORDER BY id LIMIT ?")
+				.all(prefix, `${prefix}\uffff`, limit) as unknown as TaskRow[]
 		).map(taskFromRow);
 	}
 
@@ -1217,7 +1338,19 @@ export class SqliteTaskStore {
 				this.database
 					.prepare(
 						`UPDATE agents SET state = 'queued', updated_at = ? WHERE task_id = ?
-						 AND state IN ('created', 'paused', 'waiting_message', 'waiting_external')`,
+						 AND state IN ('created', 'paused', 'waiting_message', 'waiting_external', 'unknown_outcome')`,
+					)
+					.run(now, taskId);
+			} else if (nextState === "waiting_input") {
+				this.database
+					.prepare(
+						"UPDATE agents SET state = 'waiting_message', updated_at = ? WHERE task_id = ? AND state = 'running'",
+					)
+					.run(now, taskId);
+			} else if (nextState === "waiting_external") {
+				this.database
+					.prepare(
+						"UPDATE agents SET state = 'waiting_external', updated_at = ? WHERE task_id = ? AND state = 'running'",
 					)
 					.run(now, taskId);
 			} else if (nextState === "paused") {
@@ -1227,13 +1360,19 @@ export class SqliteTaskStore {
 						 AND state NOT IN ('completed', 'failed', 'cancelled', 'unknown_outcome')`,
 					)
 					.run(now, taskId);
-			} else if (nextState === "cancelled" || nextState === "failed") {
+			} else if (nextState === "completed" || nextState === "cancelled" || nextState === "failed") {
 				this.database
 					.prepare(
 						`UPDATE agents SET state = ?, updated_at = ?, completed_at = ? WHERE task_id = ?
 						 AND state NOT IN ('completed', 'failed', 'cancelled')`,
 					)
 					.run(nextState, now, now, taskId);
+				this.database
+					.prepare(
+						`UPDATE attempts SET state = ?, settled_at = ? WHERE task_id = ?
+						 AND state NOT IN ('completed', 'failed', 'cancelled', 'unknown_outcome')`,
+					)
+					.run(nextState, now, taskId);
 			}
 			const eventType =
 				nextState === "queued"
@@ -1271,6 +1410,141 @@ export class SqliteTaskStore {
 		).map(eventFromRow);
 	}
 
+	findEvent(taskId: string, ref: string): TaskEvent | undefined {
+		const numericSeq = /^\d+$/.test(ref) ? Number(ref) : undefined;
+		const row = (
+			numericSeq === undefined
+				? this.database.prepare("SELECT * FROM task_events WHERE task_id = ? AND id = ?").get(taskId, ref)
+				: this.database.prepare("SELECT * FROM task_events WHERE task_id = ? AND seq = ?").get(taskId, numericSeq)
+		) as EventRow | undefined;
+		return row ? eventFromRow(row) : undefined;
+	}
+
+	beginVerifiedCompletion(input: {
+		taskId: string;
+		requestId: string;
+		summary: string;
+		evidence: readonly unknown[];
+	}): { status: "new" | "running" | "completed"; result?: Record<string, unknown> } {
+		this.requireTask(input.taskId);
+		if (input.requestId.trim() === "") throw new TypeError("Verified completion request ID is required");
+		const evidenceJson = JSON.stringify(input.evidence);
+		return executeTransaction(this.database, () => {
+			const existing = this.database
+				.prepare(
+					"SELECT summary, evidence_json, state, result_json FROM verified_completion_requests WHERE task_id = ? AND request_id = ?",
+				)
+				.get(input.taskId, input.requestId) as
+				| { summary: string; evidence_json: string; state: "running" | "completed"; result_json: string | null }
+				| undefined;
+			if (existing) {
+				if (existing.summary !== input.summary || existing.evidence_json !== evidenceJson)
+					throw new Error(`Verified completion request ${input.requestId} was reused with different input`);
+				return {
+					status: existing.state,
+					...(existing.result_json === null
+						? {}
+						: { result: parseObject(existing.result_json, "verified completion result") }),
+				};
+			}
+			const now = this.now().toISOString();
+			this.database
+				.prepare(
+					`INSERT INTO verified_completion_requests
+					 (task_id, request_id, summary, evidence_json, state, created_at)
+					 VALUES (?, ?, ?, ?, 'running', ?)`,
+				)
+				.run(input.taskId, input.requestId, input.summary, evidenceJson, now);
+			this.appendEventInternal(
+				input.taskId,
+				undefined,
+				undefined,
+				"AcceptanceRequested",
+				{
+					requestId: input.requestId,
+					summary: input.summary,
+					evidence: input.evidence,
+					schemaVersion: 2,
+				},
+				now,
+			);
+			return { status: "new" };
+		});
+	}
+
+	finishVerifiedCompletion(taskId: string, requestId: string, result: Record<string, unknown>): void {
+		executeTransaction(this.database, () => {
+			const now = this.now().toISOString();
+			const update = this.database
+				.prepare(
+					`UPDATE verified_completion_requests
+					 SET state = 'completed', result_json = ?, completed_at = ?
+					 WHERE task_id = ? AND request_id = ? AND state = 'running'`,
+				)
+				.run(JSON.stringify(result), now, taskId, requestId);
+			if (Number(update.changes) !== 1) throw new Error(`Verified completion request is not running: ${requestId}`);
+			this.appendEventInternal(
+				taskId,
+				undefined,
+				undefined,
+				"AcceptanceEvaluationCompleted",
+				{ requestId, accepted: result.accepted === true, schemaVersion: 1 },
+				now,
+			);
+		});
+	}
+
+	beginAcceptanceCommand(taskId: string, requestId: string, criterionId: string): "execute" | "unknown" | "finished" {
+		return executeTransaction(this.database, () => {
+			const existing = this.database
+				.prepare(
+					`SELECT state FROM acceptance_command_executions
+					 WHERE task_id = ? AND request_id = ? AND criterion_id = ?`,
+				)
+				.get(taskId, requestId, criterionId) as { state: "started" | "finished" } | undefined;
+			if (existing) return existing.state === "finished" ? "finished" : "unknown";
+			this.database
+				.prepare(
+					`INSERT INTO acceptance_command_executions
+					 (task_id, request_id, criterion_id, state, created_at)
+					 VALUES (?, ?, ?, 'started', ?)`,
+				)
+				.run(taskId, requestId, criterionId, this.now().toISOString());
+			return "execute";
+		});
+	}
+
+	finishAcceptanceCommand(
+		taskId: string,
+		requestId: string,
+		criterionId: string,
+		passed: boolean,
+		evidence: Record<string, unknown>,
+	): void {
+		const task = this.requireTask(taskId);
+		if (!task.acceptance.some((criterion) => criterion.id === criterionId))
+			throw new Error(`Unknown acceptance criterion: ${criterionId}`);
+		executeTransaction(this.database, () => {
+			const now = this.now().toISOString();
+			const update = this.database
+				.prepare(
+					`UPDATE acceptance_command_executions
+					 SET state = 'finished', result_json = ?, finished_at = ?
+					 WHERE task_id = ? AND request_id = ? AND criterion_id = ? AND state = 'started'`,
+				)
+				.run(JSON.stringify({ passed, evidence }), now, taskId, requestId, criterionId);
+			if (Number(update.changes) !== 1) throw new Error(`Acceptance command is not running: ${criterionId}`);
+			this.appendEventInternal(
+				taskId,
+				undefined,
+				undefined,
+				passed ? "AcceptancePassed" : "AcceptanceFailed",
+				{ criterionId, evidence, requestId, schemaVersion: 2 },
+				now,
+			);
+		});
+	}
+
 	appendAgentEvent(
 		lease: AgentLease,
 		attemptId: string | undefined,
@@ -1286,6 +1560,94 @@ export class SqliteTaskStore {
 				type,
 				payload,
 				this.now().toISOString(),
+			);
+		});
+	}
+
+	startToolExecution(
+		lease: AgentLease,
+		attemptId: string,
+		input: {
+			operationId: string;
+			toolCallId: string;
+			toolName: string;
+			inputSha256: string;
+			effect: UnfinishedToolExecution["effect"];
+			paths: string[];
+		},
+	): void {
+		executeTransaction(this.database, () => {
+			this.assertLeaseInternal(lease);
+			const now = this.now().toISOString();
+			const base = {
+				operationId: input.operationId,
+				toolCallId: input.toolCallId,
+				toolName: input.toolName,
+				inputSha256: input.inputSha256,
+				effect: input.effect,
+				paths: input.paths,
+				executionId: lease.executionId,
+				fencingToken: lease.fencingToken,
+				schemaVersion: 1,
+			};
+			this.appendEventInternal(lease.taskId, lease.agentId, attemptId, "ToolPlanned", base, now);
+			this.appendEventInternal(lease.taskId, lease.agentId, attemptId, "ToolAuthorized", base, now);
+			this.appendEventInternal(lease.taskId, lease.agentId, attemptId, "ToolStarted", base, now);
+		});
+	}
+
+	finishToolExecution(
+		lease: AgentLease,
+		attemptId: string,
+		input: { operationId: string; toolCallId: string; toolName: string; isError: boolean; summary: string },
+	): void {
+		this.appendAgentEvent(lease, attemptId, "ToolFinished", { ...input, schemaVersion: 1 });
+	}
+
+	markExecutionOutcomeUnknown(lease: AgentLease, attemptId: string, reason: string): void {
+		executeTransaction(this.database, () => {
+			this.assertLeaseInternal(lease);
+			const now = this.now().toISOString();
+			this.database
+				.prepare("UPDATE agents SET state = 'unknown_outcome', updated_at = ? WHERE id = ?")
+				.run(now, lease.agentId);
+			this.database
+				.prepare("UPDATE tasks SET state = 'unknown_outcome', state_reason = ?, updated_at = ? WHERE id = ?")
+				.run(reason.slice(0, 1000), now, lease.taskId);
+			this.database
+				.prepare("UPDATE attempts SET state = 'unknown_outcome', error_code = ?, settled_at = ? WHERE id = ?")
+				.run(reason.slice(0, 1000), now, attemptId);
+			this.appendEventInternal(
+				lease.taskId,
+				lease.agentId,
+				attemptId,
+				"ToolOutcomeUnknown",
+				{ reason: reason.slice(0, 1000), schemaVersion: 1 },
+				now,
+			);
+		});
+	}
+
+	markProviderOutcomeUnknown(lease: AgentLease, attemptId: string, providerRequestId: string, reason: string): void {
+		executeTransaction(this.database, () => {
+			this.assertLeaseInternal(lease);
+			const now = this.now().toISOString();
+			this.database
+				.prepare("UPDATE agents SET state = 'unknown_outcome', updated_at = ? WHERE id = ?")
+				.run(now, lease.agentId);
+			this.database
+				.prepare("UPDATE tasks SET state = 'unknown_outcome', state_reason = ?, updated_at = ? WHERE id = ?")
+				.run(reason.slice(0, 1000), now, lease.taskId);
+			this.database
+				.prepare("UPDATE attempts SET state = 'unknown_outcome', error_code = ?, settled_at = ? WHERE id = ?")
+				.run("provider_outcome_unknown", now, attemptId);
+			this.appendEventInternal(
+				lease.taskId,
+				lease.agentId,
+				attemptId,
+				"ProviderOutcomeUnknown",
+				{ providerRequestId, reason: reason.slice(0, 1000), schemaVersion: 1 },
+				now,
 			);
 		});
 	}
@@ -1314,14 +1676,14 @@ export class SqliteTaskStore {
 	}
 
 	hasPassedAcceptance(taskId: string, criterionId: string): boolean {
-		return Boolean(
-			this.database
-				.prepare(
-					`SELECT id FROM task_events WHERE task_id = ? AND type = 'AcceptancePassed'
-					 AND json_extract(payload_json, '$.criterionId') = ? ORDER BY seq DESC LIMIT 1`,
-				)
-				.get(taskId, criterionId),
-		);
+		const row = this.database
+			.prepare(
+				`SELECT type FROM task_events
+				 WHERE task_id = ? AND type IN ('AcceptancePassed', 'AcceptanceFailed')
+				 AND json_extract(payload_json, '$.criterionId') = ? ORDER BY seq DESC LIMIT 1`,
+			)
+			.get(taskId, criterionId) as { type: "AcceptancePassed" | "AcceptanceFailed" } | undefined;
+		return row?.type === "AcceptancePassed";
 	}
 
 	createAttempt(
@@ -1370,6 +1732,189 @@ export class SqliteTaskStore {
 			);
 		});
 		return attemptId;
+	}
+
+	claimAttempt(input: {
+		agentId: string;
+		sessionId?: string;
+		runtimeSnapshot: RuntimeSnapshot;
+		runtimeSnapshotSha256: string;
+		workerId: string;
+		executionId: string;
+		leaseSeconds?: number;
+		pid?: number;
+		sandboxId?: string;
+	}): ClaimedAttempt {
+		assertSchema("runtimeSnapshot", input.runtimeSnapshot);
+		return executeTransaction(this.database, () => {
+			const agent = this.requireAgent(input.agentId);
+			const task = this.requireTask(agent.taskId);
+			if (task.state !== "queued" && task.state !== "running")
+				throw new Error(`Task ${task.id} is not runnable from state ${task.state}`);
+			if (agent.state !== "queued" && agent.state !== "running")
+				throw new Error(`Agent ${agent.id} is not claimable from state ${agent.state}`);
+
+			const nowDate = this.now();
+			const now = nowDate.toISOString();
+			const existing = this.database.prepare("SELECT * FROM leases WHERE agent_id = ?").get(agent.id) as
+				| LeaseRow
+				| undefined;
+			if (existing && existing.revoked_at === null && Date.parse(existing.expires_at) > nowDate.getTime())
+				throw new Error(`Agent ${agent.id} already has an active lease`);
+			if (existing && existing.revoked_at === null)
+				throw new Error(`Agent ${agent.id} requires the recovery barrier before lease takeover`);
+
+			const leaseSeconds = input.leaseSeconds ?? 30;
+			if (!Number.isFinite(leaseSeconds) || leaseSeconds <= 0) throw new TypeError("Invalid lease duration");
+			const fencingToken = (existing?.fencing_token ?? 0) + 1;
+			const expiresAt = new Date(nowDate.getTime() + leaseSeconds * 1000).toISOString();
+			this.database
+				.prepare(
+					`INSERT INTO leases (agent_id, task_id, worker_id, execution_id, pid, sandbox_id, fencing_token, acquired_at, heartbeat_at, expires_at, revoked_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+					 ON CONFLICT(agent_id) DO UPDATE SET worker_id=excluded.worker_id, execution_id=excluded.execution_id,
+					 pid=excluded.pid, sandbox_id=excluded.sandbox_id, fencing_token=excluded.fencing_token,
+					 acquired_at=excluded.acquired_at, heartbeat_at=excluded.heartbeat_at,
+					 expires_at=excluded.expires_at, revoked_at=NULL`,
+				)
+				.run(
+					agent.id,
+					task.id,
+					input.workerId,
+					input.executionId,
+					input.pid ?? null,
+					input.sandboxId ?? null,
+					fencingToken,
+					now,
+					now,
+					expiresAt,
+				);
+
+			const attemptId = randomUUID();
+			const ordinalRow = this.database
+				.prepare("SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal FROM attempts WHERE agent_id = ?")
+				.get(agent.id) as { ordinal: number };
+			this.database
+				.prepare(
+					`INSERT INTO attempts (
+					 id, task_id, agent_id, session_id, ordinal, state, runtime_snapshot_json,
+					 runtime_snapshot_sha256, started_at
+					) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+				)
+				.run(
+					attemptId,
+					task.id,
+					agent.id,
+					input.sessionId ?? null,
+					ordinalRow.ordinal,
+					JSON.stringify(input.runtimeSnapshot),
+					input.runtimeSnapshotSha256,
+					now,
+				);
+			this.database
+				.prepare("UPDATE agents SET state = 'running', active_session_id = ?, updated_at = ? WHERE id = ?")
+				.run(input.sessionId ?? null, now, agent.id);
+			if (task.state === "queued")
+				this.database
+					.prepare("UPDATE tasks SET state = 'running', state_reason = ?, updated_at = ? WHERE id = ?")
+					.run("attempt_claimed", now, task.id);
+			this.appendEventInternal(
+				task.id,
+				agent.id,
+				attemptId,
+				"LeaseAcquired",
+				{
+					workerId: input.workerId,
+					executionId: input.executionId,
+					fencingToken,
+					schemaVersion: 1,
+				},
+				now,
+			);
+			this.appendEventInternal(
+				task.id,
+				agent.id,
+				attemptId,
+				"AttemptStarted",
+				{
+					ordinal: ordinalRow.ordinal,
+					deadlineAt: new Date(Date.parse(task.createdAt) + task.budget.maxWallTimeMinutes * 60_000).toISOString(),
+					schemaVersion: 1,
+				},
+				now,
+			);
+			return { token: attemptId };
+		});
+	}
+
+	resolveAttemptClaim(claim: ClaimedAttempt): AttemptClaimContext {
+		const attempt = this.getAttempt(claim.token);
+		if (!attempt) throw new Error("Attempt claim is invalid or no longer available");
+		if (this.getLatestAttempt(attempt.agentId)?.id !== attempt.id)
+			throw new Error("Attempt claim has been superseded by a newer Attempt");
+		const row = this.database.prepare("SELECT * FROM leases WHERE agent_id = ?").get(attempt.agentId) as
+			| LeaseRow
+			| undefined;
+		if (
+			!row ||
+			row.revoked_at !== null ||
+			row.execution_id === "" ||
+			Date.parse(row.expires_at) <= this.now().getTime()
+		)
+			throw new Error("Attempt claim has lost its execution lease");
+		const task = this.requireTask(attempt.taskId);
+		return {
+			task,
+			agent: this.requireAgent(attempt.agentId),
+			attempt,
+			lease: {
+				agentId: row.agent_id,
+				taskId: row.task_id,
+				workerId: row.worker_id,
+				executionId: row.execution_id,
+				fencingToken: row.fencing_token,
+				expiresAt: row.expires_at,
+			},
+			deadlineAt: new Date(Date.parse(task.createdAt) + task.budget.maxWallTimeMinutes * 60_000).toISOString(),
+		};
+	}
+
+	getAttempt(attemptId: string): AttemptRecord | undefined {
+		const row = this.database.prepare("SELECT * FROM attempts WHERE id = ?").get(attemptId) as
+			| {
+					id: string;
+					task_id: string;
+					agent_id: string;
+					session_id: string | null;
+					ordinal: number;
+					state: string;
+					runtime_snapshot_json: string;
+					runtime_snapshot_sha256: string;
+					started_at: string;
+					settled_at: string | null;
+					turn_count: number;
+					cost_usd: number;
+					error_code: string | null;
+			  }
+			| undefined;
+		if (!row) return undefined;
+		const runtimeSnapshot = parseObject(row.runtime_snapshot_json, "attempt runtime snapshot");
+		assertSchema("runtimeSnapshot", runtimeSnapshot);
+		return {
+			id: row.id,
+			taskId: row.task_id,
+			agentId: row.agent_id,
+			...(row.session_id === null ? {} : { sessionId: row.session_id }),
+			ordinal: row.ordinal,
+			state: row.state,
+			runtimeSnapshot: runtimeSnapshot as unknown as AttemptRecord["runtimeSnapshot"],
+			runtimeSnapshotSha256: row.runtime_snapshot_sha256,
+			startedAt: row.started_at,
+			...(row.settled_at === null ? {} : { settledAt: row.settled_at }),
+			turnCount: row.turn_count,
+			costUsd: row.cost_usd,
+			...(row.error_code === null ? {} : { errorCode: row.error_code }),
+		};
 	}
 
 	getLatestAttempt(agentId: string): AttemptRecord | undefined {
@@ -1566,7 +2111,11 @@ export class SqliteTaskStore {
 		}));
 	}
 
-	beginRecovery(agentId: string): { execution: StaleExecution; unfinishedTools: UnfinishedToolExecution[] } {
+	beginRecovery(agentId: string): {
+		execution: StaleExecution;
+		unfinishedTools: UnfinishedToolExecution[];
+		unfinishedProviderRequests: UnfinishedProviderRequest[];
+	} {
 		return executeTransaction(this.database, () => {
 			const row = this.database.prepare("SELECT * FROM leases WHERE agent_id = ?").get(agentId) as
 				| LeaseRow
@@ -1597,7 +2146,11 @@ export class SqliteTaskStore {
 					now,
 				);
 			}
-			return { execution, unfinishedTools: this.listUnfinishedToolsInternal(row.task_id, agentId) };
+			return {
+				execution,
+				unfinishedTools: this.listUnfinishedToolsInternal(row.task_id, agentId),
+				unfinishedProviderRequests: this.listUnfinishedProviderRequestsInternal(row.task_id, agentId),
+			};
 		});
 	}
 
@@ -1703,6 +2256,160 @@ export class SqliteTaskStore {
 				now,
 			);
 			return id;
+		});
+	}
+
+	startProviderRequest(
+		lease: AgentLease,
+		attemptId: string,
+		input: {
+			providerRequestId: string;
+			provider: string;
+			modelId: string;
+			requestKind: string;
+			worstCaseCostUsd?: number;
+		},
+	): string {
+		return executeTransaction(this.database, () => {
+			this.assertLeaseInternal(lease);
+			const task = this.requireTask(lease.taskId);
+			const reserved = this.database
+				.prepare(
+					`SELECT COALESCE(SUM(reserved_turns), 0) AS turns, COALESCE(SUM(reserved_cost_usd), 0) AS cost
+					 FROM budget_reservations WHERE task_id = ? AND state = 'active'`,
+				)
+				.get(task.id) as { turns: number; cost: number };
+			if (task.totalTurns + reserved.turns + 1 > task.budget.maxTurns) throw new Error("Task turn budget exceeded");
+			if (
+				task.budget.maxCostUsd !== undefined &&
+				(input.worstCaseCostUsd === undefined ||
+					task.totalCostUsd + reserved.cost + input.worstCaseCostUsd > task.budget.maxCostUsd)
+			) {
+				throw new Error(
+					input.worstCaseCostUsd === undefined
+						? "Hard cost budget requires a reliable worst-case cost"
+						: "Task cost budget exceeded",
+				);
+			}
+			const reservationId = randomUUID();
+			const now = this.now().toISOString();
+			this.database
+				.prepare(
+					`INSERT INTO budget_reservations
+					 (id, task_id, agent_id, attempt_id, provider_request_id, reserved_turns, reserved_cost_usd, state, created_at)
+					 VALUES (?, ?, ?, ?, ?, 1, ?, 'active', ?)`,
+				)
+				.run(
+					reservationId,
+					task.id,
+					lease.agentId,
+					attemptId,
+					input.providerRequestId,
+					input.worstCaseCostUsd ?? null,
+					now,
+				);
+			this.appendEventInternal(
+				task.id,
+				lease.agentId,
+				attemptId,
+				"BudgetReserved",
+				{
+					reservationId,
+					providerRequestId: input.providerRequestId,
+					schemaVersion: 1,
+				},
+				now,
+			);
+			this.appendEventInternal(
+				task.id,
+				lease.agentId,
+				attemptId,
+				"ProviderRequestStarted",
+				{
+					providerRequestId: input.providerRequestId,
+					reservationId,
+					provider: input.provider,
+					modelId: input.modelId,
+					requestKind: input.requestKind,
+					executionId: lease.executionId,
+					fencingToken: lease.fencingToken,
+					schemaVersion: 1,
+				},
+				now,
+			);
+			return reservationId;
+		});
+	}
+
+	finishProviderRequest(
+		lease: AgentLease,
+		attemptId: string,
+		input: {
+			providerRequestId: string;
+			reservationId: string;
+			actualCostUsd: number;
+			usage: Record<string, unknown>;
+			stopReason: string;
+		},
+	): void {
+		executeTransaction(this.database, () => {
+			this.assertLeaseInternal(lease);
+			const reservation = this.database
+				.prepare(
+					`SELECT task_id, agent_id, attempt_id, provider_request_id FROM budget_reservations
+					 WHERE id = ? AND state = 'active'`,
+				)
+				.get(input.reservationId) as
+				| { task_id: string; agent_id: string; attempt_id: string; provider_request_id: string }
+				| undefined;
+			if (
+				!reservation ||
+				reservation.task_id !== lease.taskId ||
+				reservation.agent_id !== lease.agentId ||
+				reservation.attempt_id !== attemptId ||
+				reservation.provider_request_id !== input.providerRequestId
+			)
+				throw new Error(`Active Provider reservation not found: ${input.reservationId}`);
+			const now = this.now().toISOString();
+			this.database
+				.prepare("UPDATE budget_reservations SET state = 'settled', settled_at = ? WHERE id = ?")
+				.run(now, input.reservationId);
+			this.database
+				.prepare(
+					"UPDATE tasks SET total_turns = total_turns + 1, total_cost_usd = total_cost_usd + ?, updated_at = ? WHERE id = ?",
+				)
+				.run(input.actualCostUsd, now, lease.taskId);
+			this.database
+				.prepare("UPDATE attempts SET turn_count = turn_count + 1, cost_usd = cost_usd + ? WHERE id = ?")
+				.run(input.actualCostUsd, attemptId);
+			this.appendEventInternal(
+				lease.taskId,
+				lease.agentId,
+				attemptId,
+				"ProviderRequestFinished",
+				{
+					providerRequestId: input.providerRequestId,
+					reservationId: input.reservationId,
+					actualCostUsd: input.actualCostUsd,
+					usage: input.usage,
+					usageKind: "exact",
+					stopReason: input.stopReason,
+					schemaVersion: 1,
+				},
+				now,
+			);
+			this.appendEventInternal(
+				lease.taskId,
+				lease.agentId,
+				attemptId,
+				"BudgetSettled",
+				{
+					reservationId: input.reservationId,
+					actualCostUsd: input.actualCostUsd,
+					schemaVersion: 1,
+				},
+				now,
+			);
 		});
 	}
 
@@ -2171,13 +2878,8 @@ export class SqliteTaskStore {
 	private assertCompletionReady(taskId: string): void {
 		const task = this.requireTask(taskId);
 		for (const criterion of task.acceptance) {
-			const passed = this.database
-				.prepare(
-					`SELECT id FROM task_events WHERE task_id = ? AND type = 'AcceptancePassed'
-					 AND json_extract(payload_json, '$.criterionId') = ? ORDER BY seq DESC LIMIT 1`,
-				)
-				.get(taskId, criterion.id);
-			if (!passed) throw new Error(`Acceptance criterion has not passed: ${criterion.id}`);
+			if (!this.hasPassedAcceptance(taskId, criterion.id))
+				throw new Error(`Acceptance criterion has not passed: ${criterion.id}`);
 		}
 		const requiredIncomplete = this.database
 			.prepare(
@@ -2250,6 +2952,25 @@ export class SqliteTaskStore {
 				...(typeof payload.fencingToken === "number" ? { fencingToken: payload.fencingToken } : {}),
 			};
 		});
+	}
+
+	private listUnfinishedProviderRequestsInternal(taskId: string, agentId: string): UnfinishedProviderRequest[] {
+		return (
+			this.database
+				.prepare(
+					`SELECT id, attempt_id, provider_request_id FROM budget_reservations
+					 WHERE task_id = ? AND agent_id = ? AND state = 'active' ORDER BY created_at`,
+				)
+				.all(taskId, agentId) as unknown as Array<{
+				id: string;
+				attempt_id: string;
+				provider_request_id: string;
+			}>
+		).map((row) => ({
+			reservationId: row.id,
+			attemptId: row.attempt_id,
+			providerRequestId: row.provider_request_id,
+		}));
 	}
 
 	private appendEventInternal(
