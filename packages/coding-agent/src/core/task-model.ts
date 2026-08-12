@@ -8,6 +8,8 @@ export interface TaskModelIdentity {
 	id: string;
 }
 
+export class TaskModelConfigurationError extends Error {}
+
 /** Resolve and pin the exact model identity before an unattended Task enters the queue. */
 export async function resolveTaskModel(options: {
 	agentDir: string;
@@ -33,7 +35,7 @@ export async function resolveTaskModel(options: {
 		if (resolved.error) throw new Error(resolved.error);
 		if (!resolved.model) throw new Error(`无法解析模型 ${options.provider}/${options.model}`);
 		if (!modelRuntime.hasConfiguredAuth(resolved.model.provider)) {
-			throw new Error(`Provider ${resolved.model.provider} 尚未配置凭据，无法启动后台 Task`);
+			throw new TaskModelConfigurationError(`Provider ${resolved.model.provider} 尚未配置凭据`);
 		}
 		return { provider: resolved.model.provider, id: resolved.model.id };
 	}
@@ -48,7 +50,7 @@ export async function resolveTaskModel(options: {
 			? configuredDefault
 			: modelRuntime.getAvailableSnapshot()[0];
 	if (!selected) {
-		throw new Error("未找到已配置凭据的模型。请先登录 Provider，或同时传入 --provider 和 --model");
+		throw new TaskModelConfigurationError("未找到已配置凭据的模型");
 	}
 	return { provider: selected.provider, id: selected.id };
 }
