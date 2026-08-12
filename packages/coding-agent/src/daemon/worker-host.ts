@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, rmSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
+import type { TaskRunContext } from "../core/task-run-context.ts";
+import { getWorkerStartup } from "../core/worker-startup.ts";
 import { toJsonEvent } from "../modes/json-event.ts";
 import { SequencedEventBuffer } from "./event-stream.ts";
 import type { EventCursor } from "./protocol.ts";
@@ -46,12 +48,13 @@ function requiredEnvironment(name: string): string {
 
 export async function runResidentWorkerFromEnvironment(
 	runtime: AgentSessionRuntime,
+	taskRunContext: TaskRunContext | undefined,
 	initialMessage?: string,
 	initialImages?: ImageContent[],
 ): Promise<void> {
-	const token = readFileSync(3, "utf8").trim();
-	if (token === "") throw new Error("Resident worker received an empty startup token");
+	const token = getWorkerStartup().token;
 	const startedAt = requiredEnvironment("KARISSA_WORKER_STARTED_AT");
+	if (!taskRunContext) throw new Error("Resident worker has no claimed Task run context");
 	await runResidentWorkerHost(runtime, {
 		runDirectory: requiredEnvironment("KARISSA_RUN_DIRECTORY"),
 		token,
@@ -64,8 +67,9 @@ export async function runResidentWorkerFromEnvironment(
 		descriptor: {
 			schemaVersion: 1,
 			workerId: requiredEnvironment("KARISSA_WORKER_ID"),
-			agentId: requiredEnvironment("KARISSA_AGENT_RUN_ID"),
-			taskId: requiredEnvironment("KARISSA_TASK_RUN_ID"),
+			executionId: requiredEnvironment("KARISSA_EXECUTION_ID"),
+			agentId: taskRunContext.agentId,
+			taskId: taskRunContext.taskId,
 			activeSessionId: runtime.session.sessionId,
 			...(runtime.session.sessionFile === undefined ? {} : { sessionPath: runtime.session.sessionFile }),
 			pid: process.pid,
@@ -74,6 +78,10 @@ export async function runResidentWorkerFromEnvironment(
 			privateSocketPath: requiredEnvironment("KARISSA_WORKER_SOCKET"),
 			tokenSha256: createHash("sha256").update(token).digest("hex"),
 			workspaceRoot: runtime.cwd,
+			...(process.env.KARISSA_SANDBOX_ID ? { sandboxId: process.env.KARISSA_SANDBOX_ID } : {}),
+			...(process.env.KARISSA_SANDBOX_PROFILE_SHA256
+				? { sandboxProfileSha256: process.env.KARISSA_SANDBOX_PROFILE_SHA256 }
+				: {}),
 			lifecycle: "resident",
 			state: "starting",
 			heartbeatAt: startedAt,

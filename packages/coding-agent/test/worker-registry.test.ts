@@ -18,6 +18,7 @@ describe("WorkerRegistry", () => {
 		registry.write({
 			schemaVersion: 1,
 			workerId: "worker-1",
+			executionId: "execution-1",
 			agentId: "agent-1",
 			taskId: "task-1",
 			activeSessionId: "session-1",

@@ -14,9 +14,12 @@
 
 This is the home of the Pi agent harness project including our self extensible coding agent.
 
+Karissa is the repository's durable long-running agent surface. It adds a Task control plane, resident Workers, verified completion, recovery, JSONL RPC, and an unattended execution sandbox on top of the Pi session runtime.
+
 * **[@earendil-works/pi-coding-agent](packages/coding-agent)**: Interactive coding agent CLI
 * **[@earendil-works/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
 * **[@earendil-works/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
+* **[@karissa/long-tasks](packages/long-tasks)**: Durable Task, Attempt, evidence, recovery, and completion domain
 
 To learn more about Pi:
 

@@ -16,6 +16,7 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { sanitizeUnattendedEnvironment } from "../secret-environment.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -160,6 +161,14 @@ export interface BashSpawnContext {
 
 export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
 
+/** Prevent model-controlled subprocesses from inheriting daemon/provider credentials. */
+export function sanitizeUnattendedShellEnvironment(
+	environment: NodeJS.ProcessEnv,
+	unattended = process.env.KARISSA_DAEMON_WORKER === "1",
+): NodeJS.ProcessEnv {
+	return unattended ? sanitizeUnattendedEnvironment(environment) : { ...environment };
+}
+
 function resolveSpawnContext(
 	command: string,
 	cwd: string,
@@ -167,7 +176,7 @@ function resolveSpawnContext(
 	exposeSessionEnvironment: boolean,
 	ctx: ExtensionContext | undefined,
 ): BashSpawnContext {
-	const env = { ...getShellEnv() };
+	const env = sanitizeUnattendedShellEnvironment(getShellEnv());
 	delete env.PI_SESSION_ID;
 	delete env.PI_SESSION_FILE;
 	delete env.PI_PROVIDER;

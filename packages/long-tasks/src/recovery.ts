@@ -30,10 +30,18 @@ export class RecoveryEngine {
 	}
 
 	async recover(agentId: string): Promise<RecoveryResult> {
-		const recovery = this.store.beginRecovery(agentId);
-		if (!(await this.adapter.stopExecution(recovery.execution))) {
-			this.store.finishRecovery(agentId, false, "old_execution_not_stopped");
+		const execution = this.store.listExpiredExecutions().find((candidate) => candidate.agentId === agentId);
+		if (!execution) throw new Error(`No expired execution to recover for Agent ${agentId}`);
+		if (!(await this.adapter.stopExecution(execution))) {
 			return { agentId, recovered: false, reason: "old_execution_not_stopped" };
+		}
+		const recovery = this.store.beginRecovery(agentId);
+
+		const providerRequest = recovery.unfinishedProviderRequests[0];
+		if (providerRequest) {
+			const reason = `provider_outcome_unknown:${providerRequest.providerRequestId}`;
+			this.store.finishRecovery(agentId, false, reason);
+			return { agentId, recovered: false, reason };
 		}
 
 		for (const tool of recovery.unfinishedTools) {

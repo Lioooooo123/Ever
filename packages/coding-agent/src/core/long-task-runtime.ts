@@ -1,30 +1,39 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import {
 	type AgentLease,
+	type AttemptOutcome,
+	type ClaimedAttempt,
 	ContinuationController,
 	type ContinuationPolicy,
 	compareRuntimeSnapshots,
 	defaultToolEffect,
-	type InboxMessage,
+	type EvidenceRef,
+	ExecutionPolicy,
 	type Progress,
 	RecoveryEngine,
 	type RecoveryResult,
 	type RuntimeSnapshot,
-	resolveAgentExecutionContext,
 	runtimeSnapshotHash,
 	SqliteTaskStore,
+	TaskContextBuilder,
+	VerifiedChangeBundle,
 } from "@karissa/long-tasks";
 import { VERSION } from "../config.ts";
-import type { AgentSessionEvent } from "./agent-session.ts";
+import { WorkerRegistry } from "../daemon/worker-registry.ts";
+import type {
+	AgentSessionLifecycle,
+	AgentSessionLifecycleDecision,
+	AgentSessionLifecycleEvent,
+} from "./agent-session-lifecycle.ts";
 import type { AgentSessionRuntime } from "./agent-session-runtime.ts";
 
 function sha256(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-function createRuntimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: boolean): RuntimeSnapshot {
+function runtimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: boolean): RuntimeSnapshot {
 	const model = runtime.session.model;
 	return {
 		karissaVersion: VERSION,
@@ -43,17 +52,381 @@ function createRuntimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: bo
 			sha256: sha256(identity),
 		})),
 		toolPolicySha256: sha256(JSON.stringify([...runtime.session.getActiveToolNames()].sort())),
-		sandboxPolicySha256: sha256(JSON.stringify({ sandboxRequired })),
+		sandboxPolicySha256:
+			process.env.KARISSA_SANDBOX_PROFILE_SHA256 ?? sha256(JSON.stringify({ sandboxRequired, backend: "host" })),
 	};
 }
 
-export interface LongTaskRuntimeHandle {
-	drainAndClose(): Promise<void>;
+function xml(value: string): string {
+	return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-const preCompactionCheckpoints = new Map<string, () => Promise<void>>();
-const providerBudgetReservations = new Map<string, () => void>();
-const inboxClaims = new Map<string, () => InboxMessage[]>();
+function usageRecord(value: object): Record<string, unknown> {
+	return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function outcome(taskId: string, attemptId: string, state: string, reason?: string): AttemptOutcome {
+	if (state === "completed") return { kind: "completed", taskId, attemptId };
+	if (state === "failed") return { kind: "failed", taskId, attemptId, reason: reason ?? "Task failed" };
+	if (state === "unknown_outcome")
+		return { kind: "unknown_outcome", taskId, attemptId, reason: reason ?? "Execution outcome is unknown" };
+	if (state === "waiting_input" || state === "waiting_external")
+		return { kind: "waiting", taskId, attemptId, reason: reason ?? state };
+	if (state === "paused") return { kind: "paused", taskId, attemptId, reason: reason ?? "Task paused" };
+	return { kind: "settled", taskId, attemptId };
+}
+
+export interface LongTaskRuntimeHandle {
+	drainAndClose(): Promise<AttemptOutcome>;
+}
+
+interface NativeLongTaskAgentOptions {
+	runtime: AgentSessionRuntime;
+	store: SqliteTaskStore;
+	continuationPolicy: ContinuationPolicy;
+	leaseSeconds: number;
+	heartbeatSeconds: number;
+	stopSignal: AbortSignal;
+	onReady?: () => void;
+	resident: boolean;
+	artifactsRoot: string;
+}
+
+/** The only module that joins Pi Session execution to durable Task facts. */
+class NativeLongTaskAgent implements AgentSessionLifecycle {
+	private readonly runtime: AgentSessionRuntime;
+	private readonly store: SqliteTaskStore;
+	private readonly continuationPolicy: ContinuationPolicy;
+	private readonly leaseSeconds: number;
+	private readonly heartbeatSeconds: number;
+	private readonly stopSignal: AbortSignal;
+	private readonly onReady?: () => void;
+	private readonly resident: boolean;
+	private readonly artifactsRoot: string;
+	private claim?: ClaimedAttempt;
+	private lease?: AgentLease;
+	private deadlineAt?: string;
+	private heartbeat?: ReturnType<typeof setInterval>;
+	private heartbeatError?: Error;
+	private readonly reservations = new Map<string, string>();
+	private consumedMessageIds = new Set<string>();
+	private progress: Progress = {
+		summary: "Attempt claimed; awaiting the next settled Turn.",
+		completedItems: [],
+		nextActions: ["Continue working toward verified Task acceptance."],
+		blockers: [],
+		filesRead: [],
+		filesModified: [],
+		verification: [],
+		consumedMessageIds: [],
+		outboundMessageIds: [],
+	};
+	private evidence: EvidenceRef[] = [];
+
+	constructor(options: NativeLongTaskAgentOptions) {
+		this.runtime = options.runtime;
+		this.store = options.store;
+		this.continuationPolicy = options.continuationPolicy;
+		this.leaseSeconds = options.leaseSeconds;
+		this.heartbeatSeconds = options.heartbeatSeconds;
+		this.stopSignal = options.stopSignal;
+		this.onReady = options.onReady;
+		this.resident = options.resident;
+		this.artifactsRoot = options.artifactsRoot;
+	}
+
+	async run(claim: ClaimedAttempt): Promise<AttemptOutcome> {
+		if (this.claim) throw new Error("NativeLongTaskAgent can run only one Attempt");
+		this.claim = claim;
+		const context = this.store.resolveAttemptClaim(claim);
+		this.lease = context.lease;
+		this.deadlineAt = context.deadlineAt;
+		const checkpoint = this.store.getLatestCheckpoint(context.agent.id);
+		if (checkpoint) {
+			this.progress = { ...checkpoint.progress, consumedMessageIds: [], outboundMessageIds: [] };
+			this.evidence = checkpoint.evidence;
+			if (checkpoint.sessionCheckpoint.sessionId === this.runtime.session.sessionId)
+				await this.runtime.restoreCheckpoint(checkpoint.sessionCheckpoint);
+		}
+		const uninstallLifecycle = this.runtime.installLifecycle(this);
+		this.heartbeat = setInterval(() => this.renewLease(), this.heartbeatSeconds * 1000);
+		try {
+			this.onReady?.();
+			await new Promise<void>((resolve) => {
+				if (this.stopSignal.aborted) resolve();
+				else this.stopSignal.addEventListener("abort", () => resolve(), { once: true });
+			});
+		} finally {
+			if (this.heartbeat) clearInterval(this.heartbeat);
+			uninstallLifecycle();
+		}
+		let task = this.store.requireTask(context.task.id);
+		if (!this.heartbeatError) {
+			try {
+				this.store.releaseLease(this.requireLease());
+				const agent = this.store.requireAgent(context.agent.id);
+				if (task.state === "running" && agent.state === "running")
+					this.store.transitionAgent(agent.id, "queued", "attempt_settled");
+				task = this.store.requireTask(context.task.id);
+			} catch (error) {
+				this.heartbeatError = error instanceof Error ? error : new Error(String(error));
+			}
+		}
+		if (this.heartbeatError) throw this.heartbeatError;
+		if (task.state === "completed") {
+			const bundle = new VerifiedChangeBundle({ store: this.store, artifactsRoot: this.artifactsRoot }).rebuild(
+				task.id,
+			);
+			this.store.appendTaskEvent(task.id, "VerifiedChangeBundleCreated", {
+				manifestPath: bundle.manifestPath,
+				manifestSha256: bundle.manifestSha256,
+				verified: bundle.manifest.verified,
+				schemaVersion: 1,
+			});
+		}
+		return outcome(task.id, context.attempt.id, task.state, task.stateReason);
+	}
+
+	async handle(event: AgentSessionLifecycleEvent): Promise<AgentSessionLifecycleDecision | undefined> {
+		if (
+			event.type === "before_turn" ||
+			event.type === "before_request" ||
+			event.type === "before_tool" ||
+			event.type === "before_compaction"
+		)
+			this.assertRunnable(event.type);
+		const context = this.store.resolveAttemptClaim(this.requireClaim());
+		if (event.type === "before_turn") {
+			const checkpoint = this.store.getLatestCheckpoint(context.agent.id);
+			const taskContext = new TaskContextBuilder().build({
+				task: context.task,
+				agent: context.agent,
+				progress: checkpoint?.progress ?? this.progress,
+				evidence: checkpoint?.evidence ?? this.evidence,
+				agents: [context.agent],
+			});
+			const inbox = this.store.claimInbox(context.agent.id, this.requireLease(), 20);
+			for (const message of inbox) this.consumedMessageIds.add(message.id);
+			const inboxContext = inbox.length
+				? `\n<agent_inbox>\n${inbox
+						.map(
+							(message) =>
+								`<message id="${xml(message.id)}" from="${xml(message.senderAgentId)}" type="${xml(message.type)}">${xml(message.body)}</message>`,
+						)
+						.join("\n")}\n</agent_inbox>`
+				: "";
+			return { systemPrompt: `${event.baseSystemPrompt}\n\n${taskContext}${inboxContext}` };
+		}
+		if (event.type === "before_request") {
+			const rates = [event.model.cost, ...(event.model.cost.tiers ?? [])];
+			const worstCaseCostUsd =
+				(event.model.contextWindow * Math.max(...rates.map((rate) => rate.input + rate.cacheWrite)) +
+					event.model.maxTokens * Math.max(...rates.map((rate) => rate.output))) /
+				1_000_000;
+			const reservationId = this.store.startProviderRequest(this.requireLease(), context.attempt.id, {
+				providerRequestId: event.requestId,
+				provider: event.model.provider,
+				modelId: event.model.id,
+				requestKind: event.kind,
+				...(context.task.budget.maxCostUsd === undefined ? {} : { worstCaseCostUsd }),
+			});
+			this.reservations.set(event.requestId, reservationId);
+			return undefined;
+		}
+		if (event.type === "after_response") {
+			const reservationId = this.reservations.get(event.requestId);
+			if (!reservationId) throw new Error(`Provider request was not reserved: ${event.requestId}`);
+			try {
+				this.store.finishProviderRequest(this.requireLease(), context.attempt.id, {
+					providerRequestId: event.requestId,
+					reservationId,
+					actualCostUsd: event.usage.cost.total,
+					usage: usageRecord(event.usage),
+					stopReason: event.message.stopReason,
+				});
+			} catch (error) {
+				const reason = `Provider outcome could not be persisted: ${error instanceof Error ? error.message : String(error)}`;
+				try {
+					this.store.markProviderOutcomeUnknown(this.requireLease(), context.attempt.id, event.requestId, reason);
+				} catch {
+					// The active reservation remains as the durable recovery barrier.
+				}
+				throw new Error(reason, { cause: error });
+			}
+			this.reservations.delete(event.requestId);
+			return undefined;
+		}
+		if (event.type === "before_tool") {
+			const effect = defaultToolEffect(event.toolName);
+			const paths = [event.input.path, event.input.cwd]
+				.filter((value): value is string => typeof value === "string")
+				.map((path) => (isAbsolute(path) ? path : resolve(this.runtime.cwd, path)));
+			const decision = new ExecutionPolicy().authorizeTool(
+				context.agent,
+				{ name: event.toolName, paths, effect },
+				{
+					sandboxAvailable: process.env.KARISSA_UNATTENDED_SANDBOX === "1",
+					unattended: process.env.KARISSA_DAEMON_WORKER === "1",
+					unsafeNoSandbox: process.env.KARISSA_UNSAFE_NO_SANDBOX === "1",
+				},
+			);
+			if (!decision.allowed) {
+				this.store.appendAgentEvent(this.requireLease(), context.attempt.id, "SecurityPolicyDenied", {
+					operationId: event.operationId,
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
+					code: decision.code,
+					reason: decision.reason,
+					schemaVersion: 1,
+				});
+				return { block: true, reason: decision.reason, terminate: true };
+			}
+			this.store.startToolExecution(this.requireLease(), context.attempt.id, {
+				operationId: event.operationId,
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				inputSha256: sha256(JSON.stringify(event.input)),
+				effect,
+				paths,
+			});
+			return undefined;
+		}
+		if (event.type === "after_tool") {
+			try {
+				this.store.finishToolExecution(this.requireLease(), context.attempt.id, {
+					operationId: event.operationId,
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
+					isError: event.isError,
+					summary: event.resultSummary,
+				});
+			} catch (error) {
+				const reason = `Tool result could not be persisted: ${error instanceof Error ? error.message : String(error)}`;
+				try {
+					this.store.markExecutionOutcomeUnknown(this.requireLease(), context.attempt.id, reason);
+				} catch {
+					// Unfinished ToolStarted remains as the durable recovery barrier.
+				}
+				throw new Error(reason, { cause: error });
+			}
+			return undefined;
+		}
+		if (event.type === "before_compaction") {
+			await this.commitCheckpoint(true);
+			this.store.appendAgentEvent(this.requireLease(), context.attempt.id, "CompactionStarted", {
+				reason: event.reason,
+				schemaVersion: 1,
+			});
+			return undefined;
+		}
+		if (event.type === "after_compaction") {
+			this.store.appendAgentEvent(this.requireLease(), context.attempt.id, "CompactionFinished", {
+				reason: event.reason,
+				entryId: event.entryId,
+				schemaVersion: 1,
+			});
+			return undefined;
+		}
+		await this.commitCheckpoint(false);
+		this.assertRunnable("continuation decision");
+		this.lease = this.store.renewLease(this.requireLease(), this.leaseSeconds);
+		const checkpoint = this.store.getLatestCheckpoint(context.agent.id);
+		if (checkpoint) {
+			const continuation = new ContinuationController(this.store, this.continuationPolicy).evaluate({
+				lease: this.requireLease(),
+				attemptId: context.attempt.id,
+				settledTurnIndex: checkpoint.sessionCheckpoint.settledTurnIndex,
+				progress: this.progress,
+			});
+			if (!continuation.duplicate && continuation.decision.nextPrompt && this.resident) {
+				const prompt = continuation.decision.nextPrompt;
+				setTimeout(() => {
+					if (this.stopSignal.aborted) return;
+					void this.runtime.session.prompt(prompt).catch((error) => {
+						this.store.appendTaskEvent(context.task.id, "ContinuationPromptFailed", {
+							decisionId: continuation.decision.id,
+							message: error instanceof Error ? error.message : String(error),
+							schemaVersion: 1,
+						});
+						const task = this.store.requireTask(context.task.id);
+						if (task.state === "running")
+							this.store.transitionTask(task.id, "waiting_external", "continuation_prompt_failed");
+					});
+				}, 0);
+			}
+		}
+		return undefined;
+	}
+
+	private assertRunnable(boundary: string): void {
+		if (this.heartbeatError) throw this.heartbeatError;
+		if (this.deadlineAt && Date.now() >= Date.parse(this.deadlineAt)) {
+			const context = this.store.resolveAttemptClaim(this.requireClaim());
+			if (context.task.state === "running")
+				this.store.transitionTask(context.task.id, "paused", "deadline_exceeded");
+			throw new Error(`Task wall-time deadline exceeded before ${boundary}`);
+		}
+	}
+
+	private renewLease(): void {
+		try {
+			this.assertRunnable("lease renewal");
+			const context = this.store.resolveAttemptClaim(this.requireClaim());
+			if (["paused", "cancelled"].includes(context.agent.state)) {
+				void this.runtime.session.abort();
+				return;
+			}
+			this.lease = this.store.renewLease(this.requireLease(), this.leaseSeconds);
+		} catch (error) {
+			this.heartbeatError = error instanceof Error ? error : new Error(String(error));
+			void this.runtime.session.abort();
+		}
+	}
+
+	private async commitCheckpoint(beforeCompaction: boolean): Promise<void> {
+		const context = this.store.resolveAttemptClaim(this.requireClaim());
+		const update = this.store.getPendingCheckpointUpdate(context.task.id, context.agent.id);
+		if (update) {
+			this.progress = {
+				...this.progress,
+				summary: update.summary,
+				completedItems: update.completedItems,
+				...(update.currentItem ? { currentItem: update.currentItem } : {}),
+				nextActions: update.nextActions,
+			};
+			this.evidence = update.evidence;
+		}
+		const checkpoint = beforeCompaction
+			? await this.runtime.createPreCompactionCheckpoint()
+			: await this.runtime.createCheckpoint();
+		const checkpointProgress = { ...this.progress, consumedMessageIds: [...this.consumedMessageIds] };
+		this.store.commitCheckpoint({
+			taskId: context.task.id,
+			agentId: context.agent.id,
+			attemptId: context.attempt.id,
+			lease: this.requireLease(),
+			sessionCheckpoint: {
+				...checkpoint,
+				runtimeSnapshotSha256: context.attempt.runtimeSnapshotSha256,
+			},
+			progress: checkpointProgress,
+			evidence: this.evidence,
+			workspaceSnapshot: this.store.getLatestCheckpoint(context.agent.id)?.workspaceSnapshot ?? {},
+		});
+		this.progress = { ...checkpointProgress, consumedMessageIds: [] };
+		this.consumedMessageIds.clear();
+	}
+
+	private requireClaim(): ClaimedAttempt {
+		if (!this.claim) throw new Error("NativeLongTaskAgent has no active Attempt claim");
+		return this.claim;
+	}
+
+	private requireLease(): AgentLease {
+		if (!this.lease) throw new Error("NativeLongTaskAgent has no active lease");
+		return this.lease;
+	}
+}
 
 function processExists(pid: number): boolean {
 	try {
@@ -64,49 +437,43 @@ function processExists(pid: number): boolean {
 	}
 }
 
-function executionExists(pid: number, processGroup: boolean): boolean {
-	return processExists(processGroup ? -pid : pid);
-}
-
-export async function recoverExpiredLongTaskExecutions(store: SqliteTaskStore): Promise<RecoveryResult[]> {
-	const recovery = new RecoveryEngine(store, {
+export async function recoverExpiredLongTaskExecutions(
+	store: SqliteTaskStore,
+	workerRegistry?: WorkerRegistry,
+): Promise<RecoveryResult[]> {
+	return new RecoveryEngine(store, {
 		async stopExecution(execution) {
-			if (execution.sandboxId) return false;
 			if (execution.pid === undefined) return false;
-			const processGroup = execution.workerId.startsWith("daemon:");
-			if (!executionExists(execution.pid, processGroup)) return true;
-			// A numeric PID can be reused after its original process exits. Without a
-			// non-reusable process handle, fail closed instead of signaling a process
-			// whose identity cannot be proven.
-			return false;
+			if (workerRegistry) {
+				const descriptor = workerRegistry
+					.list()
+					.find(
+						(candidate) =>
+							candidate.agentId === execution.agentId &&
+							candidate.workerId === execution.workerId &&
+							candidate.executionId === execution.executionId &&
+							candidate.pid === execution.pid &&
+							candidate.sandboxId === execution.sandboxId,
+					);
+				if (!descriptor) return false;
+				if (descriptor.state === "exited") return true;
+				if (!processExists(descriptor.pid)) {
+					workerRegistry.write({ ...descriptor, state: "exited", heartbeatAt: new Date().toISOString() });
+					return true;
+				}
+				return false;
+			}
+			if (!execution.workerId.startsWith("foreground:")) return false;
+			return !processExists(execution.pid);
 		},
-	});
-	return recovery.recoverExpired();
-}
-
-export async function checkpointLongTaskBeforeCompaction(sessionId: string): Promise<boolean> {
-	const checkpoint = preCompactionCheckpoints.get(sessionId);
-	if (!checkpoint) return true;
-	try {
-		await checkpoint();
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-export function reserveLongTaskProviderBudget(sessionId: string): void {
-	providerBudgetReservations.get(sessionId)?.();
-}
-
-export function claimLongTaskInbox(sessionId: string): InboxMessage[] {
-	return inboxClaims.get(sessionId)?.() ?? [];
+	}).recoverExpired();
 }
 
 export async function attachLongTaskRuntime(
 	runtime: AgentSessionRuntime,
 	agentDir: string,
 	taskId: string,
+	agentId: string,
 	acceptRuntimeDrift: boolean,
 	continuationPolicy: ContinuationPolicy,
 ): Promise<LongTaskRuntimeHandle> {
@@ -114,35 +481,25 @@ export async function attachLongTaskRuntime(
 		databasePath: join(agentDir, "long-tasks.sqlite"),
 		artifactsRoot: join(agentDir, "tasks"),
 	});
-	const executionContext = resolveAgentExecutionContext(store, taskId, process.env.KARISSA_AGENT_RUN_ID);
-	const { agent: actor, task } = executionContext;
-	if (realpathSync(runtime.cwd) !== executionContext.canonicalWorkspaceRoot) {
+	store.requireTask(taskId);
+	const actor = store.listAgents(taskId).find((agent) => agent.id === agentId);
+	if (!actor) {
 		store.close();
-		throw new Error(
-			`Agent workspace mismatch: expected ${executionContext.canonicalWorkspaceRoot}, got ${runtime.cwd}`,
-		);
+		throw new Error(`Task ${taskId} has no main Agent`);
 	}
-	const recoveryResults = await recoverExpiredLongTaskExecutions(store);
-	const blockedRecovery = recoveryResults.find((result) => !result.recovered);
+	if (realpathSync(runtime.cwd) !== realpathSync(actor.workspaceRoot)) {
+		store.close();
+		throw new Error(`Agent workspace mismatch: expected ${actor.workspaceRoot}, got ${runtime.cwd}`);
+	}
+	const runDirectory = process.env.KARISSA_RUN_DIRECTORY;
+	const blockedRecovery = (
+		await recoverExpiredLongTaskExecutions(store, runDirectory ? new WorkerRegistry(runDirectory) : undefined)
+	).find((result) => result.agentId === actor.id && !result.recovered);
 	if (blockedRecovery) {
 		store.close();
 		throw new Error(`Recovery blocked for Agent ${blockedRecovery.agentId}: ${blockedRecovery.reason ?? "unknown"}`);
 	}
-	const recoveredActor = store.requireAgent(actor.id);
-	if (actor.kind === "main") {
-		if (task.state === "queued") {
-			store.transitionTask(taskId, "running", "foreground_worker_started");
-		} else if (task.state !== "running" || recoveredActor.state !== "queued") {
-			store.close();
-			throw new Error(`Task ${taskId} is not runnable from state ${task.state}`);
-		}
-	} else if (task.state !== "running") {
-		store.close();
-		throw new Error(`Subagent cannot run while Task is ${task.state}`);
-	}
-
-	const snapshot = createRuntimeSnapshot(runtime, actor.toolPolicy.sandboxRequired);
-	const snapshotSha256 = runtimeSnapshotHash(snapshot);
+	const snapshot = runtimeSnapshot(runtime, actor.toolPolicy.sandboxRequired);
 	const previousAttempt = store.getLatestAttempt(actor.id);
 	if (previousAttempt) {
 		const drift = compareRuntimeSnapshots(previousAttempt.runtimeSnapshot, snapshot);
@@ -156,8 +513,6 @@ export async function attachLongTaskRuntime(
 			store.appendTaskEvent(taskId, "RuntimeDriftAccepted", { ...drift, schemaVersion: 1 });
 		}
 	}
-
-	const workerKind = process.env.KARISSA_DAEMON_WORKER === "1" ? "daemon" : "foreground";
 	const leaseSeconds = Number(process.env.KARISSA_WORKER_LEASE_SECONDS ?? 30);
 	const heartbeatSeconds = Number(process.env.KARISSA_WORKER_HEARTBEAT_SECONDS ?? 5);
 	if (
@@ -169,217 +524,65 @@ export async function attachLongTaskRuntime(
 		store.close();
 		throw new Error("Invalid long-task Worker lease or heartbeat configuration");
 	}
-	let lease: AgentLease = store.acquireLease(actor.id, `${workerKind}:${process.pid}`, randomUUID(), leaseSeconds, {
+	const residentWorker = process.env.KARISSA_DAEMON_WORKER === "1";
+	const workerId = residentWorker ? process.env.KARISSA_WORKER_ID : `foreground:${process.pid}`;
+	const executionId = residentWorker ? process.env.KARISSA_EXECUTION_ID : randomUUID();
+	if (!workerId || !executionId) {
+		store.close();
+		throw new Error("Resident Worker execution identity is missing");
+	}
+	const claim = store.claimAttempt({
+		agentId: actor.id,
+		sessionId: runtime.session.sessionId,
+		runtimeSnapshot: snapshot,
+		runtimeSnapshotSha256: runtimeSnapshotHash(snapshot),
+		workerId,
+		executionId,
+		leaseSeconds,
 		pid: process.pid,
+		...(process.env.KARISSA_SANDBOX_ID ? { sandboxId: process.env.KARISSA_SANDBOX_ID } : {}),
 	});
-	const attemptId = store.createAttempt(actor.id, runtime.session.sessionId, snapshot, snapshotSha256);
-	const previousCheckpoint = store.getLatestCheckpoint(actor.id);
-	if (previousCheckpoint?.sessionCheckpoint.sessionId === runtime.session.sessionId) {
-		await runtime.restoreCheckpoint(previousCheckpoint.sessionCheckpoint);
-	}
-
-	const reservationIds: string[] = [];
-	let actualTurnCostUsd = 0;
-	let chain = Promise.resolve();
-	let closed = false;
-	let heartbeatError: Error | undefined;
-	let progress: Progress = previousCheckpoint
-		? { ...previousCheckpoint.progress, consumedMessageIds: [], outboundMessageIds: [] }
-		: {
-				summary: "Task runtime attached; awaiting the next settled Turn.",
-				completedItems: [],
-				nextActions: ["Continue working toward the Task acceptance criteria."],
-				blockers: [],
-				filesRead: [],
-				filesModified: [],
-				verification: [],
-				consumedMessageIds: [],
-				outboundMessageIds: [],
-			};
-	let evidence = previousCheckpoint?.evidence ?? [];
-	const consumedMessageIds = new Set<string>();
-	const model = runtime.session.model;
-	const worstCaseCostUsd = model
-		? (() => {
-				const rates = [model.cost, ...(model.cost.tiers ?? [])];
-				const inputRate = Math.max(...rates.map((rate) => rate.input + rate.cacheWrite));
-				const outputRate = Math.max(...rates.map((rate) => rate.output));
-				return (model.contextWindow * inputRate + model.maxTokens * outputRate) / 1_000_000;
-			})()
-		: undefined;
-
-	async function commitSessionCheckpoint(beforeCompaction: boolean) {
-		const update = store.getPendingCheckpointUpdate(taskId, actor.id);
-		if (update) {
-			progress = {
-				...progress,
-				summary: update.summary,
-				completedItems: update.completedItems,
-				...(update.currentItem ? { currentItem: update.currentItem } : {}),
-				nextActions: update.nextActions,
-			};
-			evidence = update.evidence;
-		}
-		const sessionCheckpoint = beforeCompaction
-			? await runtime.createPreCompactionCheckpoint()
-			: await runtime.createCheckpoint();
-		const checkpointProgress = { ...progress, consumedMessageIds: [...consumedMessageIds] };
-		store.commitCheckpoint({
-			taskId,
-			agentId: actor.id,
-			attemptId,
-			lease,
-			sessionCheckpoint: { ...sessionCheckpoint, runtimeSnapshotSha256: snapshotSha256 },
-			progress: checkpointProgress,
-			evidence,
-			workspaceSnapshot: previousCheckpoint?.workspaceSnapshot ?? {},
-		});
-		progress = { ...checkpointProgress, consumedMessageIds: [] };
-		consumedMessageIds.clear();
-		return sessionCheckpoint;
-	}
-
-	preCompactionCheckpoints.set(runtime.session.sessionId, async () => {
+	const stopController = new AbortController();
+	let markReady: () => void = () => {};
+	const ready = new Promise<void>((resolve) => {
+		markReady = resolve;
+	});
+	const nativeAgent = new NativeLongTaskAgent({
+		runtime,
+		store,
+		continuationPolicy,
+		leaseSeconds,
+		heartbeatSeconds,
+		stopSignal: stopController.signal,
+		onReady: markReady,
+		resident: process.env.KARISSA_RESIDENT_WORKER === "1",
+		artifactsRoot: join(agentDir, "tasks"),
+	});
+	const running = nativeAgent.run(claim);
+	try {
+		await Promise.race([
+			ready,
+			running.then(() => {
+				throw new Error("NativeLongTaskAgent stopped before becoming ready");
+			}),
+		]);
+	} catch (error) {
+		stopController.abort();
 		try {
-			await commitSessionCheckpoint(true);
-		} catch (error) {
-			const current = store.requireTask(taskId);
-			if (current.state === "running") store.transitionTask(taskId, "paused", "checkpoint_failed");
-			throw error;
-		}
-	});
-	providerBudgetReservations.set(runtime.session.sessionId, () => {
-		if (heartbeatError) throw heartbeatError;
-		reservationIds.push(
-			store.reserveBudget(
-				actor.id,
-				attemptId,
-				randomUUID(),
-				task.budget.maxCostUsd === undefined ? undefined : worstCaseCostUsd,
-			),
-		);
-	});
-	inboxClaims.set(runtime.session.sessionId, () => {
-		const messages = store.claimInbox(actor.id, lease, 20);
-		for (const message of messages) consumedMessageIds.add(message.id);
-		return messages;
-	});
-	const heartbeat = setInterval(() => {
-		try {
-			const currentAgent = store.requireAgent(actor.id);
-			if (["paused", "cancelled"].includes(currentAgent.state)) {
-				void runtime.session.abort();
-				return;
-			}
-			lease = store.renewLease(lease, leaseSeconds);
-		} catch (error) {
-			heartbeatError = error instanceof Error ? error : new Error(String(error));
-			void runtime.session.abort();
-		}
-	}, heartbeatSeconds * 1_000);
-
-	async function handleEvent(event: AgentSessionEvent): Promise<void> {
-		if (event.type === "agent_start") {
-			store.appendAgentEvent(lease, attemptId, "TurnStarted", { schemaVersion: 1 });
-		} else if (event.type === "agent_end") {
-			actualTurnCostUsd = event.messages.reduce(
-				(total, message) => total + (message.role === "assistant" ? message.usage.cost.total : 0),
-				0,
-			);
-		} else if (event.type === "tool_execution_start") {
-			const inputSha256 = sha256(JSON.stringify(event.args));
-			const effect = defaultToolEffect(event.toolName);
-			store.appendAgentEvent(lease, attemptId, "ToolPlanned", {
-				toolCallId: event.toolCallId,
-				toolName: event.toolName,
-				inputSha256,
-				effect,
-				schemaVersion: 1,
-			});
-			store.appendAgentEvent(lease, attemptId, "ToolStarted", {
-				toolCallId: event.toolCallId,
-				toolName: event.toolName,
-				inputSha256,
-				effect,
-				executionId: lease.executionId,
-				fencingToken: lease.fencingToken,
-				schemaVersion: 1,
-			});
-		} else if (event.type === "tool_execution_end") {
-			store.appendAgentEvent(lease, attemptId, "ToolFinished", {
-				toolCallId: event.toolCallId,
-				toolName: event.toolName,
-				isError: event.isError,
-				schemaVersion: 1,
-			});
-		} else if (event.type === "compaction_start") {
-			store.appendAgentEvent(lease, attemptId, "CompactionStarted", { reason: event.reason, schemaVersion: 1 });
-		} else if (event.type === "compaction_end") {
-			store.appendAgentEvent(lease, attemptId, "CompactionFinished", {
-				reason: event.reason,
-				aborted: event.aborted,
-				schemaVersion: 1,
-			});
-		} else if (event.type === "agent_settled") {
-			for (const [index, reservationId] of reservationIds.splice(0).entries()) {
-				store.settleBudget(reservationId, index === 0 ? actualTurnCostUsd : 0);
-			}
-			actualTurnCostUsd = 0;
-			const sessionCheckpoint = await commitSessionCheckpoint(false);
-			lease = store.renewLease(lease, leaseSeconds);
-			const continuation = new ContinuationController(store, continuationPolicy).evaluate({
-				lease,
-				attemptId,
-				settledTurnIndex: sessionCheckpoint.settledTurnIndex,
-				progress,
-			});
-			if (
-				!continuation.duplicate &&
-				continuation.decision.nextPrompt &&
-				process.env.KARISSA_RESIDENT_WORKER === "1"
-			) {
-				const prompt = continuation.decision.nextPrompt;
-				setTimeout(() => {
-					if (closed) return;
-					void runtime.session.prompt(prompt).catch((error) => {
-						store.appendTaskEvent(taskId, "ContinuationPromptFailed", {
-							decisionId: continuation.decision.id,
-							message: error instanceof Error ? error.message : String(error),
-							schemaVersion: 1,
-						});
-						const current = store.requireTask(taskId);
-						if (current.state === "running")
-							store.transitionTask(taskId, "waiting_external", "continuation_prompt_failed");
-					});
-				}, 0);
-			}
-		}
-	}
-
-	const unsubscribe = runtime.session.subscribe((event) => {
-		chain = chain.then(() => handleEvent(event));
-	});
-
-	return {
-		async drainAndClose(): Promise<void> {
-			if (closed) return;
-			closed = true;
-			clearInterval(heartbeat);
-			unsubscribe();
-			preCompactionCheckpoints.delete(runtime.session.sessionId);
-			providerBudgetReservations.delete(runtime.session.sessionId);
-			inboxClaims.delete(runtime.session.sessionId);
-			await chain;
-			if (!heartbeatError) {
-				store.releaseLease(lease);
-				const currentTask = store.requireTask(taskId);
-				const currentAgent = store.requireAgent(actor.id);
-				if (currentTask.state === "running" && currentAgent.state === "running") {
-					store.transitionAgent(actor.id, "queued", "worker_turn_settled");
-				}
-			}
+			await running;
+		} finally {
 			store.close();
-			if (heartbeatError) throw heartbeatError;
+		}
+		throw error;
+	}
+	return {
+		async drainAndClose() {
+			stopController.abort();
+			try {
+				return await running;
+			} finally {
+				store.close();
+			}
 		},
 	};
 }

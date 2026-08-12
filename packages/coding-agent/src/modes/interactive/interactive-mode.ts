@@ -95,6 +95,7 @@ import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import { getTaskRunContext } from "../../core/task-run-context.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
@@ -109,7 +110,6 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
-import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
@@ -118,9 +118,7 @@ import { CompactionSummaryMessageComponent } from "./components/compaction-summa
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
-import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
-import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
@@ -907,7 +905,12 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			const taskRun = getTaskRunContext();
+			const runtimeLabel = taskRun ? `TASK ${taskRun.taskId.slice(0, 8)}` : "SESSION";
+			const logo =
+				theme.bold(theme.fg("accent", "KARISSA")) +
+				theme.fg("dim", ` / RUNTIME v${this.version}`) +
+				theme.fg("success", `  [${runtimeLabel}]`);
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -942,11 +945,11 @@ export class InteractiveMode {
 			].join(theme.fg("muted", " · "));
 			const compactOnboarding = theme.fg(
 				"dim",
-				`Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`,
+				`Press ${keyText("app.tools.expand")} for runtime controls and loaded resources.`,
 			);
 			const onboarding = theme.fg(
 				"dim",
-				`Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`,
+				"State the outcome, constraints, and verification. Karissa preserves progress at settled boundaries.",
 			);
 			this.builtInHeader = new ExpandableText(
 				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
@@ -2981,16 +2984,6 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/arminsayshi") {
-				this.handleArminSaysHi();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/dementedelves") {
-				this.handleDementedDelves();
-				this.editor.setText("");
-				return;
-			}
 			if (text === "/resume") {
 				this.showSessionSelector();
 				this.editor.setText("");
@@ -4600,7 +4593,6 @@ export class InteractiveMode {
 				this.updateEditorBorderColor();
 				this.showStatus(`Model: ${model.id}`);
 				void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-				this.checkDaxnutsEasterEgg(model);
 			} catch (error) {
 				this.showError(error instanceof Error ? error.message : String(error));
 			}
@@ -4751,7 +4743,6 @@ export class InteractiveMode {
 						done();
 						this.showStatus(`Model: ${model.id}`);
 						void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-						this.checkDaxnutsEasterEgg(model);
 					} catch (error) {
 						done();
 						this.showError(error instanceof Error ? error.message : String(error));
@@ -5455,7 +5446,6 @@ export class InteractiveMode {
 		if (selectedModel) {
 			this.showStatus(`${actionLabel}. Selected ${selectedModel.id}. Credentials saved to ${getAuthPath()}`);
 			void this.maybeWarnAboutAnthropicSubscriptionAuth(selectedModel);
-			this.checkDaxnutsEasterEgg(selectedModel);
 		} else {
 			this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}`);
 			if (selectionError) {
@@ -6254,30 +6244,6 @@ export class InteractiveMode {
 			new Text(`${theme.fg("accent", "✓ Debug log written")}\n${theme.fg("muted", debugLogPath)}`, 1, 1),
 		);
 		this.ui.requestRender();
-	}
-
-	private handleArminSaysHi(): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new ArminComponent(this.ui));
-		this.ui.requestRender();
-	}
-
-	private handleDementedDelves(): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new EarendilAnnouncementComponent());
-		this.ui.requestRender();
-	}
-
-	private handleDaxnuts(): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DaxnutsComponent(this.ui));
-		this.ui.requestRender();
-	}
-
-	private checkDaxnutsEasterEgg(model: { provider: string; id: string }): void {
-		if (model.provider === "opencode" && model.id.toLowerCase().includes("kimi-k2.5")) {
-			this.handleDaxnuts();
-		}
 	}
 
 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {

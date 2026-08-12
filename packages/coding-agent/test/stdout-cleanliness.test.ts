@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ENV_AGENT_DIR } from "../src/config.ts";
+import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../src/config.ts";
+import { sourceProcessArgs, sourceProcessEnv } from "./source-process.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -30,7 +31,7 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 	const tempRoot = createTempDir();
 	const agentDir = join(tempRoot, "agent");
 	const projectDir = join(tempRoot, "project");
-	const projectConfigDir = join(projectDir, ".pi");
+	const projectConfigDir = join(projectDir, CONFIG_DIR_NAME);
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(projectConfigDir, { recursive: true });
 
@@ -59,13 +60,12 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 	);
 
 	return await new Promise((resolvePromise, reject) => {
-		const child = spawn(process.execPath, [cliPath, ...args], {
+		const child = spawn(process.execPath, sourceProcessArgs(cliPath, args), {
 			cwd: projectDir,
-			env: {
+			env: sourceProcessEnv({
 				...process.env,
 				[ENV_AGENT_DIR]: agentDir,
-				TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),
-			},
+			}),
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
@@ -101,33 +101,30 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		expect(result.stderr).not.toContain("Usage:");
 	});
 
-	it("keeps stdout empty for --mode json --help while routing trusted startup chatter to stderr", async () => {
+	it("prints Karissa help without loading trusted startup packages in json mode", async () => {
 		const result = await runCli(["--mode", "json", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("changed 1 package in 471ms");
-		expect(result.stderr).toContain("found 0 vulnerabilities");
-		expect(result.stderr).toContain("Usage:");
+		expect(result.stdout).toContain("Karissa long-running agent");
+		expect(result.stderr).not.toContain("changed 1 package in 471ms");
+		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});
 
-	it("keeps stdout empty for -p --help while routing trusted startup chatter to stderr", async () => {
+	it("prints Karissa help without loading trusted startup packages in print mode", async () => {
 		const result = await runCli(["-p", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("changed 1 package in 471ms");
-		expect(result.stderr).toContain("found 0 vulnerabilities");
-		expect(result.stderr).toContain("Usage:");
+		expect(result.stdout).toContain("Karissa long-running agent");
+		expect(result.stderr).not.toContain("changed 1 package in 471ms");
+		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});
 
 	it("ignores untrusted project package installs for help", async () => {
 		const result = await runCli(["-p", "--help"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toBe("");
+		expect(result.stdout).toContain("Karissa long-running agent");
 		expect(result.stderr).not.toContain("changed 1 package in 471ms");
 		expect(result.stderr).not.toContain("found 0 vulnerabilities");
-		expect(result.stderr).toContain("Usage:");
 	});
 });

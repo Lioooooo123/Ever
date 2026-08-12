@@ -59,6 +59,28 @@ export interface ReceiveDaemonCommandInput {
 	payload: Record<string, unknown>;
 }
 
+export interface TaskCommandRecord {
+	clientId: string;
+	commandId: string;
+	taskId: string;
+	commandType: string;
+	payloadSha256: string;
+	payload: Record<string, unknown>;
+	state: "dispatched" | "completed";
+	result?: Record<string, unknown>;
+	dispatchedAt: string;
+	completedAt?: string;
+}
+
+export interface BeginTaskCommandInput {
+	clientId: string;
+	commandId: string;
+	taskId: string;
+	commandType: string;
+	payloadSha256: string;
+	payload: Record<string, unknown>;
+}
+
 export type ContinuationAction =
 	| "continue"
 	| "replan"
@@ -369,6 +391,12 @@ export interface UnfinishedToolExecution {
 	fencingToken?: number;
 }
 
+export interface UnfinishedProviderRequest {
+	providerRequestId: string;
+	reservationId: string;
+	attemptId: string;
+}
+
 export interface WorkspaceSnapshot {
 	baseCommit: string;
 	trackedPatchArtifact: string;
@@ -397,6 +425,28 @@ export interface AttemptRecord {
 	costUsd: number;
 	errorCode?: string;
 }
+
+/** Opaque capability returned by the Task Control Plane for one running Attempt. */
+export interface ClaimedAttempt {
+	readonly token: string;
+}
+
+/** Internal execution facts resolved from a valid Attempt claim. */
+export interface AttemptClaimContext {
+	task: TaskRecord;
+	agent: AgentRecord;
+	attempt: AttemptRecord;
+	lease: AgentLease;
+	deadlineAt: string;
+}
+
+export type AttemptOutcome =
+	| { kind: "settled"; taskId: string; attemptId: string }
+	| { kind: "waiting"; taskId: string; attemptId: string; reason: string }
+	| { kind: "paused"; taskId: string; attemptId: string; reason: string }
+	| { kind: "completed"; taskId: string; attemptId: string }
+	| { kind: "failed"; taskId: string; attemptId: string; reason: string }
+	| { kind: "unknown_outcome"; taskId: string; attemptId: string; reason: string };
 
 export interface CheckpointRecord {
 	id: string;

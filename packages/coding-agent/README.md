@@ -12,6 +12,42 @@
 
 ---
 
+## Karissa long-running Tasks
+
+Karissa is the durable, unattended product surface built on the Pi runtime. A Task survives terminal disconnects and daemon restarts, records attempts and evidence in SQLite, and only reaches `completed` after its acceptance policy is satisfied.
+
+```bash
+# Open the branded Task Home
+karissa
+
+# Create, start, and follow a Task
+karissa "refactor the repository and run the focused tests" --verify "npm run check" --yes
+
+# Pin an exact provider/model for reproducible recovery
+karissa "finish the migration" --provider anthropic --model claude-sonnet-4-6 --yes
+
+# Submit without following the event stream
+karissa --print "audit the architecture" --yes
+
+# Inspect or reconnect
+karissa status
+karissa attach <task-id> --follow
+```
+
+Automation uses strict JSONL framing. Each request receives exactly one response with the same `id`:
+
+```bash
+printf '%s\n' '{"id":1,"method":"task.list"}' | karissa --mode rpc
+```
+
+The RPC methods are `task.list`, `task.get`, `task.events`, `task.bundle`, `task.submit`, `task.pause`, `task.resume`, `task.cancel`, and `task.steer`. Mutating retries can include stable `clientId` and `commandId` values for idempotency. Unattended Tasks require the platform sandbox unless `--unsafe-no-sandbox` is explicitly supplied.
+
+Every unattended Task pins its exact model before queueing. The Supervisor removes ambient secrets from the Worker environment and sends only that Provider's credential through an owner-only, one-time startup channel; model-controlled shell commands receive no Provider, SSH, or GPG credentials.
+
+The legacy interactive Session documentation below describes the embedded Pi runtime used by Workers and SDK consumers. It is not the public Karissa task entrypoint.
+
+---
+
 Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
 
 Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.

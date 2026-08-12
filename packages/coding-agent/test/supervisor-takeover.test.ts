@@ -7,6 +7,7 @@ function descriptor(token: string): WorkerDescriptor {
 	return {
 		schemaVersion: 1,
 		workerId: "worker-1",
+		executionId: "execution-1",
 		agentId: "agent-1",
 		taskId: "task-1",
 		activeSessionId: "session-1",

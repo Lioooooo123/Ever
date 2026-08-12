@@ -9,6 +9,11 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+	type AgentSessionLifecycleRef,
+	currentAgentSessionRequestKind,
+	withAgentSessionRequestKind,
+} from "../src/core/agent-session-lifecycle.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -79,6 +84,7 @@ describe("createAgentSession stream options", () => {
 		settings: Partial<Settings>,
 		requestOptions: SimpleStreamOptions = {},
 		extensionSource?: string,
+		lifecycleRef?: AgentSessionLifecycleRef,
 	): Promise<SimpleStreamOptions | undefined> {
 		const model = createModel(api);
 		const settingsManager = SettingsManager.inMemory(settings);
@@ -111,6 +117,7 @@ describe("createAgentSession stream options", () => {
 			modelRuntime,
 			settingsManager,
 			sessionManager,
+			lifecycleRef,
 		});
 
 		try {
@@ -193,5 +200,60 @@ describe("createAgentSession stream options", () => {
 			"x-hook": "provider:model:explicit",
 		});
 		expect(options).not.toHaveProperty("transformHeaders");
+	});
+
+	it("awaits the host lifecycle before and after a provider request", async () => {
+		const events: string[] = [];
+		const lifecycleRef: AgentSessionLifecycleRef = {
+			current: {
+				async handle(event) {
+					if (event.type === "before_request") events.push(`before:${event.requestId}`);
+					if (event.type === "after_response") {
+						await Promise.resolve();
+						events.push(`after:${event.requestId}`);
+					}
+					return undefined;
+				},
+			},
+		};
+
+		await captureStreamOptions("openai-completions", {}, {}, undefined, lifecycleRef);
+
+		expect(events).toHaveLength(2);
+		expect(events[0]?.replace("before:", "")).toBe(events[1]?.replace("after:", ""));
+	});
+
+	it("preserves the host request kind across a summarization request", async () => {
+		const kinds: string[] = [];
+		const lifecycleRef: AgentSessionLifecycleRef = {
+			current: {
+				async handle(event) {
+					if (event.type === "before_request" || event.type === "after_response") kinds.push(event.kind);
+					return undefined;
+				},
+			},
+		};
+
+		await withAgentSessionRequestKind("compaction", () =>
+			captureStreamOptions("openai-completions", {}, {}, undefined, lifecycleRef),
+		);
+
+		expect(kinds).toEqual(["compaction", "compaction"]);
+	});
+
+	it("isolates overlapping request kinds by async execution scope", async () => {
+		const kinds = await Promise.all([
+			withAgentSessionRequestKind("compaction", async () => {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				return currentAgentSessionRequestKind();
+			}),
+			withAgentSessionRequestKind("branch_summary", async () => {
+				await Promise.resolve();
+				return currentAgentSessionRequestKind();
+			}),
+		]);
+
+		expect(kinds).toEqual(["compaction", "branch_summary"]);
+		expect(currentAgentSessionRequestKind()).toBe("agent");
 	});
 });

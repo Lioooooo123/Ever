@@ -3,24 +3,32 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
+import type { Credential } from "@earendil-works/pi-ai";
+import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import {
 	resolveAgentExecutionContext,
-	type ScheduleClaim,
-	ScheduleEngine,
-	type ScheduleRecord,
 	SqliteTaskStore,
 	TaskNotificationDispatcher,
+	type TaskRecord,
 } from "@karissa/long-tasks";
 import chalk from "chalk";
 import { ENV_AGENT_DIR } from "../config.ts";
+import { AuthStorage } from "../core/auth-storage.ts";
 import { recoverExpiredLongTaskExecutions } from "../core/long-task-runtime.ts";
+import { sanitizeUnattendedEnvironment } from "../core/secret-environment.ts";
+import { TaskApplication, type TaskControlCommand } from "../core/task-application.ts";
+import { UnattendedSandbox } from "../core/unattended-sandbox.ts";
+import { createDaemonSocketPath, createWorkerSocketPath } from "../core/worker-socket.ts";
+import type { WorkerStartupEnvelope } from "../core/worker-startup.ts";
 import { SequencedEventBuffer } from "../daemon/event-stream.ts";
 import {
 	createDaemonCommand,
 	type DaemonCommandEnvelope,
 	daemonCommandPayloadSha256,
 	daemonResponse,
+	type EventCursor,
 	parseDaemonCommand,
 	parseDaemonResponse,
 } from "../daemon/protocol.ts";
@@ -46,7 +54,6 @@ export interface DaemonResponse {
 
 export interface DaemonRuntimeSettings {
 	maxConcurrentTasks: number;
-	maxConcurrentAgentsPerTask: number;
 	workerHeartbeatSeconds: number;
 	workerLeaseSeconds: number;
 	eventReplayMaxCount: number;
@@ -70,7 +77,7 @@ function paths(agentDir: string) {
 	const runDir = join(agentDir, "run");
 	return {
 		runDir,
-		socketPath: join(runDir, "karissa.sock"),
+		socketPath: createDaemonSocketPath(agentDir),
 		pidPath: join(runDir, "karissa.pid"),
 		clientIdPath: join(runDir, "client-id"),
 		controlTokenPath: join(runDir, "control-token"),
@@ -125,6 +132,27 @@ function isProcessAlive(pid: number): boolean {
 	}
 }
 
+function taskModel(task: TaskRecord): { provider: string; id: string } | undefined {
+	const model = task.constraints.model;
+	if (typeof model !== "object" || model === null || Array.isArray(model)) return undefined;
+	const provider = Reflect.get(model, "provider");
+	const id = Reflect.get(model, "id");
+	return typeof provider === "string" && provider !== "" && typeof id === "string" && id !== ""
+		? { provider, id }
+		: undefined;
+}
+
+async function resolveWorkerCredential(agentDir: string, provider: string): Promise<Credential> {
+	const stored = await AuthStorage.create(join(agentDir, "auth.json")).read(provider, {
+		signal: AbortSignal.timeout(15_000),
+	});
+	if (stored?.type === "oauth") return stored;
+	if (stored?.type === "api_key" && typeof stored.key === "string" && stored.key !== "") return stored;
+	const environmentKey = getEnvApiKey(provider);
+	if (environmentKey && environmentKey !== "<authenticated>") return { type: "api_key", key: environmentKey };
+	throw new Error(`Provider ${provider} 没有可交付给 Resident Worker 的凭据`);
+}
+
 function readPid(pidPath: string): number | undefined {
 	try {
 		const pid = Number(readFileSync(pidPath, "utf8").trim());
@@ -173,7 +201,7 @@ export function requestDaemon(
 	});
 }
 
-async function waitForDaemon(agentDir: string, attempts = 20): Promise<DaemonResponse> {
+async function waitForDaemon(agentDir: string, attempts = 100): Promise<DaemonResponse> {
 	let lastError: unknown;
 	for (let attempt = 0; attempt < attempts; attempt++) {
 		try {
@@ -191,7 +219,6 @@ async function serve(
 	unsafeNoSandbox: boolean,
 	settings: DaemonRuntimeSettings = {
 		maxConcurrentTasks: 1,
-		maxConcurrentAgentsPerTask: 4,
 		workerHeartbeatSeconds: 5,
 		workerLeaseSeconds: 30,
 		eventReplayMaxCount: 10_000,
@@ -224,10 +251,13 @@ async function serve(
 	});
 	const controlToken = readOrCreateControlToken(agentDir);
 	const notifications = new TaskNotificationDispatcher(store, new DesktopNotificationAdapter());
-	const scheduleEngine = new ScheduleEngine(store);
 	store.markInterruptedDaemonCommandsUncertain();
 	store.pruneDaemonCommands(settings.commandJournalRetentionDays);
 	const workerRegistry = new WorkerRegistry(runDir);
+	const sandbox = unsafeNoSandbox ? undefined : new UnattendedSandbox(agentDir);
+	const sandboxCapability = sandbox
+		? await sandbox.initialize()
+		: { available: false as const, backend: "unsupported" as const, reason: "explicitly disabled" };
 	const supervisorGeneration = randomUUID();
 	const eventBuffer = new SequencedEventBuffer<unknown>(
 		settings.eventReplayMaxCount,
@@ -257,18 +287,8 @@ async function serve(
 		if (scheduling) return;
 		scheduling = true;
 		try {
-			await recoverExpiredLongTaskExecutions(store);
+			await recoverExpiredLongTaskExecutions(store, workerRegistry);
 			await notifications.dispatchPending();
-			for (const due of store.listDueSchedules(new Date().toISOString(), 100)) {
-				const hasWorker =
-					(due.agentId && workers.has(due.agentId)) ||
-					(!due.agentId && [...workers.values()].some((worker) => worker.taskId === due.taskId));
-				const task = store.requireTask(due.taskId);
-				if (task.state === "waiting_external") {
-					store.transitionTask(task.id, "queued", "schedule_due");
-					if (hasWorker) store.transitionTask(task.id, "running", "resident_worker_resumed");
-				}
-			}
 			for (const worker of workers.values()) {
 				const taskState = store.requireTask(worker.taskId).state;
 				if (taskState === "queued" || taskState === "running") continue;
@@ -281,7 +301,6 @@ async function serve(
 					// The process exit and recovery paths reconcile an unreachable Worker.
 				}
 			}
-			const readyWorkerIds = new Set<string>();
 			for (const worker of workers.values()) {
 				try {
 					const status = await requestWorker(worker.descriptor.privateSocketPath, {
@@ -298,7 +317,6 @@ async function serve(
 						) {
 							worker.descriptor = currentDescriptor as WorkerDescriptor;
 						}
-						readyWorkerIds.add(worker.descriptor.agentId);
 					}
 				} catch {
 					if (!isProcessAlive(worker.descriptor.pid)) {
@@ -313,109 +331,115 @@ async function serve(
 					}
 				}
 			}
-			const deliverScheduleClaim = async (claim: ScheduleClaim) => {
-				const worker = [...workers.values()].find(
-					(candidate) =>
-						candidate.taskId === claim.schedule.taskId &&
-						(claim.schedule.agentId === undefined || candidate.descriptor.agentId === claim.schedule.agentId),
-				);
-				if (!worker) return false;
-				if (claim.schedule.payload.heartbeat === true && claim.schedule.payload.hasAction === false) {
-					store.appendTaskEvent(claim.schedule.taskId, "ScheduleNoAction", {
-						scheduleId: claim.schedule.id,
-						claimId: claim.claimId,
-						schemaVersion: 1,
-					});
-					return true;
-				}
-				const configuredPrompt = claim.schedule.payload.prompt;
-				const prompt = `${typeof configuredPrompt === "string" ? configuredPrompt : "Evaluate the scheduled durable Task."}
-Schedule claim: ${claim.claimId}
-Due at: ${claim.dueAt}
-Coalesced ticks: ${claim.missedCount}`;
-				const response = await requestWorker(worker.descriptor.privateSocketPath, {
-					token: worker.token,
-					command: "prompt",
-					payload: { text: prompt, scheduleId: claim.schedule.id, claimId: claim.claimId },
-				});
-				return response.ok;
-			};
-			const scheduleEligible = (candidateSchedule: ScheduleRecord) => {
-				if (candidateSchedule.agentId) return readyWorkerIds.has(candidateSchedule.agentId);
-				return [...workers.values()].some(
-					(worker) => worker.taskId === candidateSchedule.taskId && readyWorkerIds.has(worker.descriptor.agentId),
-				);
-			};
-			await scheduleEngine.deliverDue(deliverScheduleClaim, 100, scheduleEligible);
-			await scheduleEngine.deliverEvents(deliverScheduleClaim, 100, scheduleEligible);
 			if (stopping || !cliEntry) return;
-			const workerCountsByTask = new Map<string, number>();
-			for (const worker of workers.values()) {
-				workerCountsByTask.set(worker.taskId, (workerCountsByTask.get(worker.taskId) ?? 0) + 1);
-			}
-			const activeTaskIds = new Set(workerCountsByTask.keys());
-			const task = store.listRunnableTasks(100).find((candidate) => {
-				const activeWorkers = workerCountsByTask.get(candidate.id) ?? 0;
-				if (activeWorkers >= settings.maxConcurrentAgentsPerTask) return false;
-				return activeTaskIds.has(candidate.id) || activeTaskIds.size < settings.maxConcurrentTasks;
-			});
+			const activeTaskIds = new Set([...workers.values()].map((worker) => worker.taskId));
+			const task = store
+				.listRunnableTasks(100)
+				.find((candidate) => !activeTaskIds.has(candidate.id) && activeTaskIds.size < settings.maxConcurrentTasks);
 			if (!task) return;
-			if (!unsafeNoSandbox && process.env.KARISSA_UNATTENDED_SANDBOX !== "1") {
+			const selectedModel = taskModel(task);
+			if (!selectedModel) {
+				store.transitionTask(task.id, "waiting_input", "model_required");
+				store.appendTaskEvent(task.id, "TaskConfigurationRequired", {
+					reason: "unattended Task requires a pinned provider and model",
+					schemaVersion: 1,
+				});
+				return;
+			}
+			if (!unsafeNoSandbox && !sandboxCapability.available) {
 				if (task.state === "queued") {
 					store.transitionTask(task.id, "paused", "sandbox_required");
 					store.appendTaskEvent(task.id, "SecurityPolicyDenied", {
-						reason: "background execution requires a sandbox",
+						reason: sandboxCapability.reason ?? "background execution requires a sandbox",
 						schemaVersion: 1,
 					});
 				}
 				return;
 			}
-			const agent = store.listRunnableAgents(task.id, 4)[0];
+			const agent = store.listRunnableAgents(task.id, 1).find((candidate) => candidate.kind === "main");
 			if (!agent || workers.has(agent.id)) return;
 			const executionContext = resolveAgentExecutionContext(store, task.id, agent.id);
 			const logDir = join(agentDir, "tasks", task.id);
 			mkdirSync(logDir, { recursive: true, mode: 0o700 });
-			const logFd = openSync(join(logDir, "daemon.log"), "a", 0o600);
-			const workerArgs =
-				agent.kind === "main"
-					? [cliEntry, "task", "run", task.id, "--print"]
-					: [cliEntry, "task", "agent", "run", task.id, agent.id, "--print"];
+			const workerArgs = [cliEntry, "task", "run", task.id, "--print"];
 			const workerId = randomUUID();
+			const executionId = randomUUID();
 			const token = deriveWorkerToken(controlToken, workerId, supervisorGeneration);
-			const privateSocketPath = join(runDir, "workers", `${agent.id}.sock`);
+			let credential: Credential;
+			try {
+				credential = await resolveWorkerCredential(agentDir, selectedModel.provider);
+			} catch (error) {
+				store.transitionTask(task.id, "waiting_input", "credential_required");
+				store.appendTaskEvent(task.id, "TaskConfigurationRequired", {
+					reason: error instanceof Error ? error.message : String(error),
+					schemaVersion: 1,
+				});
+				return;
+			}
+			const privateSocketPath = createWorkerSocketPath(agentDir, agent.id);
 			const startedAt = new Date().toISOString();
-			const child = spawn(process.execPath, workerArgs, {
-				cwd: executionContext.canonicalWorkspaceRoot,
-				detached: true,
-				stdio: ["ignore", logFd, logFd, "pipe"],
-				env: {
-					...process.env,
-					KARISSA_DAEMON_WORKER: "1",
-					KARISSA_RESIDENT_WORKER: "1",
-					KARISSA_TASK_RUN_ID: task.id,
-					KARISSA_AGENT_RUN_ID: agent.id,
-					KARISSA_WORKER_ID: workerId,
-					KARISSA_WORKER_SOCKET: privateSocketPath,
-					KARISSA_WORKER_STARTED_AT: startedAt,
-					KARISSA_SUPERVISOR_GENERATION: supervisorGeneration,
-					KARISSA_RUN_DIRECTORY: runDir,
-					KARISSA_WORKER_HEARTBEAT_SECONDS: String(settings.workerHeartbeatSeconds),
-					KARISSA_WORKER_LEASE_SECONDS: String(settings.workerLeaseSeconds),
-					KARISSA_EVENT_REPLAY_MAX_COUNT: String(settings.eventReplayMaxCount),
-					KARISSA_EVENT_REPLAY_MAX_BYTES: String(settings.eventReplayMaxBytes),
-					KARISSA_SNAPSHOT_CHUNK_BYTES: String(settings.snapshotChunkBytes),
-					...(unsafeNoSandbox ? { KARISSA_UNSAFE_NO_SANDBOX: "1" } : {}),
-				},
-			});
+			const sandboxed = sandbox
+				? await sandbox.wrap(
+						process.execPath,
+						[...process.execArgv, ...workerArgs],
+						executionContext.canonicalWorkspaceRoot,
+					)
+				: undefined;
+			const logFd = openSync(join(logDir, "daemon.log"), "a", 0o600);
+			let child: ReturnType<typeof spawn>;
+			try {
+				child = spawn(
+					sandboxed?.command ?? process.execPath,
+					sandboxed ? [] : [...process.execArgv, ...workerArgs],
+					{
+						cwd: executionContext.canonicalWorkspaceRoot,
+						detached: true,
+						shell: sandboxed !== undefined,
+						stdio: ["ignore", logFd, logFd, "pipe"],
+						env: {
+							...sanitizeUnattendedEnvironment(process.env),
+							KARISSA_DAEMON_WORKER: "1",
+							KARISSA_RESIDENT_WORKER: "1",
+							KARISSA_WORKER_ID: workerId,
+							KARISSA_EXECUTION_ID: executionId,
+							KARISSA_WORKER_SOCKET: privateSocketPath,
+							KARISSA_WORKER_STARTED_AT: startedAt,
+							KARISSA_SUPERVISOR_GENERATION: supervisorGeneration,
+							KARISSA_RUN_DIRECTORY: runDir,
+							KARISSA_WORKER_HEARTBEAT_SECONDS: String(settings.workerHeartbeatSeconds),
+							KARISSA_WORKER_LEASE_SECONDS: String(settings.workerLeaseSeconds),
+							KARISSA_EVENT_REPLAY_MAX_COUNT: String(settings.eventReplayMaxCount),
+							KARISSA_EVENT_REPLAY_MAX_BYTES: String(settings.eventReplayMaxBytes),
+							KARISSA_SNAPSHOT_CHUNK_BYTES: String(settings.snapshotChunkBytes),
+							...(sandboxed
+								? {
+										KARISSA_UNATTENDED_SANDBOX: "1",
+										KARISSA_SANDBOX_ID: sandboxed.sandboxId,
+										KARISSA_SANDBOX_PROFILE_SHA256: sandboxed.profileSha256,
+									}
+								: {}),
+							...(unsafeNoSandbox ? { KARISSA_UNSAFE_NO_SANDBOX: "1" } : {}),
+						},
+					},
+				);
+			} finally {
+				closeSync(logFd);
+			}
 			const tokenChannel = child.stdio[3];
 			if (!(tokenChannel instanceof Writable))
 				throw new Error(`Worker token channel did not open for agent ${agent.id}`);
-			tokenChannel.end(`${token}\n`);
-			closeSync(logFd);
+			const startupEnvelope: WorkerStartupEnvelope = {
+				schemaVersion: 1,
+				token,
+				provider: selectedModel.provider,
+				credential,
+			};
+			tokenChannel.end(`${JSON.stringify(startupEnvelope)}\n`);
 			if (!child.pid) throw new Error(`Worker process did not start for agent ${agent.id}`);
 			const descriptor: WorkerDescriptor = {
 				schemaVersion: 1,
 				workerId,
+				executionId,
 				agentId: agent.id,
 				taskId: task.id,
 				activeSessionId: "",
@@ -425,6 +449,7 @@ Coalesced ticks: ${claim.missedCount}`;
 				privateSocketPath,
 				tokenSha256: workerTokenSha256(token),
 				workspaceRoot: executionContext.canonicalWorkspaceRoot,
+				...(sandboxed ? { sandboxId: sandboxed.sandboxId, sandboxProfileSha256: sandboxed.profileSha256 } : {}),
 				lifecycle: "resident",
 				state: "starting",
 				heartbeatAt: startedAt,
@@ -695,6 +720,7 @@ Coalesced ticks: ${claim.missedCount}`;
 		}
 	} finally {
 		clearInterval(interval);
+		await sandbox?.close();
 		store.close();
 		if (existsSync(socketPath)) rmSync(socketPath);
 		if (existsSync(pidPath)) rmSync(pidPath);
@@ -730,36 +756,148 @@ export async function startDaemon(agentDir: string, unsafeNoSandbox = false): Pr
 	if (!cliEntry) throw new Error("Cannot determine CLI entry point");
 	const child = spawn(
 		process.execPath,
-		[cliEntry, "daemon", "serve", ...(unsafeNoSandbox ? ["--unsafe-no-sandbox"] : [])],
+		[...process.execArgv, cliEntry, "daemon", "serve", ...(unsafeNoSandbox ? ["--unsafe-no-sandbox"] : [])],
 		{ detached: true, stdio: "ignore", env: process.env },
 	);
 	child.unref();
 	return waitForDaemon(agentDir);
 }
 
+export async function attachTask(
+	agentDir: string,
+	taskId: string,
+	options: { agentId?: string; follow?: boolean } = {},
+): Promise<void> {
+	let cursor: EventCursor | undefined;
+	let following = options.follow === true;
+	const interactive = following && process.stdin.isTTY === true && process.stdout.isTTY === true;
+	const application = new TaskApplication(agentDir);
+	const task = application.resolve(taskId);
+	const mainAgent = application.snapshot(task.id).agents.find((agent) => agent.kind === "main");
+	const clientId = `karissa-attach:${process.pid}`;
+	let controlQueue = Promise.resolve();
+	const stopFollowing = () => {
+		following = false;
+	};
+	if (following) process.once("SIGINT", stopFollowing);
+	const input = interactive ? createInterface({ input: process.stdin, output: process.stdout }) : undefined;
+	if (input) {
+		console.log(chalk.bold("KARISSA / LIVE TASK"));
+		console.log(`${task.id.slice(0, 8)}  ${task.title}`);
+		console.log(chalk.dim("输入文本可转向；/pause /resume /cancel /detach"));
+		input.setPrompt(chalk.cyan("karissa> "));
+		input.on("line", (line) => {
+			const text = line.trim();
+			if (!text) {
+				input.prompt();
+				return;
+			}
+			if (text === "/detach" || text === "/quit") {
+				stopFollowing();
+				input.close();
+				return;
+			}
+			controlQueue = controlQueue
+				.then(async () => {
+					let command: TaskControlCommand;
+					if (text === "/pause" || text === "/stop") command = { action: "pause", taskRef: task.id };
+					else if (text === "/resume") command = { action: "resume", taskRef: task.id };
+					else if (text === "/cancel") command = { action: "cancel", taskRef: task.id };
+					else {
+						if (!mainAgent) throw new Error("Task has no Main Agent");
+						command = { action: "steer", taskRef: task.id, agentRef: mainAgent.id, message: text };
+					}
+					const result = application.control(command, { clientId });
+					console.log(chalk.dim(`control accepted  ${result.task.state}  ${result.commandId.slice(0, 8)}`));
+				})
+				.catch((error) => console.error(chalk.red(error instanceof Error ? error.message : String(error))))
+				.finally(() => {
+					if (following) input.prompt();
+				});
+		});
+		input.prompt();
+	}
+	try {
+		do {
+			let response: DaemonResponse;
+			try {
+				response = await requestDaemon(agentDir, {
+					command: "attach",
+					taskId,
+					...(options.agentId ? { agentId: options.agentId } : {}),
+					...(cursor ? { resumeCursor: cursor } : {}),
+				});
+			} catch (error) {
+				const current = application.resolve(task.id);
+				if (!["queued", "running"].includes(current.state)) {
+					console.log(`${current.state.toUpperCase()}  ${current.stateReason ?? "settled"}`);
+					break;
+				}
+				throw error;
+			}
+			if (interactive) renderAttachResponse(response);
+			else console.log(JSON.stringify(response));
+			const nextCursor = response.cursor;
+			cursor =
+				typeof nextCursor === "object" &&
+				nextCursor !== null &&
+				"generation" in nextCursor &&
+				typeof nextCursor.generation === "string" &&
+				"sequence" in nextCursor &&
+				Number.isSafeInteger(nextCursor.sequence)
+					? { generation: nextCursor.generation, sequence: nextCursor.sequence as number }
+					: undefined;
+			if (following) await new Promise((resolve) => setTimeout(resolve, 500));
+		} while (following);
+	} finally {
+		stopFollowing();
+		input?.close();
+		await controlQueue;
+		process.off("SIGINT", stopFollowing);
+	}
+}
+
+function renderAttachResponse(response: DaemonResponse): void {
+	const snapshot = response.snapshot;
+	if (snapshot && typeof snapshot === "object" && "currentTurn" in snapshot) {
+		const currentTurn = snapshot.currentTurn;
+		const state =
+			currentTurn && typeof currentTurn === "object" && "state" in currentTurn
+				? String(currentTurn.state)
+				: "unknown";
+		console.log(chalk.dim(`worker snapshot  ${state}`));
+	}
+	const events = response.events;
+	if (!Array.isArray(events)) return;
+	for (const event of events) {
+		if (!event || typeof event !== "object") continue;
+		const record = event as Record<string, unknown>;
+		const type = typeof record.type === "string" ? record.type : "event";
+		const timestamp = typeof record.createdAt === "string" ? record.createdAt.slice(11, 19) : "--:--:--";
+		console.log(`${chalk.dim(timestamp)}  ${chalk.cyan(type)}`);
+	}
+}
+
 export async function handleDaemonCommand(
 	args: string[],
 	agentDir: string,
-	enabled = true,
 	settings?: DaemonRuntimeSettings,
 ): Promise<boolean> {
 	if (args[0] === "attach" || args[0] === "detach") {
-		if (!enabled) {
-			console.error(chalk.red("Error: Long Tasks are disabled by longTasks.enabled"));
-			process.exitCode = 1;
-			return true;
-		}
 		try {
 			const taskId = args[1];
 			if (!taskId) throw new Error(`${args[0]} requires a Task ID`);
 			const agentIndex = args.indexOf("--agent");
 			const agentId = agentIndex >= 0 ? args[agentIndex + 1] : undefined;
-			const response = await requestDaemon(agentDir, {
-				command: args[0],
-				taskId,
-				...(agentId ? { agentId } : {}),
-			});
-			console.log(JSON.stringify(response));
+			if (args[0] === "attach") {
+				await attachTask(agentDir, taskId, { ...(agentId ? { agentId } : {}), follow: args.includes("--follow") });
+			} else {
+				console.log(
+					JSON.stringify(
+						await requestDaemon(agentDir, { command: "detach", taskId, ...(agentId ? { agentId } : {}) }),
+					),
+				);
+			}
 		} catch (error) {
 			console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
 			process.exitCode = 1;
@@ -767,11 +905,6 @@ export async function handleDaemonCommand(
 		return true;
 	}
 	if (args[0] !== "daemon") return false;
-	if (!enabled) {
-		console.error(chalk.red("Error: Long Tasks are disabled by longTasks.enabled"));
-		process.exitCode = 1;
-		return true;
-	}
 	const command = args[1];
 	try {
 		if (!command || command === "help" || command === "--help") {

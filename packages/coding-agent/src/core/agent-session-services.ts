@@ -3,6 +3,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
+import type { AgentSessionLifecycleRef } from "./agent-session-lifecycle.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import {
@@ -62,6 +63,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	excludeTools?: CreateAgentSessionOptions["excludeTools"];
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
+	lifecycleRef?: AgentSessionLifecycleRef;
 }
 
 /**
@@ -216,6 +218,7 @@ export async function createAgentSessionFromServices(
 		excludeTools: options.excludeTools,
 		noTools: options.noTools,
 		customTools: options.customTools,
+		lifecycleRef: options.lifecycleRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});
 }

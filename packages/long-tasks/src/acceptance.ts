@@ -16,15 +16,19 @@ export class AcceptanceRunner {
 		this.store = store;
 	}
 
-	runAutomated(taskId: string): { passed: string[]; failed: string[]; pendingManual: string[] } {
+	runAutomated(
+		taskId: string,
+		requestId: string,
+	): { passed: string[]; failed: string[]; pendingManual: string[]; outcomeUnknown: string[] } {
 		const task = this.store.requireTask(taskId);
 		const workspaceRoot = realpathSync(task.workspaceRoot);
 		const passed: string[] = [];
 		const failed: string[] = [];
 		const pendingManual: string[] = [];
+		const outcomeUnknown: string[] = [];
 		for (const criterion of task.acceptance) {
 			if (criterion.kind === "manual") {
-				pendingManual.push(criterion.id);
+				(this.store.hasPassedAcceptance(taskId, criterion.id) ? passed : pendingManual).push(criterion.id);
 				continue;
 			}
 			if (criterion.kind === "agent_evidence") {
@@ -34,6 +38,15 @@ export class AcceptanceRunner {
 			if (criterion.kind === "command") {
 				const cwd = resolve(workspaceRoot, criterion.cwd);
 				if (!inside(workspaceRoot, cwd)) throw new Error(`Acceptance cwd escapes workspace: ${criterion.cwd}`);
+				const execution = this.store.beginAcceptanceCommand(taskId, requestId, criterion.id);
+				if (execution === "unknown") {
+					outcomeUnknown.push(criterion.id);
+					continue;
+				}
+				if (execution === "finished") {
+					(this.store.hasPassedAcceptance(taskId, criterion.id) ? passed : failed).push(criterion.id);
+					continue;
+				}
 				const result = spawnSync(criterion.command, {
 					cwd,
 					shell: true,
@@ -42,7 +55,7 @@ export class AcceptanceRunner {
 					maxBuffer: 1024 * 1024,
 				});
 				const success = result.status === 0 && !result.error;
-				this.store.recordAcceptance(taskId, criterion.id, success, {
+				this.store.finishAcceptanceCommand(taskId, requestId, criterion.id, success, {
 					exitCode: result.status,
 					signal: result.signal,
 					stdoutSha256: createHash("sha256")
@@ -64,6 +77,6 @@ export class AcceptanceRunner {
 			this.store.recordAcceptance(taskId, criterion.id, success, { path: criterion.path, actualSha256 });
 			(success ? passed : failed).push(criterion.id);
 		}
-		return { passed, failed, pendingManual };
+		return { passed, failed, pendingManual, outcomeUnknown };
 	}
 }

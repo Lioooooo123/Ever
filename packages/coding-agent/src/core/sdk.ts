@@ -1,9 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import { type AssistantMessageEventStream, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	clampThinkingLevel,
+	type Message,
+	type Model,
+	streamSimple,
+} from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
+import { type AgentSessionLifecycleRef, currentAgentSessionRequestKind } from "./agent-session-lifecycle.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
@@ -82,6 +91,8 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Host-owned awaited lifecycle hooks for durable execution. */
+	lifecycleRef?: AgentSessionLifecycleRef;
 }
 
 /** Result from createAgentSession */
@@ -290,6 +301,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	const lifecycleRef = options.lifecycleRef ?? {};
 
 	agent = new Agent({
 		initialState: {
@@ -300,6 +312,43 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		convertToLlm: convertToLlmWithBlockImages,
 		streamFn: async (model, context, options) => {
+			const requestId = randomUUID();
+			const requestKind = currentAgentSessionRequestKind();
+			const errorMessage = (error: unknown): AssistantMessage => ({
+				role: "assistant",
+				content: [],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "error",
+				errorMessage: error instanceof Error ? error.message : String(error),
+				timestamp: Date.now(),
+			});
+			try {
+				await lifecycleRef.current?.handle({
+					type: "before_request",
+					sessionId: sessionManager.getSessionId(),
+					requestId,
+					kind: requestKind,
+					model,
+				});
+			} catch (error) {
+				const failed = createAssistantMessageEventStream();
+				failed.push({
+					type: "error",
+					reason: "error",
+					error: errorMessage(error),
+				});
+				return failed;
+			}
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
@@ -309,24 +358,115 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const headerRunner = extensionRunnerRef.current;
-			return modelRuntime.streamSimple(model, context, {
-				...options,
-				timeoutMs,
-				websocketConnectTimeoutMs,
-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
-				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				transformHeaders: async (requestHeaders) => {
-					const headers = mergeProviderAttributionHeaders(
-						model,
-						settingsManager,
-						options?.sessionId,
-						requestHeaders,
-					);
-					return headerRunner?.hasHandlers("before_provider_headers")
-						? headerRunner.emitBeforeProviderHeaders(headers ?? {})
-						: (headers ?? {});
-				},
+			let response: AssistantMessageEventStream;
+			try {
+				response = modelRuntime.streamSimple(model, context, {
+					...options,
+					timeoutMs,
+					websocketConnectTimeoutMs,
+					maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
+					maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+					transformHeaders: async (requestHeaders) => {
+						const headers = mergeProviderAttributionHeaders(
+							model,
+							settingsManager,
+							options?.sessionId,
+							requestHeaders,
+						);
+						return headerRunner?.hasHandlers("before_provider_headers")
+							? headerRunner.emitBeforeProviderHeaders(headers ?? {})
+							: (headers ?? {});
+					},
+				});
+			} catch (error) {
+				const message = errorMessage(error);
+				await lifecycleRef.current?.handle({
+					type: "after_response",
+					sessionId: sessionManager.getSessionId(),
+					requestId,
+					kind: requestKind,
+					message,
+					usage: message.usage,
+				});
+				const failed = createAssistantMessageEventStream();
+				failed.push({ type: "error", reason: "error", error: message });
+				return failed;
+			}
+			const lifecycle = lifecycleRef.current;
+			if (!lifecycle) return response;
+			const wrapped = createAssistantMessageEventStream();
+			let terminalHandled = false;
+			void (async () => {
+				for await (const event of response) {
+					if (event.type === "done" || event.type === "error") {
+						terminalHandled = true;
+						const message = event.type === "done" ? event.message : event.error;
+						try {
+							await lifecycle.handle({
+								type: "after_response",
+								sessionId: sessionManager.getSessionId(),
+								requestId,
+								kind: requestKind,
+								message,
+								usage: message.usage,
+							});
+						} catch (error) {
+							wrapped.push({
+								type: "error",
+								reason: "error",
+								error: {
+									...message,
+									stopReason: "error",
+									errorMessage: error instanceof Error ? error.message : String(error),
+								},
+							});
+							return;
+						}
+					}
+					wrapped.push(event);
+				}
+				if (!terminalHandled) {
+					const message = await response.result();
+					try {
+						await lifecycle.handle({
+							type: "after_response",
+							sessionId: sessionManager.getSessionId(),
+							requestId,
+							kind: requestKind,
+							message,
+							usage: message.usage,
+						});
+						wrapped.end(message);
+					} catch (error) {
+						wrapped.push({
+							type: "error",
+							reason: "error",
+							error: {
+								...message,
+								stopReason: "error",
+								errorMessage: error instanceof Error ? error.message : String(error),
+							},
+						});
+					}
+				}
+			})().catch(async (error) => {
+				if (terminalHandled) return;
+				const message = errorMessage(error);
+				try {
+					await lifecycle.handle({
+						type: "after_response",
+						sessionId: sessionManager.getSessionId(),
+						requestId,
+						kind: requestKind,
+						message,
+						usage: message.usage,
+					});
+				} catch (lifecycleError) {
+					message.errorMessage = lifecycleError instanceof Error ? lifecycleError.message : String(lifecycleError);
+				}
+				wrapped.push({ type: "error", reason: "error", error: message });
 			});
+			return wrapped;
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
@@ -386,6 +526,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		allowedToolNames,
 		excludedToolNames,
 		extensionRunnerRef,
+		lifecycleRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
