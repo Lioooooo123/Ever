@@ -1,4 +1,4 @@
-# Karissa 产品定位与原生长程 Agent 架构
+# Ever 产品定位与原生长程 Agent 架构
 
 - 状态：Proposed
 - 日期：2026-08-12
@@ -8,13 +8,13 @@
 
 ## 1. 决策摘要
 
-Karissa 将从“Pi Coding Agent 加长程任务扩展”调整为“本地优先、可安全恢复、交付可验证的长程 Coding Agent”。Pi `AgentSessionRuntime` 仍是执行内核，但 Karissa 的公开产品语义由持久 Task 定义。
+Ever 将从“Pi Coding Agent 加长程任务扩展”调整为“本地优先、可安全恢复、交付可验证的长程 Coding Agent”。Pi `AgentSessionRuntime` 仍是执行内核，但 Ever 的公开产品语义由持久 Task 定义。
 
-`Task` 是产品的顶层持久实体，`Session` 是某个 Agent 的执行记录。公开的 Karissa 入口不再创建脱离 Task 的临时 Session。长程任务所需的 checkpoint、lease、budget、recovery、continuation、tool policy 和 acceptance 必须位于原生执行路径，不能依赖可卸载的 Extension。
+`Task` 是产品的顶层持久实体，`Session` 是某个 Agent 的执行记录。公开的 Ever 入口不再创建脱离 Task 的临时 Session。长程任务所需的 checkpoint、lease、budget、recovery、continuation、tool policy 和 acceptance 必须位于原生执行路径，不能依赖可卸载的 Extension。
 
 本次调整保留 Pi 的模型、工具、Session、compaction、Skills、用户 Extensions、TUI 和 RPC 基础能力，不重写 Agent Loop，也不建立第二套对话历史。产品首发只打通单仓库、单 Main Agent 的可靠执行路径。多 Agent、Cron、系统托管和团队控制台不进入首发承诺。
 
-产品判断是 **Pivot**：保留 durable execution、recovery、policy 和 acceptance 内核，收缩首发范围并改写市场定位。Karissa 不以“能够运行数小时”作为差异点，而以进程级持久性、副作用安全恢复和机器可验证交付建立差异。
+产品判断是 **Pivot**：保留 durable execution、recovery、policy 和 acceptance 内核，收缩首发范围并改写市场定位。Ever 不以“能够运行数小时”作为差异点，而以进程级持久性、副作用安全恢复和机器可验证交付建立差异。
 
 ## 2. 产品定位与市场假设
 
@@ -22,7 +22,7 @@ Karissa 将从“Pi Coding Agent 加长程任务扩展”调整为“本地优�
 
 首批用户是经常处理 30 分钟到数小时 repo 级任务的资深开发者、开源维护者、小型团队技术负责人，以及需要可重复运行 Coding Agent Eval 的基础设施团队。他们通常还满足至少一个条件：代码必须留在本地，需要使用自选模型或多个 Provider，依赖企业内网、本地数据库、模拟器、专用 SDK 或特殊硬件。
 
-Karissa 暂不面向以短时交互式 pair coding 为主的普通开发者，也不把需要 SSO、RBAC、集中管理和跨设备协作的大型企业作为第一市场。
+Ever 暂不面向以短时交互式 pair coding 为主的普通开发者，也不把需要 SSO、RBAC、集中管理和跨设备协作的大型企业作为第一市场。
 
 ### 2.2 用户任务
 
@@ -34,7 +34,7 @@ Karissa 暂不面向以短时交互式 pair coding 为主的普通开发者，�
 
 ### 2.3 市场楔子
 
-后台执行、长程目标、checkpoint、计划任务和多 Agent 已经是同类产品的常见能力。Karissa 的首发定位由三个可测试承诺组成：
+后台执行、长程目标、checkpoint、计划任务和多 Agent 已经是同类产品的常见能力。Ever 的首发定位由三个可测试承诺组成：
 
 1. **进程级持久性**：CLI、Worker 或模型连接中断后，Task 仍然存在，并能从 settled checkpoint 恢复。
 2. **副作用安全恢复**：每个变更操作都有持久 intent。结果未知时进入 `unknown_outcome`，不自动重放。
@@ -45,7 +45,7 @@ Pi 是实现这些承诺的执行内核和生态基础，不是产品对外的�
 ### 2.4 首发黄金路径
 
 ```text
-karissa run "升级依赖并修复测试" --verify "npm run check"
+ever run "升级依赖并修复测试" --verify "npm run check"
 -> 提交前检查 workspace、sandbox、预算和验收条件
 -> 创建持久 Task 并启动 Worker
 -> 用户可 detach，通过 status 或 attach 返回
@@ -62,24 +62,24 @@ karissa run "升级依赖并修复测试" --verify "npm run check"
 当前长程任务通过多处接线进入普通 Pi Runtime：
 
 ```text
-karissa <goal>
-  -> handleKarissaCommand
+ever <goal>
+  -> handleEverCommand
   -> 创建 Task 并唤醒 Daemon
   -> Worker 调用 task run
-  -> 修改 CLI 参数和 KARISSA_* 环境变量
+  -> 修改 CLI 参数和 EVER_* 环境变量
   -> 进入普通 main()
-  -> 加载隐藏的 karissa-long-tasks Extension
+  -> 加载隐藏的 ever-long-tasks Extension
   -> attachLongTaskRuntime
 ```
 
 这产生四个结构问题：
 
-1. **入口语义分裂**：同一个 `karissa` 既可能创建持久 Task，也可能进入普通临时 Session。
+1. **入口语义分裂**：同一个 `ever` 既可能创建持久 Task，也可能进入普通临时 Session。
 2. **生命周期分裂**：Worker、CLI、环境变量、Extension 和 Runtime 分别掌握一部分执行状态。
 3. **安全门禁可选**：长程 Tool Policy 通过 Extension hook 接入，结构上仍像附加功能。
 4. **恢复路径隐式**：Task 和 Agent identity 通过进程环境变量传递，调用方难以从 interface 看出执行约束。
 
-问题不在于 Extension 机制本身。用户 Extension 仍适合提供工具、资源和界面增强。问题在于持久性、安全、预算和恢复属于 Karissa 的核心语义，不应由 Extension 承担。
+问题不在于 Extension 机制本身。用户 Extension 仍适合提供工具、资源和界面增强。问题在于持久性、安全、预算和恢复属于 Ever 的核心语义，不应由 Extension 承担。
 
 当前实现还有四个会直接破坏首发体验的缺口：
 
@@ -92,22 +92,22 @@ karissa <goal>
 
 ## 4. 产品语义
 
-Karissa 只提供长程任务 Agent：
+Ever 只提供长程任务 Agent：
 
-- `karissa <goal>`：创建、启动并附着一个持久 Task。
-- `karissa`：进入 Task 创建与管理界面，不创建临时 Session。
-- `karissa task ...`：查询和控制持久 Task。
-- `karissa daemon ...`：管理本地 Supervisor 和 Worker。
+- `ever <goal>`：创建、启动并附着一个持久 Task。
+- `ever`：进入 Task 创建与管理界面，不创建临时 Session。
+- `ever task ...`：查询和控制持久 Task。
+- `ever daemon ...`：管理本地 Supervisor 和 Worker。
 - `--print`、JSON 和 RPC：仍是不同交互方式，但执行对象必须是 Task。
 - `auth`、`config`、模型列表和包管理：保留为运行环境管理命令。
 
-Pi 的普通 Session 能力继续作为内部执行内核和 SDK 能力存在，但不作为 Karissa CLI 的产品入口。
+Pi 的普通 Session 能力继续作为内部执行内核和 SDK 能力存在，但不作为 Ever CLI 的产品入口。
 
 ## 5. 总体架构
 
 ```mermaid
 flowchart LR
-    Entry["Karissa 唯一入口"] --> App["KarissaApplication"]
+    Entry["Ever 唯一入口"] --> App["EverApplication"]
     App --> Control["Task Control Plane"]
     Control --> Worker["Resident Agent Worker"]
     Worker --> Native["NativeLongTaskAgent"]
@@ -131,9 +131,9 @@ flowchart LR
 
 ## 6. 模块与职责
 
-### 6.1 KarissaApplication
+### 6.1 EverApplication
 
-`KarissaApplication` 是公开入口模块。它负责把 CLI、TUI、JSON 和 RPC 请求翻译为 Task command。
+`EverApplication` 是公开入口模块。它负责把 CLI、TUI、JSON 和 RPC 请求翻译为 Task command。
 
 负责：
 
@@ -204,7 +204,7 @@ interface NativeLongTaskAgent {
 - runtime snapshot 与漂移确认。
 - budget、tool policy 和 continuation policy。
 
-它替代当前通过 `KARISSA_TASK_RUN_ID`、`KARISSA_AGENT_RUN_ID` 等环境变量拼装运行模式的方式。
+它替代当前通过 `EVER_TASK_RUN_ID`、`EVER_AGENT_RUN_ID` 等环境变量拼装运行模式的方式。
 
 ### 6.5 Pi AgentSessionRuntime
 
@@ -216,7 +216,7 @@ Pi Runtime 继续负责：
 - compaction。
 - Skills、Prompt、用户 Extension 和呈现模式。
 
-Pi Runtime 不理解 Karissa 的 TaskStore、数据库 schema、lease 或 acceptance。
+Pi Runtime 不理解 Ever 的 TaskStore、数据库 schema、lease 或 acceptance。
 
 ### 6.6 Durable Task Store
 
@@ -256,7 +256,7 @@ Policy 包含三类规则：
 
 ## 7. 原生生命周期 seam
 
-Pi core 只增加通用的 Agent 生命周期 interface，不引入 Karissa 类型。建议使用一个事件入口，避免把多个回调散落到调用方：
+Pi core 只增加通用的 Agent 生命周期 interface，不引入 Ever 类型。建议使用一个事件入口，避免把多个回调散落到调用方：
 
 ```ts
 interface AgentSessionLifecycle {
@@ -278,9 +278,9 @@ interface AgentSessionLifecycle {
 两个真实 adapter 证明该 seam 的必要性：
 
 1. 普通 Pi SDK Session 使用默认生命周期 adapter。
-2. Karissa 使用 durable long-task adapter。
+2. Ever 使用 durable long-task adapter。
 
-`karissa-long-tasks` 内置 Extension 删除。用户 Extension 继续通过原有 Extension interface 加载，但不能覆盖原生生命周期的安全决定。
+`ever-long-tasks` 内置 Extension 删除。用户 Extension 继续通过原有 Extension interface 加载，但不能覆盖原生生命周期的安全决定。
 
 工具执行前事件必须是可等待的硬门禁，不能通过忽略返回值的 Session listener 持久化。调用顺序固定为：
 
@@ -348,7 +348,7 @@ await taskStore.persistResult()
 
 1. 每个 Task 有且只有一个 Main Agent。
 2. 每个 Agent 同时最多有一个有效 Worker。
-3. Task 是顶层实体，Session 不能脱离 Task 成为 Karissa 的公开执行模式。
+3. Task 是顶层实体，Session 不能脱离 Task 成为 Ever 的公开执行模式。
 4. Worker 的 cwd、工具根和策略 workspace 来自同一个 `AgentRecord.workspaceRoot`。
 5. 只有持有当前 lease、execution ID 和 fencing token 的 Worker 可以写持久状态。
 6. 变更操作先持久化 intent，再产生副作用。
@@ -386,18 +386,18 @@ await taskStore.persistResult()
 - 实现 `NativeLongTaskAgent` 和 durable lifecycle adapter。
 - 将上下文、inbox、预算、工具授权、compaction 和 settled checkpoint 从 Extension 移入原生模块。
 - 将 intent 持久化改成工具执行前必须 await 的门禁。
-- 删除 `karissa-long-tasks` 内置 Extension。
+- 删除 `ever-long-tasks` 内置 Extension。
 
 该阶段完成后，长程正确性不再依赖 Extension、环境变量或 listener 执行时序。
 
 ### 阶段三：收拢唯一入口
 
-- `karissa` 默认进入 Task 创建或管理界面。
+- `ever` 默认进入 Task 创建或管理界面。
 - 所有执行模式必须解析为 Task。
 - 删除普通 transient CLI 路由。
-- 删除 `longTasks.enabled` 和 `KARISSA_*` 模式拼装。
+- 删除 `longTasks.enabled` 和 `EVER_*` 模式拼装。
 - 将普通用户命令收敛为 `run`、`status`、`attach` 和 `stop`。
-- 更新 Karissa 独立 README、安装说明、帮助、设置、测试和 changelog。
+- 更新 Ever 独立 README、安装说明、帮助、设置、测试和 changelog。
 
 ### 阶段四：验证市场，再决定扩张
 
@@ -408,7 +408,7 @@ await taskStore.persistResult()
 ### 11.1 首次体验
 
 - 全新 checkout 到首个成功 Task 少于 10 分钟。
-- `karissa run` 在提交前完成 workspace、sandbox、预算和验收检查。
+- `ever run` 在提交前完成 workspace、sandbox、预算和验收检查。
 - 无法后台安全执行时直接解释原因，不创建一个随后静默暂停的 Task。
 - print、JSON 和 RPC 均能追溯到 Task ID 和 Agent ID。
 
@@ -496,11 +496,11 @@ Task、Agent、Schedule、Daemon 和 RPC 已经提供了较大的技术表面，
 
 ## 14. 最终完成定义
 
-满足以下条件后，Karissa 才算完成原生长程 Agent 转型：
+满足以下条件后，Ever 才算完成原生长程 Agent 转型：
 
 1. 全新用户可以在 10 分钟内启动第一个持久 Task，失败时获得明确原因和处理方式。
 2. 公开入口不会创建脱离 Task 的 Session。
-3. `karissa-long-tasks` 内置 Extension 已删除。
+3. `ever-long-tasks` 内置 Extension 已删除。
 4. 长程 Policy、checkpoint 和 continuation 位于原生必经路径。
 5. Task、Agent、Attempt 和 Session identity 通过类型化 descriptor 传递。
 6. Resident Worker 可以跨终端退出持续运行，并在进程或 Daemon 崩溃后安全恢复。

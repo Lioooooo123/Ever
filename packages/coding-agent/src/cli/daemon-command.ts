@@ -12,7 +12,7 @@ import {
 	SqliteTaskStore,
 	TaskNotificationDispatcher,
 	type TaskRecord,
-} from "@karissa/long-tasks";
+} from "@ever/long-tasks";
 import chalk from "chalk";
 import { ENV_AGENT_DIR } from "../config.ts";
 import { AuthStorage } from "../core/auth-storage.ts";
@@ -78,7 +78,7 @@ function paths(agentDir: string) {
 	return {
 		runDir,
 		socketPath: createDaemonSocketPath(agentDir),
-		pidPath: join(runDir, "karissa.pid"),
+		pidPath: join(runDir, "ever.pid"),
 		clientIdPath: join(runDir, "client-id"),
 		controlTokenPath: join(runDir, "control-token"),
 	};
@@ -398,27 +398,27 @@ async function serve(
 						stdio: ["ignore", logFd, logFd, "pipe"],
 						env: {
 							...sanitizeUnattendedEnvironment(process.env),
-							KARISSA_DAEMON_WORKER: "1",
-							KARISSA_RESIDENT_WORKER: "1",
-							KARISSA_WORKER_ID: workerId,
-							KARISSA_EXECUTION_ID: executionId,
-							KARISSA_WORKER_SOCKET: privateSocketPath,
-							KARISSA_WORKER_STARTED_AT: startedAt,
-							KARISSA_SUPERVISOR_GENERATION: supervisorGeneration,
-							KARISSA_RUN_DIRECTORY: runDir,
-							KARISSA_WORKER_HEARTBEAT_SECONDS: String(settings.workerHeartbeatSeconds),
-							KARISSA_WORKER_LEASE_SECONDS: String(settings.workerLeaseSeconds),
-							KARISSA_EVENT_REPLAY_MAX_COUNT: String(settings.eventReplayMaxCount),
-							KARISSA_EVENT_REPLAY_MAX_BYTES: String(settings.eventReplayMaxBytes),
-							KARISSA_SNAPSHOT_CHUNK_BYTES: String(settings.snapshotChunkBytes),
+							EVER_DAEMON_WORKER: "1",
+							EVER_RESIDENT_WORKER: "1",
+							EVER_WORKER_ID: workerId,
+							EVER_EXECUTION_ID: executionId,
+							EVER_WORKER_SOCKET: privateSocketPath,
+							EVER_WORKER_STARTED_AT: startedAt,
+							EVER_SUPERVISOR_GENERATION: supervisorGeneration,
+							EVER_RUN_DIRECTORY: runDir,
+							EVER_WORKER_HEARTBEAT_SECONDS: String(settings.workerHeartbeatSeconds),
+							EVER_WORKER_LEASE_SECONDS: String(settings.workerLeaseSeconds),
+							EVER_EVENT_REPLAY_MAX_COUNT: String(settings.eventReplayMaxCount),
+							EVER_EVENT_REPLAY_MAX_BYTES: String(settings.eventReplayMaxBytes),
+							EVER_SNAPSHOT_CHUNK_BYTES: String(settings.snapshotChunkBytes),
 							...(sandboxed
 								? {
-										KARISSA_UNATTENDED_SANDBOX: "1",
-										KARISSA_SANDBOX_ID: sandboxed.sandboxId,
-										KARISSA_SANDBOX_PROFILE_SHA256: sandboxed.profileSha256,
+										EVER_UNATTENDED_SANDBOX: "1",
+										EVER_SANDBOX_ID: sandboxed.sandboxId,
+										EVER_SANDBOX_PROFILE_SHA256: sandboxed.profileSha256,
 									}
 								: {}),
-							...(unsafeNoSandbox ? { KARISSA_UNSAFE_NO_SANDBOX: "1" } : {}),
+							...(unsafeNoSandbox ? { EVER_UNSAFE_NO_SANDBOX: "1" } : {}),
 						},
 					},
 				);
@@ -728,7 +728,7 @@ async function serve(
 }
 
 function serviceDefinition(agentDir: string) {
-	const cliEntry = process.argv[1] ?? "karissa";
+	const cliEntry = process.argv[1] ?? "ever";
 	return createDaemonServiceDefinition({
 		platform: process.platform,
 		homeDirectory: process.env.HOME ?? agentDir,
@@ -741,7 +741,7 @@ function serviceDefinition(agentDir: string) {
 
 function printHelp(): void {
 	console.log(
-		`karissa daemon commands:\n  karissa daemon start [--unsafe-no-sandbox]\n  karissa daemon status\n  karissa daemon workers\n  karissa daemon shutdown\n  karissa daemon install\n  karissa daemon uninstall\n  karissa daemon doctor`,
+		`ever daemon commands:\n  ever daemon start [--unsafe-no-sandbox]\n  ever daemon status\n  ever daemon workers\n  ever daemon shutdown\n  ever daemon install\n  ever daemon uninstall\n  ever daemon doctor`,
 	);
 }
 
@@ -774,7 +774,7 @@ export async function attachTask(
 	const application = new TaskApplication(agentDir);
 	const task = application.resolve(taskId);
 	const mainAgent = application.snapshot(task.id).agents.find((agent) => agent.kind === "main");
-	const clientId = `karissa-attach:${process.pid}`;
+	const clientId = `ever-attach:${process.pid}`;
 	let controlQueue = Promise.resolve();
 	const stopFollowing = () => {
 		following = false;
@@ -782,10 +782,10 @@ export async function attachTask(
 	if (following) process.once("SIGINT", stopFollowing);
 	const input = interactive ? createInterface({ input: process.stdin, output: process.stdout }) : undefined;
 	if (input) {
-		console.log(chalk.bold("KARISSA / LIVE TASK"));
+		console.log(chalk.bold("EVER / LIVE TASK"));
 		console.log(`${task.id.slice(0, 8)}  ${task.title}`);
 		console.log(chalk.dim("输入文本可转向；/pause /resume /cancel /detach"));
-		input.setPrompt(chalk.cyan("karissa> "));
+		input.setPrompt(chalk.cyan("ever> "));
 		input.on("line", (line) => {
 			const text = line.trim();
 			if (!text) {
@@ -883,21 +883,17 @@ export async function handleDaemonCommand(
 	agentDir: string,
 	settings?: DaemonRuntimeSettings,
 ): Promise<boolean> {
-	if (args[0] === "attach" || args[0] === "detach") {
+	if (args[0] === "detach") {
 		try {
 			const taskId = args[1];
 			if (!taskId) throw new Error(`${args[0]} requires a Task ID`);
 			const agentIndex = args.indexOf("--agent");
 			const agentId = agentIndex >= 0 ? args[agentIndex + 1] : undefined;
-			if (args[0] === "attach") {
-				await attachTask(agentDir, taskId, { ...(agentId ? { agentId } : {}), follow: args.includes("--follow") });
-			} else {
-				console.log(
-					JSON.stringify(
-						await requestDaemon(agentDir, { command: "detach", taskId, ...(agentId ? { agentId } : {}) }),
-					),
-				);
-			}
+			console.log(
+				JSON.stringify(
+					await requestDaemon(agentDir, { command: "detach", taskId, ...(agentId ? { agentId } : {}) }),
+				),
+			);
 		} catch (error) {
 			console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
 			process.exitCode = 1;

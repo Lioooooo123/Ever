@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteTaskStore } from "@karissa/long-tasks";
+import { SqliteTaskStore } from "@ever/long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import { TaskApplication } from "../src/core/task-application.ts";
 
@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 function createApplication() {
-	const root = mkdtempSync(join(tmpdir(), "karissa-task-application-"));
+	const root = mkdtempSync(join(tmpdir(), "ever-task-application-"));
 	temporaryPaths.push(root);
 	const agentDir = join(root, "agent");
 	const workspaceRoot = join(root, "workspace");

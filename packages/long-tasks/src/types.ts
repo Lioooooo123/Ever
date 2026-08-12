@@ -225,7 +225,7 @@ export const AcceptanceResultSchema = Type.Object({
 export type AcceptanceResult = Static<typeof AcceptanceResultSchema>;
 
 export const RuntimeSnapshotSchema = Type.Object({
-	karissaVersion: Type.String(),
+	everVersion: Type.String(),
 	upstreamCommit: Type.String(),
 	protocolVersion: Type.Integer({ minimum: 1 }),
 	model: Type.Object({

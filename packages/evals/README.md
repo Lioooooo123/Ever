@@ -179,15 +179,15 @@ names are declared with `forwardEnvironment`; their values are read only after D
 ```json
 [
   {
-    "kind": "karissa",
-    "name": "karissa",
+    "kind": "ever",
+    "name": "ever",
     "version": "0.84.1+a12230ac0",
     "executableDigest": "<64-character-sha256>",
     "configurationDigest": "<64-character-sha256>",
-    "command": ["/opt/karissa/bin/karissa"],
+    "command": ["/opt/ever/bin/ever"],
     "forwardEnvironment": ["OPENAI_API_KEY"],
     "preparation": {
-      "copyIn": [{ "source": "/absolute/path/karissa-release", "destination": "/opt/karissa" }]
+      "copyIn": [{ "source": "/absolute/path/ever-release", "destination": "/opt/ever" }]
     }
   },
   {
@@ -222,7 +222,7 @@ npm run eval -- benchmark \
   --benchmark terminal-bench-2-1 \
   --benchmark-root /absolute/path/to/terminal-bench-2.1 \
   --agent-config /absolute/path/to/agents.json \
-  --agents karissa,codex,terminus-2 \
+  --agents ever,codex,terminus-2 \
   --oracle-job <oracle-job-id> \
   --provider openai \
   --model <exact-model-id> \
@@ -240,13 +240,13 @@ npm run eval -- benchmark --redact <job-id> --secret-env OPENAI_API_KEY
 Docker must be installed and `docker info` must succeed. The command rejects floating agent versions, floating model
 aliases, digest drift, mismatched models, missing budgets, benchmark symlinks, and hidden tests visible before execution.
 
-Fault injection is intentionally separate from official benchmark jobs. Use only a Karissa agent, a profile name that
-starts with `karissa-reliability`, and a JSON schedule containing `kill_agent_process`, `kill_daemon_process`,
+Fault injection is intentionally separate from official benchmark jobs. Use only a Ever agent, a profile name that
+starts with `ever-reliability`, and a JSON schedule containing `kill_agent_process`, `kill_daemon_process`,
 `pause_agent_process`, or `terminate_container` entries:
 
 ```bash
 npm run eval -- benchmark <normal-options> \
-  --agents karissa \
-  --fault-profile karissa-reliability-daemon-kill \
+  --agents ever \
+  --fault-profile ever-reliability-daemon-kill \
   --fault-schedule /absolute/path/to/faults.json
 ```

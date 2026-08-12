@@ -23,7 +23,7 @@ function git(cwd: string, args: string[]): string {
 
 function runtimeSnapshot(): RuntimeSnapshot {
 	return {
-		karissaVersion: "0.1.0",
+		everVersion: "0.1.0",
 		upstreamCommit: "test",
 		protocolVersion: 1,
 		model: { provider: "faux", id: "faux-model" },
@@ -37,14 +37,14 @@ function runtimeSnapshot(): RuntimeSnapshot {
 
 describe("VerifiedChangeBundle", () => {
 	it("rebuilds a stable verified artifact from durable facts and the Git workspace", () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-change-bundle-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-change-bundle-"));
 		temporaryPaths.push(root);
 		const workspaceRoot = join(root, "workspace");
 		const artifactsRoot = join(root, "artifacts");
 		mkdirSync(workspaceRoot);
 		git(workspaceRoot, ["init"]);
-		git(workspaceRoot, ["config", "user.name", "Karissa Test"]);
-		git(workspaceRoot, ["config", "user.email", "karissa@example.invalid"]);
+		git(workspaceRoot, ["config", "user.name", "Ever Test"]);
+		git(workspaceRoot, ["config", "user.email", "ever@example.invalid"]);
 		writeFileSync(join(workspaceRoot, "result.txt"), "before\n");
 		git(workspaceRoot, ["add", "result.txt"]);
 		git(workspaceRoot, ["commit", "-m", "base"]);

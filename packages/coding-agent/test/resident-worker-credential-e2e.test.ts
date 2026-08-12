@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteTaskStore } from "@karissa/long-tasks";
+import { SqliteTaskStore } from "@ever/long-tasks";
 import { expect, it } from "vitest";
 import { requestDaemon } from "../src/cli/daemon-command.ts";
 import { workerSocketDirectory } from "../src/core/worker-socket.ts";
@@ -57,7 +57,7 @@ async function waitForTaskState(agentDir: string, taskId: string, expected: stri
 }
 
 async function waitForDaemonExit(agentDir: string): Promise<void> {
-	const pidPath = join(agentDir, "run", "karissa.pid");
+	const pidPath = join(agentDir, "run", "ever.pid");
 	const deadline = Date.now() + 5_000;
 	while (Date.now() < deadline) {
 		if (!existsSync(pidPath)) return;
@@ -69,11 +69,11 @@ async function waitForDaemonExit(agentDir: string): Promise<void> {
 		}
 		await new Promise((resolve) => setTimeout(resolve, 25));
 	}
-	throw new Error("Temporary Karissa daemon did not exit");
+	throw new Error("Temporary Ever daemon did not exit");
 }
 
 it("runs a durable Task with only its provider credential delivered over the Worker startup channel", async () => {
-	const root = mkdtempSync(join(tmpdir(), "karissa-resident-e2e-"));
+	const root = mkdtempSync(join(tmpdir(), "ever-resident-e2e-"));
 	const agentDir = join(root, "agent");
 	const workspace = join(root, "workspace");
 	mkdirSync(agentDir);
@@ -154,6 +154,7 @@ it("runs a durable Task with only its provider credential delivered over the Wor
 				join(repositoryRoot, "tsconfig.json"),
 				join(repositoryRoot, "packages", "coding-agent", "src", "cli.ts"),
 				"finish using the provided proof",
+				"--detach",
 				"--yes",
 				"--unsafe-no-sandbox",
 				"--provider",
@@ -162,7 +163,7 @@ it("runs a durable Task with only its provider credential delivered over the Wor
 				"local-model",
 				"--json",
 			],
-			{ cwd: workspace, env: { ...process.env, KARISSA_CODING_AGENT_DIR: agentDir } },
+			{ cwd: workspace, env: { ...process.env, EVER_CODING_AGENT_DIR: agentDir } },
 		);
 		const result = JSON.parse(output.trim().split("\n").at(-1)!) as { taskId: string };
 		await waitForTaskState(agentDir, result.taskId, "completed");

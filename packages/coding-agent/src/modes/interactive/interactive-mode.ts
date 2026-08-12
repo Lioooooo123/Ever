@@ -327,6 +327,8 @@ export interface InteractiveModeOptions {
 	verbose?: boolean;
 	/** TUI layout mode. */
 	tuiMode?: TuiMode;
+	/** Flush an attached durable Task before the terminal process exits. */
+	onBeforeExit?: () => Promise<void>;
 }
 
 interface InteractiveTuiOptions {
@@ -908,7 +910,7 @@ export class InteractiveMode {
 			const taskRun = getTaskRunContext();
 			const runtimeLabel = taskRun ? `TASK ${taskRun.taskId.slice(0, 8)}` : "SESSION";
 			const logo =
-				theme.bold(theme.fg("accent", "KARISSA")) +
+				theme.bold(theme.fg("accent", "EVER")) +
 				theme.fg("dim", ` / RUNTIME v${this.version}`) +
 				theme.fg("success", `  [${runtimeLabel}]`);
 
@@ -949,7 +951,7 @@ export class InteractiveMode {
 			);
 			const onboarding = theme.fg(
 				"dim",
-				"State the outcome, constraints, and verification. Karissa preserves progress at settled boundaries.",
+				"State the outcome, constraints, and verification. Ever preserves progress at settled boundaries.",
 			);
 			this.builtInHeader = new ExpandableText(
 				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
@@ -3784,6 +3786,7 @@ export class InteractiveMode {
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
+			await this.options.onBeforeExit?.();
 			process.exit(0);
 		}
 
@@ -3797,9 +3800,13 @@ export class InteractiveMode {
 
 		this.stop();
 		await this.runtimeHost.dispose();
+		await this.options.onBeforeExit?.();
 
+		const taskRun = getTaskRunContext();
 		const resumeCommand = formatResumeCommand(this.sessionManager);
-		if (resumeCommand) {
+		if (taskRun) {
+			process.stdout.write(`${chalk.dim("Task 已保存。重新进入：")} ever attach ${taskRun.taskId.slice(0, 8)}\n`);
+		} else if (resumeCommand) {
 			process.stdout.write(`${chalk.dim("To resume this session:")} ${resumeCommand}\n`);
 		}
 

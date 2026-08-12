@@ -1,14 +1,14 @@
-# Karissa 长程控制面与自迭代运行时技术规范
+# Ever 长程控制面与自迭代运行时技术规范
 
 - 状态：Proposed
 - 版本：0.1
 - 日期：2026-08-11
 - 依赖规范：[TECHNICAL_SPEC.md](./TECHNICAL_SPEC.md)
-- 目标读者：Karissa 维护者、实现工程师、代码评审者
+- 目标读者：Ever 维护者、实现工程师、代码评审者
 
 ## 1. 决策摘要
 
-Karissa 保留现有 `Task`、`Agent`、`Attempt`、checkpoint、lease、budget、durable inbox 和 worktree 数据模型，不重写 Agent Loop，也不引入外部工作流引擎。
+Ever 保留现有 `Task`、`Agent`、`Attempt`、checkpoint、lease、budget、durable inbox 和 worktree 数据模型，不重写 Agent Loop，也不引入外部工作流引擎。
 
 本规范新增一个本地长程控制面：Daemon 只负责监督、路由、恢复和调度；每个活跃 Agent 由独立的 resident worker 持有 `AgentSessionRuntime`。CLI 可以与 worker 分离并重新附着。每个 settled turn 之后，由持久化的 `ContinuationController` 决定完成、继续、等待、暂停或失败，Daemon 不再因为 Agent 未完成而无条件重复启动同一 Prompt。
 
@@ -40,7 +40,7 @@ Karissa 保留现有 `Task`、`Agent`、`Attempt`、checkpoint、lease、budget�
 
 当前实现已经具备：
 
-- `@karissa/long-tasks` SQLite 数据面
+- `@ever/long-tasks` SQLite 数据面
 - settled-turn 和 pre-compaction checkpoint
 - Attempt runtime snapshot 和漂移门禁
 - Agent lease、fencing token、过期执行恢复
@@ -105,7 +105,7 @@ Karissa 保留现有 `Task`、`Agent`、`Attempt`、checkpoint、lease、budget�
 - 不支持多机 Supervisor 或远程 Worker。
 - 不引入 Temporal、Redis、Postgres、Kafka 或向量数据库。
 - 不实现递归 subagent；Agent 拓扑继续限制为主 Agent 加一层 subagent。
-- 不照搬 Prime Agent 的 IPython Kernel；Karissa 继续使用 TypeScript AgentSession 和现有工具模型。
+- 不照搬 Prime Agent 的 IPython Kernel；Ever 继续使用 TypeScript AgentSession 和现有工具模型。
 - 不承诺完全重放 token stream；重连基线是持久 snapshot 加后续事件。
 
 ## 6. 核心不变量
@@ -215,7 +215,7 @@ Daemon spawn、前台 `task run`、subagent `agent run`、Runtime attach 和工�
 | --- | --- | --- |
 | `primary` | 等于 Task canonical root | 按主 Agent 策略 |
 | `read_only_shared` | 等于 Task canonical root | sandbox 强制只读 |
-| `isolated_worktree` | 位于 Karissa worktree root，Git identity 匹配 Task | 仅该 worktree |
+| `isolated_worktree` | 位于 Ever worktree root，Git identity 匹配 Task | 仅该 worktree |
 
 符号链接比较必须使用 `realpath` 后的路径。worktree 不存在、Git identity 不匹配或路径落在主工作区时，Agent 进入 `waiting_input`，不能退回 Task root。
 
@@ -672,7 +672,7 @@ interface ToolDurabilityMetadata {
 - 工具 metadata 和 schema hash
 - System Prompt hash
 - Sandbox image/profile/mount/network policy hash
-- Karissa build version和 upstream commit
+- Ever build version和 upstream commit
 
 环境变量只记录允许列表中的变量名及“是否存在”，不记录值。Provider token、Cookie、Authorization header 和完整 shell 环境不能进入 snapshot。
 
@@ -693,15 +693,15 @@ Snapshot 变化分类：
 保留现有命令，并增加：
 
 ```text
-karissa attach <task-id> [--agent <agent-id>]
-karissa detach <task-id> [--agent <agent-id>]
-karissa task stop <task-id> [--agent <agent-id>]
-karissa task schedule add <task-id> --cron <expr> --timezone <iana>
-karissa task schedule add <task-id> --interval <duration>
-karissa task schedule ls <task-id>
-karissa task schedule pause|resume|cancel <schedule-id>
-karissa daemon shutdown [--force]
-karissa daemon workers
+ever attach <task-id> [--agent <agent-id>]
+ever detach <task-id> [--agent <agent-id>]
+ever task stop <task-id> [--agent <agent-id>]
+ever task schedule add <task-id> --cron <expr> --timezone <iana>
+ever task schedule add <task-id> --interval <duration>
+ever task schedule ls <task-id>
+ever task schedule pause|resume|cancel <schedule-id>
+ever daemon shutdown [--force]
+ever daemon workers
 ```
 
 `task logs --follow` 迁移到 attach event stream；保留 SQLite 审计日志模式 `task events`。
@@ -924,7 +924,7 @@ karissa daemon workers
 - `004_control_plane` 中 `daemon_commands`
 - one-shot 兼容模式
 
-完成定义：客户端退出不终止 Agent；Supervisor 和客户端崩溃后可以恢复，不重复变更命令。即使没有自迭代，用户也能把 Karissa 当作可附着的长期 Session 使用。
+完成定义：客户端退出不终止 Agent；Supervisor 和客户端崩溃后可以恢复，不重复变更命令。即使没有自迭代，用户也能把 Ever 当作可附着的长期 Session 使用。
 
 建议模块：
 
@@ -961,7 +961,7 @@ packages/coding-agent/src/daemon/
 - launchd/systemd 的安装、启动、停止、升级和 doctor
 - 8 小时稳定性验收
 
-完成定义：Karissa 能在用户终端关闭和机器重启后恢复计划工作，不重复不确定 tick。
+完成定义：Ever 能在用户终端关闭和机器重启后恢复计划工作，不重复不确定 tick。
 
 ## 23. 实现与验证命令
 
@@ -1037,14 +1037,14 @@ Resident Worker 把一个 Agent 的 Runtime、调度、事件和子进程放回�
 - 持久状态继续使用现有 SQLite adapter。
 - 测试继续使用 Vitest 和 faux provider。
 - Phase D 新增直接依赖 `croner@10.0.1`。它没有传递依赖，支持 IANA timezone；安装时仍须按仓库规则审查包内容、许可、lockfile 和 shrinkwrap diff。
-- 本规范不新增 sandbox 产品或云服务。Phase A 只接入 Karissa 运行时提供的 `SandboxCapability`；能力不存在时，后台副作用工具按第 14 节拒绝执行。独立 sandbox 实现属于另一份安全规范，不能阻塞本规范的 fail-closed 门禁。
+- 本规范不新增 sandbox 产品或云服务。Phase A 只接入 Ever 运行时提供的 `SandboxCapability`；能力不存在时，后台副作用工具按第 14 节拒绝执行。独立 sandbox 实现属于另一份安全规范，不能阻塞本规范的 fail-closed 门禁。
 
 ## 28. 参考实现
 
 - [Prime Agent Architecture](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/architecture.md)：客户端、Supervisor、resident worker 和 Session 的所有权边界。
 - [Prime Agent Daemon Architecture](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/daemon.md)：worker 接管、command journal、cursor、snapshot、backpressure 和调度 claim。
 - [Prime Agent Long-Running Agents](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/long-running-agents.md)：Goal、Autonomous、Heartbeat、Cron 和 detached Session 的统一执行路径。
-- [TECHNICAL_SPEC.md](./TECHNICAL_SPEC.md)：Karissa 已确定的持久任务、多 Agent、预算和安全边界。
+- [TECHNICAL_SPEC.md](./TECHNICAL_SPEC.md)：Ever 已确定的持久任务、多 Agent、预算和安全边界。
 
 ## 29. 批准条件
 

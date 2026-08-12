@@ -95,7 +95,7 @@ async function executeRequest(
 		return application.control(
 			{ action, taskRef: requireString(params.taskId, "taskId") },
 			{
-				clientId: typeof params.clientId === "string" ? params.clientId : "karissa-rpc",
+				clientId: typeof params.clientId === "string" ? params.clientId : "ever-rpc",
 				...(typeof params.commandId === "string" ? { commandId: params.commandId } : {}),
 			},
 		);
@@ -109,7 +109,7 @@ async function executeRequest(
 				message: requireString(params.message, "message"),
 			},
 			{
-				clientId: typeof params.clientId === "string" ? params.clientId : "karissa-rpc",
+				clientId: typeof params.clientId === "string" ? params.clientId : "ever-rpc",
 				...(typeof params.commandId === "string" ? { commandId: params.commandId } : {}),
 			},
 		);

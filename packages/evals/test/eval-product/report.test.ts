@@ -73,7 +73,7 @@ describe("unified Eval reports", () => {
 		const jobId = "benchmark-job";
 		const benchmark = { name: "terminal-bench", version: "2.1", source: "local", resolvedDigest: digest("a") };
 		const agent = {
-			name: "karissa",
+			name: "ever",
 			version: "1.0.0",
 			executableDigest: digest("b"),
 			modelProvider: "openai",

@@ -12,39 +12,39 @@
 
 ---
 
-## Karissa long-running Tasks
+## Ever long-running Tasks
 
-Karissa is the durable, unattended product surface built on the Pi runtime. A Task survives terminal disconnects and daemon restarts, records attempts and evidence in SQLite, and only reaches `completed` after its acceptance policy is satisfied.
+Ever is the durable, unattended product surface built on the Pi runtime. A Task survives terminal disconnects and daemon restarts, records attempts and evidence in SQLite, and only reaches `completed` after its acceptance policy is satisfied.
 
 ```bash
 # Open the branded Task Home
-karissa
+ever
 
 # Create, start, and follow a Task
-karissa "refactor the repository and run the focused tests" --verify "npm run check" --yes
+ever "refactor the repository and run the focused tests" --verify "npm run check" --yes
 
 # Pin an exact provider/model for reproducible recovery
-karissa "finish the migration" --provider anthropic --model claude-sonnet-4-6 --yes
+ever "finish the migration" --provider anthropic --model claude-sonnet-4-6 --yes
 
 # Submit without following the event stream
-karissa --print "audit the architecture" --yes
+ever --print "audit the architecture" --yes
 
 # Inspect or reconnect
-karissa status
-karissa attach <task-id> --follow
+ever status
+ever attach <task-id> --follow
 ```
 
 Automation uses strict JSONL framing. Each request receives exactly one response with the same `id`:
 
 ```bash
-printf '%s\n' '{"id":1,"method":"task.list"}' | karissa --mode rpc
+printf '%s\n' '{"id":1,"method":"task.list"}' | ever --mode rpc
 ```
 
 The RPC methods are `task.list`, `task.get`, `task.events`, `task.bundle`, `task.submit`, `task.pause`, `task.resume`, `task.cancel`, and `task.steer`. Mutating retries can include stable `clientId` and `commandId` values for idempotency. Unattended Tasks require the platform sandbox unless `--unsafe-no-sandbox` is explicitly supplied.
 
 Every unattended Task pins its exact model before queueing. The Supervisor removes ambient secrets from the Worker environment and sends only that Provider's credential through an owner-only, one-time startup channel; model-controlled shell commands receive no Provider, SSH, or GPG credentials.
 
-The legacy interactive Session documentation below describes the embedded Pi runtime used by Workers and SDK consumers. It is not the public Karissa task entrypoint.
+The legacy interactive Session documentation below describes the embedded Pi runtime used by Workers and SDK consumers. It is not the public Ever task entrypoint.
 
 ---
 

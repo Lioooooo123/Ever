@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe("WorkerRegistry", () => {
 	it("writes owner-only descriptors without the raw startup token", () => {
-		const directory = mkdtempSync(join(tmpdir(), "karissa-worker-registry-"));
+		const directory = mkdtempSync(join(tmpdir(), "ever-worker-registry-"));
 		temporaryDirectories.push(directory);
 		const registry = new WorkerRegistry(directory);
 		registry.write({

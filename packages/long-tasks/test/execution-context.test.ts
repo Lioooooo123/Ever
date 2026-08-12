@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe("agent execution context", () => {
 	it("resolves main and isolated subagent workspaces from the Agent record", () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-execution-context-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-execution-context-"));
 		temporaryPaths.push(root);
 		const primary = join(root, "primary");
 		const isolated = join(root, "isolated");
@@ -52,7 +52,7 @@ describe("agent execution context", () => {
 	});
 
 	it("rejects an isolated Agent that points at the primary workspace", () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-execution-context-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-execution-context-"));
 		temporaryPaths.push(root);
 		const store = createInMemoryTaskStore();
 		const controller = new TaskController(store);

@@ -101,20 +101,20 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		expect(result.stderr).not.toContain("Usage:");
 	});
 
-	it("prints Karissa help without loading trusted startup packages in json mode", async () => {
+	it("prints Ever help without loading trusted startup packages in json mode", async () => {
 		const result = await runCli(["--mode", "json", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Karissa long-running agent");
+		expect(result.stdout).toContain("Ever long-running agent");
 		expect(result.stderr).not.toContain("changed 1 package in 471ms");
 		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});
 
-	it("prints Karissa help without loading trusted startup packages in print mode", async () => {
+	it("prints Ever help without loading trusted startup packages in print mode", async () => {
 		const result = await runCli(["-p", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Karissa long-running agent");
+		expect(result.stdout).toContain("Ever long-running agent");
 		expect(result.stderr).not.toContain("changed 1 package in 471ms");
 		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});
@@ -123,7 +123,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		const result = await runCli(["-p", "--help"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Karissa long-running agent");
+		expect(result.stdout).toContain("Ever long-running agent");
 		expect(result.stderr).not.toContain("changed 1 package in 471ms");
 		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});

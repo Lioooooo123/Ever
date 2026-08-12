@@ -30,7 +30,7 @@ export default defineConfig({
 			{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 			{ find: /^@earendil-works\/pi-agent-core\/node$/, replacement: workspaceSourcePaths.agentNode },
 			{ find: /^@earendil-works\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
-			{ find: /^@karissa\/long-tasks$/, replacement: workspaceSourcePaths.longTasksIndex },
+			{ find: /^@ever\/long-tasks$/, replacement: workspaceSourcePaths.longTasksIndex },
 		],
 	},
 });

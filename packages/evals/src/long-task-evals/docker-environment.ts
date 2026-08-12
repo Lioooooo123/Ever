@@ -82,7 +82,7 @@ export class DockerEnvironmentAdapter implements EnvironmentAdapter {
 			);
 		}
 
-		const name = `karissa-eval-${randomUUID()}`;
+		const name = `ever-eval-${randomUUID()}`;
 		const network = testCase.environment.network === "none" ? "none" : "bridge";
 		const cpus = typeof testCase.metadata.cpus === "number" ? testCase.metadata.cpus : 2;
 		const memoryMb = typeof testCase.metadata.memoryMb === "number" ? testCase.metadata.memoryMb : 4096;

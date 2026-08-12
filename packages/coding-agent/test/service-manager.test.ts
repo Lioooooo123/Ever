@@ -18,15 +18,15 @@ afterEach(() => {
 
 describe("daemon service manager", () => {
 	it.each(["darwin", "linux"] as const)("installs, loads, unloads, and removes %s services", async (platform) => {
-		const homeDirectory = mkdtempSync(join(tmpdir(), "karissa-service-"));
+		const homeDirectory = mkdtempSync(join(tmpdir(), "ever-service-"));
 		directories.push(homeDirectory);
 		const definition = createDaemonServiceDefinition({
 			platform,
 			homeDirectory,
-			agentDirectory: "/tmp/karissa agent",
-			agentDirectoryEnvironmentName: "KARISSA_CODING_AGENT_DIR",
+			agentDirectory: "/tmp/ever agent",
+			agentDirectoryEnvironmentName: "EVER_CODING_AGENT_DIR",
 			nodePath: "/usr/local/bin/node",
-			cliEntry: "/tmp/karissa cli.js",
+			cliEntry: "/tmp/ever cli.js",
 		});
 		const commands: string[] = [];
 		const runner: ServiceCommandRunner = async (command, args, tolerateFailure) => {

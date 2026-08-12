@@ -9,7 +9,7 @@ const repoRoot = resolve(scriptDir, "..");
 const codingAgentDir = join(repoRoot, "packages/coding-agent");
 const packageJson = JSON.parse(readFileSync(join(codingAgentDir, "package.json"), "utf8"));
 const bundledDependencies = packageJson.bundledDependencies ?? packageJson.bundleDependencies ?? [];
-const workspaceLocations = new Map([["@karissa/long-tasks", join(repoRoot, "packages/long-tasks")]]);
+const workspaceLocations = new Map([["@ever/long-tasks", join(repoRoot, "packages/long-tasks")]]);
 const cleanOnly = process.argv.slice(2).includes("--clean");
 
 for (const packageName of bundledDependencies) {

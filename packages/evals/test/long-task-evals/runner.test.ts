@@ -135,10 +135,10 @@ afterEach(async () => {
 
 describe("long-task Eval runner", () => {
 	it("runs agents sequentially, hides tests, persists results, and resumes without duplicates", async () => {
-		const root = await mkdtemp(join(tmpdir(), "karissa-eval-test-"));
+		const root = await mkdtemp(join(tmpdir(), "ever-eval-test-"));
 		temporaryDirectories.push(root);
 		const cases = [testCase()];
-		const agents = [new FakeAgent("karissa"), new FakeAgent("codex"), new FakeAgent("terminus-2")];
+		const agents = [new FakeAgent("ever"), new FakeAgent("codex"), new FakeAgent("terminus-2")];
 		const manifest: EvalJobManifest = {
 			schemaVersion: 1,
 			jobId: "job-1",
@@ -162,13 +162,13 @@ describe("long-task Eval runner", () => {
 		const second = await runner.run({ manifest, cases, agents });
 		expect(second).toHaveLength(6);
 		expect(agents.map((agent) => agent.runs)).toEqual([2, 2, 2]);
-		expect(await readFile(join(store.jobDirectory, "comparison.md"), "utf8")).toContain("karissa");
+		expect(await readFile(join(store.jobDirectory, "comparison.md"), "utf8")).toContain("ever");
 	});
 
 	it("rejects model-backed jobs without a cost budget before environment preflight", async () => {
-		const root = await mkdtemp(join(tmpdir(), "karissa-eval-test-"));
+		const root = await mkdtemp(join(tmpdir(), "ever-eval-test-"));
 		temporaryDirectories.push(root);
-		const agent = new FakeAgent("karissa");
+		const agent = new FakeAgent("ever");
 		const environmentAdapter = new FakeEnvironmentAdapter();
 		const manifest: EvalJobManifest = {
 			schemaVersion: 1,

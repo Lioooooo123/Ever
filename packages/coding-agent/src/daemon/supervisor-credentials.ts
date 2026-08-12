@@ -2,9 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export function deriveWorkerToken(controlToken: string, workerId: string, supervisorGeneration: string): string {
 	if (!controlToken || !workerId || !supervisorGeneration) throw new Error("Worker credential inputs are required");
-	return createHmac("sha256", controlToken)
-		.update(`karissa-worker\0${workerId}\0${supervisorGeneration}`)
-		.digest("hex");
+	return createHmac("sha256", controlToken).update(`ever-worker\0${workerId}\0${supervisorGeneration}`).digest("hex");
 }
 
 export function workerTokenSha256(token: string): string {

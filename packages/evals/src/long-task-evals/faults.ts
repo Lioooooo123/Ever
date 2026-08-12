@@ -56,7 +56,7 @@ export class ProcessFaultInjector implements FaultInjector {
 				} else {
 					const pattern =
 						fault.processPattern ??
-						(fault.type === "kill_daemon_process" ? "karissa.*daemon.*serve" : "karissa.*task.*run");
+						(fault.type === "kill_daemon_process" ? "ever.*daemon.*serve" : "ever.*task.*run");
 					const signalName = fault.type === "pause_agent_process" ? "STOP" : "TERM";
 					const sent = await trial.environment.exec({
 						args: ["pkill", `-${signalName}`, "-f", pattern],

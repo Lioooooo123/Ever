@@ -10,7 +10,7 @@ import {
 	type TaskRecord,
 	VerifiedChangeBundle,
 	type VerifiedChangeBundleResult,
-} from "@karissa/long-tasks";
+} from "@ever/long-tasks";
 import { probeUnattendedSandbox } from "./unattended-sandbox.ts";
 
 export interface UnattendedTaskSubmission {
@@ -29,6 +29,20 @@ export interface UnattendedTaskSubmission {
 	unsafeNoSandbox?: boolean;
 }
 
+export interface InteractiveTaskSubmission {
+	kind: "interactive";
+	workspaceRoot: string;
+	goal: string;
+	title?: string;
+	verificationCommand?: string;
+	verificationCwd?: string;
+	verificationTimeoutSeconds?: number;
+	maxTurns?: number;
+	maxWallTimeMinutes?: number;
+	maxCostUsd?: number;
+	model: { provider: string; id: string };
+}
+
 export interface ManualTaskSubmission {
 	kind: "manual";
 	workspaceRoot: string;
@@ -40,7 +54,7 @@ export interface ManualTaskSubmission {
 	maxCostUsd?: number;
 }
 
-export type TaskSubmission = UnattendedTaskSubmission | ManualTaskSubmission;
+export type TaskSubmission = UnattendedTaskSubmission | InteractiveTaskSubmission | ManualTaskSubmission;
 
 export type TaskControlCommand =
 	| { action: "pause"; taskRef: string }
@@ -160,10 +174,10 @@ export class TaskApplication {
 				title: input.title ?? input.goal.split("\n", 1)[0]!.slice(0, 80),
 				goal: input.goal,
 				acceptance,
-				...(input.kind === "unattended"
+				...(input.kind !== "manual"
 					? {
 							constraints: {
-								unattendedApproved: true,
+								...(input.kind === "unattended" ? { unattendedApproved: true } : { interactiveApproved: true }),
 								...(input.model === undefined ? {} : { model: input.model }),
 							},
 						}
@@ -176,13 +190,13 @@ export class TaskApplication {
 				workspaceRoot: workspace.root,
 				workspaceFingerprint: workspace.fingerprint,
 				...(workspace.head ? { initialGitHead: workspace.head } : {}),
-				...(input.kind === "unattended"
+				...(input.kind !== "manual"
 					? {
 							toolPolicy: {
 								allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "task_update"],
 								allowedPaths: [workspace.root],
 								readOnly: false,
-								sandboxRequired: input.unsafeNoSandbox !== true,
+								sandboxRequired: input.kind === "unattended" && input.unsafeNoSandbox !== true,
 							},
 						}
 					: {}),

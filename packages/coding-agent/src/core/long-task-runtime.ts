@@ -19,7 +19,7 @@ import {
 	SqliteTaskStore,
 	TaskContextBuilder,
 	VerifiedChangeBundle,
-} from "@karissa/long-tasks";
+} from "@ever/long-tasks";
 import { VERSION } from "../config.ts";
 import { WorkerRegistry } from "../daemon/worker-registry.ts";
 import type {
@@ -36,8 +36,8 @@ function sha256(value: string): string {
 function runtimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: boolean): RuntimeSnapshot {
 	const model = runtime.session.model;
 	return {
-		karissaVersion: VERSION,
-		upstreamCommit: process.env.KARISSA_UPSTREAM_COMMIT ?? "unknown",
+		everVersion: VERSION,
+		upstreamCommit: process.env.EVER_UPSTREAM_COMMIT ?? "unknown",
 		protocolVersion: 1,
 		model: {
 			provider: model?.provider ?? "unresolved",
@@ -53,7 +53,7 @@ function runtimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: boolean)
 		})),
 		toolPolicySha256: sha256(JSON.stringify([...runtime.session.getActiveToolNames()].sort())),
 		sandboxPolicySha256:
-			process.env.KARISSA_SANDBOX_PROFILE_SHA256 ?? sha256(JSON.stringify({ sandboxRequired, backend: "host" })),
+			process.env.EVER_SANDBOX_PROFILE_SHA256 ?? sha256(JSON.stringify({ sandboxRequired, backend: "host" })),
 	};
 }
 
@@ -265,9 +265,9 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 				context.agent,
 				{ name: event.toolName, paths, effect },
 				{
-					sandboxAvailable: process.env.KARISSA_UNATTENDED_SANDBOX === "1",
-					unattended: process.env.KARISSA_DAEMON_WORKER === "1",
-					unsafeNoSandbox: process.env.KARISSA_UNSAFE_NO_SANDBOX === "1",
+					sandboxAvailable: process.env.EVER_UNATTENDED_SANDBOX === "1",
+					unattended: process.env.EVER_DAEMON_WORKER === "1",
+					unsafeNoSandbox: process.env.EVER_UNSAFE_NO_SANDBOX === "1",
 				},
 			);
 			if (!decision.allowed) {
@@ -491,7 +491,7 @@ export async function attachLongTaskRuntime(
 		store.close();
 		throw new Error(`Agent workspace mismatch: expected ${actor.workspaceRoot}, got ${runtime.cwd}`);
 	}
-	const runDirectory = process.env.KARISSA_RUN_DIRECTORY;
+	const runDirectory = process.env.EVER_RUN_DIRECTORY;
 	const blockedRecovery = (
 		await recoverExpiredLongTaskExecutions(store, runDirectory ? new WorkerRegistry(runDirectory) : undefined)
 	).find((result) => result.agentId === actor.id && !result.recovered);
@@ -513,8 +513,8 @@ export async function attachLongTaskRuntime(
 			store.appendTaskEvent(taskId, "RuntimeDriftAccepted", { ...drift, schemaVersion: 1 });
 		}
 	}
-	const leaseSeconds = Number(process.env.KARISSA_WORKER_LEASE_SECONDS ?? 30);
-	const heartbeatSeconds = Number(process.env.KARISSA_WORKER_HEARTBEAT_SECONDS ?? 5);
+	const leaseSeconds = Number(process.env.EVER_WORKER_LEASE_SECONDS ?? 30);
+	const heartbeatSeconds = Number(process.env.EVER_WORKER_HEARTBEAT_SECONDS ?? 5);
 	if (
 		!Number.isFinite(leaseSeconds) ||
 		leaseSeconds <= 0 ||
@@ -524,9 +524,9 @@ export async function attachLongTaskRuntime(
 		store.close();
 		throw new Error("Invalid long-task Worker lease or heartbeat configuration");
 	}
-	const residentWorker = process.env.KARISSA_DAEMON_WORKER === "1";
-	const workerId = residentWorker ? process.env.KARISSA_WORKER_ID : `foreground:${process.pid}`;
-	const executionId = residentWorker ? process.env.KARISSA_EXECUTION_ID : randomUUID();
+	const residentWorker = process.env.EVER_DAEMON_WORKER === "1";
+	const workerId = residentWorker ? process.env.EVER_WORKER_ID : `foreground:${process.pid}`;
+	const executionId = residentWorker ? process.env.EVER_EXECUTION_ID : randomUUID();
 	if (!workerId || !executionId) {
 		store.close();
 		throw new Error("Resident Worker execution identity is missing");
@@ -540,7 +540,7 @@ export async function attachLongTaskRuntime(
 		executionId,
 		leaseSeconds,
 		pid: process.pid,
-		...(process.env.KARISSA_SANDBOX_ID ? { sandboxId: process.env.KARISSA_SANDBOX_ID } : {}),
+		...(process.env.EVER_SANDBOX_ID ? { sandboxId: process.env.EVER_SANDBOX_ID } : {}),
 	});
 	const stopController = new AbortController();
 	let markReady: () => void = () => {};
@@ -555,7 +555,7 @@ export async function attachLongTaskRuntime(
 		heartbeatSeconds,
 		stopSignal: stopController.signal,
 		onReady: markReady,
-		resident: process.env.KARISSA_RESIDENT_WORKER === "1",
+		resident: process.env.EVER_RESIDENT_WORKER === "1",
 		artifactsRoot: join(agentDir, "tasks"),
 	});
 	const running = nativeAgent.run(claim);

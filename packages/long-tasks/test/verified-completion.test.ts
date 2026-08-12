@@ -19,7 +19,7 @@ function createTask(workspaceRoot: string, acceptance: Parameters<TaskController
 
 describe("VerifiedCompletion", () => {
 	it("executes a command criterion once and replays the durable result", () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-verified-completion-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-verified-completion-"));
 		const marker = join(root, "runs.txt");
 		const { store, task } = createTask(root, [
 			{
@@ -44,7 +44,7 @@ describe("VerifiedCompletion", () => {
 	});
 
 	it("does not repeat a command whose persisted start has an unknown outcome", () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-verified-completion-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-verified-completion-"));
 		const marker = join(root, "must-not-run.txt");
 		const { store, task } = createTask(root, [
 			{

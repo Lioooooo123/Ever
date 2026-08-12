@@ -75,7 +75,7 @@ describe("credential print commands", () => {
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain('Unknown option --credentails for "auth check".');
 			expect(stderr).toContain(
-				'Use "karissa --help" or "karissa auth check --provider <provider> [--json] [--credentials] [--no-refresh]".',
+				'Use "ever --help" or "ever auth check --provider <provider> [--json] [--credentials] [--no-refresh]".',
 			);
 			expect(process.exitCode).toBe(1);
 		} finally {

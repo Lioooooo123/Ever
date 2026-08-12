@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe("UnattendedSandbox", () => {
 	it("wraps the full Worker process tree, preserves its private token fd, and denies secret writes", async () => {
-		const root = mkdtempSync(join(process.cwd(), ".karissa-sandbox-test-"));
+		const root = mkdtempSync(join(process.cwd(), ".ever-sandbox-test-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
 		const workspaceRoot = join(root, "workspace");

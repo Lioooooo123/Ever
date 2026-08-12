@@ -105,7 +105,7 @@ describe("legacy --session-id commands", () => {
 		const result = await runCli(["--session-id", "read-only-help", "--help"]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-help")).toBe(false);
 	});
 
@@ -113,7 +113,7 @@ describe("legacy --session-id commands", () => {
 		const result = await runCli(["--no-session", "--session-id", "ephemeral-id", "--help"]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "ephemeral-id")).toBe(false);
 	});
 
@@ -137,7 +137,7 @@ describe("legacy --session-id commands", () => {
 		]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 		expect(hasSessionWithId(result.agentDir, "missing-session-id")).toBe(false);
 	});
 
@@ -160,7 +160,7 @@ describe("legacy --session-id commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 	});
 
 	it("rejects legacy fork arguments before opening either session", async () => {
@@ -174,7 +174,7 @@ describe("legacy --session-id commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 	});
 });
 
@@ -184,7 +184,7 @@ describe("legacy --session-id validation", () => {
 			const result = await runCli(["--session-id", id, "-p", "hi"]);
 
 			expect(result.code).toBe(1);
-			expect(result.stderr).toContain("Karissa CLI 只运行持久 Task");
+			expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 			expect(result.stderr).not.toContain("SessionManager.create");
 		}
 	});

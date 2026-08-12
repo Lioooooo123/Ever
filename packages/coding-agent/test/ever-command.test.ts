@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteTaskStore } from "@karissa/long-tasks";
+import { SqliteTaskStore } from "@ever/long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
-import { submitAsyncTask } from "../src/cli/karissa-command.ts";
+import { submitAsyncTask, submitInteractiveTask } from "../src/cli/ever-command.ts";
 import { handleTaskCommand } from "../src/cli/task-command.ts";
 import { TaskApplication } from "../src/core/task-application.ts";
 
@@ -13,9 +13,34 @@ afterEach(() => {
 	for (const path of temporaryPaths.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
-describe("karissa async submission", () => {
+describe("ever async submission", () => {
+	it("creates a foreground Task without unattended sandbox approval", () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-submit-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspace = join(root, "workspace");
+		mkdirSync(workspace);
+
+		const task = submitInteractiveTask({
+			agentDir,
+			cwd: workspace,
+			goal: "在原 Pi TUI 中完成任务",
+			model: { provider: "openai-codex", id: "gpt-5.4" },
+		});
+
+		expect(task).toMatchObject({
+			state: "queued",
+			constraints: {
+				interactiveApproved: true,
+				model: { provider: "openai-codex", id: "gpt-5.4" },
+			},
+		});
+		expect(task.constraints.unattendedApproved).toBeUndefined();
+		expect(new TaskApplication(agentDir).snapshot(task.id).agents[0]?.toolPolicy.sandboxRequired).toBe(false);
+	});
+
 	it("fails sandbox preflight before creating a Task database", async () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-submit-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-submit-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
 		const workspace = join(root, "workspace");
@@ -32,7 +57,7 @@ describe("karissa async submission", () => {
 	});
 
 	it("creates an authorized queued task with agent evidence acceptance", async () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-submit-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-submit-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
 		const workspace = join(root, "workspace");
@@ -55,7 +80,7 @@ describe("karissa async submission", () => {
 	});
 
 	it("routes manual task creation through the same Task Application", async () => {
-		const root = mkdtempSync(join(tmpdir(), "karissa-submit-"));
+		const root = mkdtempSync(join(tmpdir(), "ever-submit-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
 		const workspace = join(root, "workspace");

@@ -1,11 +1,11 @@
 import { join } from "node:path";
-import { SqliteTaskStore, type TaskRecord } from "@karissa/long-tasks";
+import { SqliteTaskStore, type TaskRecord } from "@ever/long-tasks";
 import chalk from "chalk";
 import { TaskApplication } from "../core/task-application.ts";
 import { resolveTaskModel } from "../core/task-model.ts";
-import { setTaskRunContext } from "../core/task-run-context.ts";
+import { activateTaskRun } from "../core/task-run.ts";
 import { requestDaemon, startDaemon } from "./daemon-command.ts";
-import { submitAsyncTask } from "./karissa-command.ts";
+import { submitAsyncTask } from "./ever-command.ts";
 import { readTaskSubmitManifest } from "./task-submit-manifest.ts";
 
 function option(args: string[], name: string): string | undefined {
@@ -30,27 +30,18 @@ function printTask(task: TaskRecord): void {
 	console.log(`${task.id}\t${task.state}\t${task.title}`);
 }
 
-function taskModelArgs(task: TaskRecord): string[] {
-	const model = task.constraints.model;
-	if (typeof model !== "object" || model === null || Array.isArray(model)) return [];
-	const provider = Reflect.get(model, "provider");
-	const id = Reflect.get(model, "id");
-	if (typeof provider !== "string" || typeof id !== "string") throw new Error("Task model constraint is invalid");
-	return ["--provider", provider, "--model", id];
-}
-
 function printTaskHelp(): void {
-	console.log(`karissa task commands:
-  karissa task submit --manifest <path> --yes --json
-  karissa task create --title <title> --goal <goal> --acceptance <text>
-  karissa task ls
-  karissa task run <task-id> [--accept-runtime-drift]
-  karissa task show <task-id>
-  karissa task bundle <task-id> [--json]
-  karissa task pause|resume|cancel <task-id>
-  karissa task stop <task-id> [--agent <agent-id>]
-  karissa task events <task-id> [--json]
-  karissa task logs <task-id> [--follow]`);
+	console.log(`ever task commands:
+  ever task submit --manifest <path> --yes --json
+  ever task create --title <title> --goal <goal> --acceptance <text>
+  ever task ls
+  ever task run <task-id> [--accept-runtime-drift]
+  ever task show <task-id>
+  ever task bundle <task-id> [--json]
+  ever task pause|resume|cancel <task-id>
+  ever task stop <task-id> [--agent <agent-id>]
+  ever task events <task-id> [--json]
+  ever task logs <task-id> [--follow]`);
 }
 
 export async function handleTaskCommand(args: string[], agentDir: string, cwd: string): Promise<boolean> {
@@ -100,7 +91,7 @@ export async function handleTaskCommand(args: string[], agentDir: string, cwd: s
 	});
 	const application = new TaskApplication(agentDir, store);
 	const commandIdentity = {
-		clientId: "karissa-cli",
+		clientId: "ever-cli",
 		...(option(args, "--command-id") ? { commandId: requiredOption(args, "--command-id") } : {}),
 	};
 	try {
@@ -138,39 +129,17 @@ export async function handleTaskCommand(args: string[], agentDir: string, cwd: s
 				for (const task of store.listTasks()) printTask(task);
 				break;
 			case "run": {
-				let task = application.resolve(args[2] ?? "");
-				const acceptRuntimeDrift = args.includes("--accept-runtime-drift");
-				if (task.state === "paused" || task.state === "waiting_input" || task.state === "waiting_external") {
-					task = application.control(
-						{ action: "resume", taskRef: task.id, acceptRuntimeDrift },
-						commandIdentity,
-					).task;
-				}
-				if (task.state !== "queued" && task.state !== "running")
-					throw new Error(`Task cannot run from state ${task.state}`);
-				const mainAgent = store.listAgents(task.id).find((agent) => agent.kind === "main");
-				if (!mainAgent) throw new Error(`Task ${task.id} has no main Agent`);
-				const checkpoint = store.getLatestCheckpoint(mainAgent.id);
-				const printMode = args.includes("--print") || process.env.KARISSA_DAEMON_WORKER === "1";
-				const acceptance = task.acceptance
-					.map(
-						(criterion) =>
-							`${criterion.id}: ${criterion.kind === "manual" || criterion.kind === "agent_evidence" ? criterion.description : JSON.stringify(criterion)}`,
-					)
-					.join("\n");
-				const durableContext = `<long_task>\n<goal>${task.goal}</goal>\n<acceptance>${acceptance}</acceptance>\n<constraints>${JSON.stringify(task.constraints)}</constraints>\n<budget>${JSON.stringify(task.budget)}</budget>\n</long_task>`;
-				setTaskRunContext({ taskId: task.id, agentId: mainAgent.id, acceptRuntimeDrift });
+				const printMode = args.includes("--print") || process.env.EVER_DAEMON_WORKER === "1";
 				args.splice(
 					0,
 					args.length,
-					...(checkpoint?.sessionCheckpoint.sessionPath
-						? ["--session", checkpoint.sessionCheckpoint.sessionPath]
-						: []),
-					...taskModelArgs(task),
-					"--append-system-prompt",
-					durableContext,
-					...(printMode ? ["--print"] : []),
-					task.goal,
+					...activateTaskRun({
+						agentDir,
+						taskRef: args[2] ?? "",
+						print: printMode,
+						acceptRuntimeDrift: args.includes("--accept-runtime-drift"),
+						clientId: commandIdentity.clientId,
+					}),
 				);
 				return false;
 			}
@@ -252,7 +221,7 @@ export async function handleTaskCommand(args: string[], agentDir: string, cwd: s
 				const criterionId = args[3] ?? "";
 				const criterion = task.acceptance.find((candidate) => candidate.id === criterionId);
 				if (!criterion) throw new Error(`Acceptance criterion not found: ${criterionId}`);
-				if (criterion.kind !== "manual") throw new Error("Only manual acceptance criteria use karissa task accept");
+				if (criterion.kind !== "manual") throw new Error("Only manual acceptance criteria use ever task accept");
 				application.control({ action: "accept", taskRef: task.id, criterionId: criterion.id }, commandIdentity);
 				console.log(criterion.id);
 				break;

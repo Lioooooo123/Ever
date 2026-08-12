@@ -164,7 +164,7 @@ export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
 /** Prevent model-controlled subprocesses from inheriting daemon/provider credentials. */
 export function sanitizeUnattendedShellEnvironment(
 	environment: NodeJS.ProcessEnv,
-	unattended = process.env.KARISSA_DAEMON_WORKER === "1",
+	unattended = process.env.EVER_DAEMON_WORKER === "1",
 ): NodeJS.ProcessEnv {
 	return unattended ? sanitizeUnattendedEnvironment(environment) : { ...environment };
 }

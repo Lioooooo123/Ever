@@ -44,7 +44,7 @@ type DatabaseSync = DatabaseSyncType;
 const originalEmitWarning = process.emitWarning;
 let DatabaseSync: typeof DatabaseSyncType;
 try {
-	// Node 22-24 labels the built-in SQLite API experimental even though Karissa
+	// Node 22-24 labels the built-in SQLite API experimental even though Ever
 	// deliberately owns and tests this dependency. Suppress only its synchronous
 	// module-load notice so the public TUI starts with product state, not runtime noise.
 	process.emitWarning = (() => {}) as typeof process.emitWarning;
@@ -1134,11 +1134,7 @@ export class SqliteTaskStore {
 						row.task_id,
 						row.seq,
 						kind,
-						kind === "completed"
-							? "Karissa 已完成任务"
-							: kind === "failed"
-								? "Karissa 任务失败"
-								: "Karissa 需要你的输入",
+						kind === "completed" ? "Ever 已完成任务" : kind === "failed" ? "Ever 任务失败" : "Ever 需要你的输入",
 						`${row.title}\n${row.task_id.slice(0, 8)}`,
 						this.now().toISOString(),
 					);

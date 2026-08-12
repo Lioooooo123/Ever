@@ -1,4 +1,4 @@
-# Karissa 产品需求文档 V0.1
+# Ever 产品需求文档 V0.1
 
 > 状态：Draft
 >
@@ -10,11 +10,11 @@
 
 ## 1. 产品决策
 
-Karissa 不与 Claude Code、Codex 或其他通用 Coding Agent 竞争“谁更会写代码”。V0.1 基于 Pi 做成一个原生的可靠任务产品，专门承接用户希望交出去、不想持续盯守的本地仓库任务。
+Ever 不与 Claude Code、Codex 或其他通用 Coding Agent 竞争“谁更会写代码”。V0.1 基于 Pi 做成一个原生的可靠任务产品，专门承接用户希望交出去、不想持续盯守的本地仓库任务。
 
 一句话定位：
 
-> Karissa 是可以放心离开的本地异步 Coding Worker。它在预算与期限内完成仓库任务，遇到中断可以恢复，最后用可验证证据交付。
+> Ever 是可以放心离开的本地异步 Coding Worker。它在预算与期限内完成仓库任务，遇到中断可以恢复，最后用可验证证据交付。
 
 品牌表达：
 
@@ -23,7 +23,7 @@ Karissa 不与 Claude Code、Codex 或其他通用 Coding Agent 竞争“谁更�
 - 产品描述：`Your repo's night shift.`
 - 核心交付物：Verified Change Bundle，可验证变更包。
 
-“夜班”是用户心智，不是固定在夜间执行的技术规则。Karissa 应在用户允许的截止时间内寻找更低成本的执行窗口和模型路径，而不是假设所有 Provider 都有昼夜电价。
+“夜班”是用户心智，不是固定在夜间执行的技术规则。Ever 应在用户允许的截止时间内寻找更低成本的执行窗口和模型路径，而不是假设所有 Provider 都有昼夜电价。
 
 ## 2. 为什么现在做
 
@@ -37,7 +37,7 @@ Karissa 不与 Claude Code、Codex 或其他通用 Coding Agent 竞争“谁更�
 - 用户能否用预算和截止时间约束任务，并看见实际成本与节省来源。
 - Task 能否与 Pi Session 生命周期解耦，不因 Session 中断而丢失预算、证据与审计记录。
 
-Karissa 不替代最强 Coding Agent。V0.1 先把 Pi 变成可托付的异步 Worker。
+Ever 不替代最强 Coding Agent。V0.1 先把 Pi 变成可托付的异步 Worker。
 
 ## 3. 目标用户
 
@@ -75,7 +75,7 @@ Karissa 不替代最强 Coding Agent。V0.1 先把 Pi 变成可托付的异步 W
 
 ### 5.1 Task 高于 Session
 
-Task 是持久业务实体，Session 只是 Task 的一次执行记录。Karissa 不提供脱离 Task 的临时聊天入口，Session 丢失不能等于 Task 丢失。
+Task 是持久业务实体，Session 只是 Task 的一次执行记录。Ever 不提供脱离 Task 的临时聊天入口，Session 丢失不能等于 Task 丢失。
 
 ### 5.2 完成必须由独立信号证明
 
@@ -85,9 +85,9 @@ Task 是持久业务实体，Session 只是 Task 的一次执行记录。Karissa
 
 如果某个有副作用的工具调用已经发出，但结果不明，Task 必须进入人工确认或专门恢复路径，不得直接再执行一次。
 
-### 5.4 Task 与底座解耦
+### 5.4 Pi 是原生执行底座
 
-V0.1 只有 Pi Native Backend。架构保留最小 `AgentBackend` 边界，让 Task Control Plane 不依赖 Pi Session 类型，但不开发其他 Backend，也不为未经验证的兼容性增加产品复杂度。
+Ever 直接深化 Pi Agent。Pi 继续负责 Agent Loop、Provider、模型、工具、Session、compaction、Extension 和 Eval；Ever 负责持久 Task、Worker、预算、策略、恢复、验收和交付物。V0.1 不增加 `AgentBackend`、`ProviderGateway` 或第二套生命周期协议。
 
 ### 5.5 成本优化服从质量与安全
 
@@ -95,21 +95,21 @@ V0.1 只有 Pi Native Backend。架构保留最小 `AgentBackend` 边界，让 T
 
 ### 5.6 长程执行就是产品本身
 
-长程任务不再是可开关的 Extension。Karissa 的所有执行入口都创建或操作持久 Task，不能通过配置退回普通 transient Session。用户 Extension 仍可提供工具、Prompt 和资源，但不能负责 Task 持久化、安全策略、预算或完成状态。
+长程任务不再是可开关的 Extension。Ever 的所有执行入口都创建或操作持久 Task，不能通过配置退回普通 transient Session。用户 Extension 仍可提供工具、Prompt 和资源，但不能负责 Task 持久化、安全策略、预算或完成状态。
 
 ## 6. V0.1 价值主张
 
 用户输入：
 
 ```bash
-karissa run "升级依赖并修复测试" \
+ever run "升级依赖并修复测试" \
   --economy \
   --deadline "tomorrow 08:00" \
   --budget 3 \
   --verify "npm run check"
 ```
 
-Karissa 应完成以下闭环：
+Ever 应完成以下闭环：
 
 1. 检查仓库、工作树、权限、沙箱、预算和验收命令。
 2. 创建持久 Task，并冻结一次 Attempt 的 Pi Runtime 与成本策略。
@@ -130,8 +130,8 @@ Karissa 应完成以下闭环：
 - 一个活跃 Attempt。
 - 只使用 Pi Native Backend。
 - 四个主要命令：`run`、`status`、`attach`、`stop`。
-- `karissa <goal>` 创建、启动并附着一个持久 Task。
-- 不带目标的 `karissa` 打开 Task 创建和管理界面。
+- `ever <goal>` 创建、启动并附着一个持久 Task。
+- 不带目标的 `ever` 打开 Task 创建和管理界面。
 - `--print`、JSON 和 RPC 入口也必须运行在 Task 语义内，并返回 Task ID。
 
 #### 可靠执行
@@ -173,7 +173,7 @@ V0.1 支持 BYOK，并记录 Provider 返回的真实 usage。成本优化可以
 
 ### 7.2 P1 验证后开发
 
-- Karissa Provider Gateway 的 BYOK 多 Provider 路由。
+- Ever Provider Gateway 的 BYOK 多 Provider 路由。
 - 按任务类型拆分便宜模型与高质量模型的固定路由计划。
 - 本地模型作为低风险分析和预处理节点。
 - 成本报表、Provider 故障回退和价格快照。
@@ -191,18 +191,18 @@ V0.1 支持 BYOK，并记录 Provider 返回的真实 usage。成本优化可以
 
 ## 8. 执行底座策略
 
-### 8.1 分层定义
+### 8.1 原生职责
 
-- `AgentBackend`：负责完整 Coding Agent 循环，包括理解任务、调用工具和产生结构化事件。
-- `ProviderGateway`：负责模型 API 的认证、路由、价格、配额、缓存和 usage 账本。
+- Pi Native Runtime：负责完整 Coding Agent 循环、Provider 认证与调用、模型目录、工具执行、Session、compaction、Extension 和 Eval。
+- Ever Task Runtime：负责 Task、Attempt、Worker、lease、预算、策略、恢复、Acceptance 和 Verified Change Bundle。
 
-两者不能混为一层。V0.1 只有 Pi Native Backend，它通过 Karissa Provider Gateway 调用用户选择的 Provider。多 Provider 自动路由属于 P1。
+Ever Task Runtime 通过 Pi 原生 awaited lifecycle seam 约束执行，不在 Pi 外围转发或镜像 Agent Loop。多 Provider 自动路由属于 P1，并实现为 Pi Models 与 Provider 上的策略。
 
 ### 8.2 发布顺序
 
-1. V0.1：Pi Native Backend，打通可靠执行闭环。
+1. V0.1：深化 Pi Native Runtime，打通可靠执行闭环。
 2. 后续：完善 BYOK Provider 路由、成本优化与真实 usage 账本。
-3. 商业阶段：在具备商业协议的 Provider 上推出 Karissa Managed Provider。
+3. 商业阶段：在具备商业协议的 Provider 上推出 Ever Managed Provider。
 
 每个 Attempt 启动后固定 Pi Runtime、路由计划和能力快照。运行中不得更换运行时或越过冻结的 Provider 路径。
 
@@ -211,7 +211,7 @@ V0.1 支持 BYOK，并记录 Provider 返回的真实 usage。成本优化可以
 ### 9.1 V0.1：先证明节省价值
 
 - 用户使用自己的 API Key。
-- Karissa 提供预算控制、真实成本账本和节省报告。
+- Ever 提供预算控制、真实成本账本和节省报告。
 - 不从 Token 差价中盈利。
 - 目标是证明用户愿意因为“更便宜地完成同一任务”改变工作流。
 
@@ -226,9 +226,9 @@ V0.1 支持 BYOK，并记录 Provider 返回的真实 usage。成本优化可以
 
 收费理由是节省盯守与返工，而不是单纯封装 CLI。
 
-### 9.3 商业化第二层：Karissa Managed Provider
+### 9.3 商业化第二层：Ever Managed Provider
 
-Karissa 统一采购或接入经过商业授权的推理能力，向用户提供额度：
+Ever 统一采购或接入经过商业授权的推理能力，向用户提供额度：
 
 - 根据期限、质量、隐私和预算选择 Provider、模型与服务等级。
 - 通过缓存、低优先级处理、批量工作和承诺用量降低单位成本。
@@ -240,7 +240,7 @@ Karissa 统一采购或接入经过商业授权的推理能力，向用户提供
 - 价格、税务、退款、配额和余额账本。
 - 隐私、数据保留、地区路由和用户授权机制。
 - 滥用防护、限流、风控和毛利压力测试。
-- 用户可以查看真实 usage、路由原因和 Karissa 收费。
+- 用户可以查看真实 usage、路由原因和 Ever 收费。
 
 因此 Managed Provider 是明确的盈利方向，但不是 V0.1 已交付能力。
 

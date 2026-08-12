@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInMemoryTaskStore, runtimeSnapshotHash, TaskController } from "@karissa/long-tasks";
+import { createInMemoryTaskStore, runtimeSnapshotHash, TaskController } from "@ever/long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import { recoverExpiredLongTaskExecutions } from "../src/core/long-task-runtime.ts";
 import { type WorkerDescriptor, WorkerRegistry } from "../src/daemon/worker-registry.ts";
@@ -27,7 +27,7 @@ function fixture(descriptorExecutionId = "execution-1", sandboxId?: string) {
 	);
 	const agent = store.listAgents(task.id)[0]!;
 	const snapshot = {
-		karissaVersion: "0.1.0",
+		everVersion: "0.1.0",
 		upstreamCommit: "test",
 		protocolVersion: 1,
 		model: { provider: "test", id: "faux" },
@@ -48,7 +48,7 @@ function fixture(descriptorExecutionId = "execution-1", sandboxId?: string) {
 		...(sandboxId ? { sandboxId } : {}),
 	});
 	now = new Date("2026-08-12T00:00:02.000Z");
-	const runDirectory = mkdtempSync(join(tmpdir(), "karissa-worker-recovery-"));
+	const runDirectory = mkdtempSync(join(tmpdir(), "ever-worker-recovery-"));
 	temporaryPaths.push(runDirectory);
 	const registry = new WorkerRegistry(runDirectory);
 	const descriptor: WorkerDescriptor = {

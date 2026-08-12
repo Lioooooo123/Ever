@@ -61,12 +61,12 @@ function validatePinnedIdentity(config: EvalJobConfig): void {
 	if (config.faults !== undefined) {
 		if (
 			config.manifest.faultProfile !== config.faults.profile ||
-			!config.faults.profile.startsWith("karissa-reliability")
+			!config.faults.profile.startsWith("ever-reliability")
 		) {
-			throw new Error("Fault runs require a separately named karissa-reliability profile in the job manifest");
+			throw new Error("Fault runs require a separately named ever-reliability profile in the job manifest");
 		}
-		if (config.agents.some((agent) => agent.identity.name !== "karissa")) {
-			throw new Error("Fault profiles may only run the Karissa adapter");
+		if (config.agents.some((agent) => agent.identity.name !== "ever")) {
+			throw new Error("Fault profiles may only run the Ever adapter");
 		}
 	} else if (config.manifest.faultProfile !== undefined) {
 		throw new Error("Job manifest declares a fault profile without a FaultInjector");
@@ -231,7 +231,7 @@ export class LongTaskEvalRunner {
 					artifactsDigest: collectedArtifacts.digest,
 					violations: [],
 				},
-				...(agentOutcome.karissa === undefined ? {} : { karissa: agentOutcome.karissa }),
+				...(agentOutcome.ever === undefined ? {} : { ever: agentOutcome.ever }),
 				artifacts: collectedArtifacts.artifacts,
 				errors: [...agentOutcome.errors, ...verification.errors],
 			};
