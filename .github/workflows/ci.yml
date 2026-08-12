@@ -11,7 +11,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-check-test:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: Archive build state
+        run: |
+          tar -czf ci-build-state.tar.gz \
+            packages/*/dist \
+            packages/session-backends/*/dist \
+            packages/ai/src/providers/data
+
+      - name: Upload build state
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-build-state
+          path: ci-build-state.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  check:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -32,11 +66,107 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build
-        run: npm run build
+      - name: Download build state
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ci-build-state
+          path: .
+
+      - name: Extract build state
+        run: tar -xzf ci-build-state.tar.gz
 
       - name: Check
         run: npm run check
 
-      - name: Test
-        run: npm test
+  test-workspaces:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [ai, other]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -s $(which fdfind) /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download build state
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ci-build-state
+          path: .
+
+      - name: Extract build state
+        run: tar -xzf ci-build-state.tar.gz
+
+      - name: Test workspace lane
+        env:
+          TEST_LANE: ${{ matrix.lane }}
+        run: |
+          if [[ "${TEST_LANE}" == "ai" ]]; then
+            npm run test --workspace=@lioooooo123/ever-ai
+          else
+            npm run test:scripts
+            npm run test \
+              --workspace=@lioooooo123/ever-agent-core \
+              --workspace=@lioooooo123/ever-client \
+              --workspace=@lioooooo123/ever-evals \
+              --workspace=@lioooooo123/ever-long-tasks \
+              --workspace=@lioooooo123/ever-protocol \
+              --workspace=@lioooooo123/ever-server \
+              --workspace=@lioooooo123/ever-telemetry \
+              --workspace=@lioooooo123/ever-tui \
+              --workspace=@lioooooo123/ever-session-backend-sqlite-node
+          fi
+
+  test-coding-agent:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -s $(which fdfind) /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download build state
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ci-build-state
+          path: .
+
+      - name: Extract build state
+        run: tar -xzf ci-build-state.tar.gz
+
+      - name: Test coding-agent shard
+        run: npm run test --workspace=@lioooooo123/ever -- --shard=${{ matrix.shard }}/4
