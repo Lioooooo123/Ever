@@ -1,117 +1,141 @@
-<p align="center">
-  <a href="https://pi.dev">
-    <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
-  </a>
-</p>
-<p align="center">
-  <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
-</p>
+# Ever
 
-> New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
+**A Task-first coding agent for work that must survive, recover, and prove it is done.**
 
-# Pi Agent Harness
+Ever runs development work as durable Tasks instead of disposable chat sessions. A Task keeps its plan, attempts, evidence, verification results, and recovery state across terminal disconnects and daemon restarts.
 
-This is the home of the Pi agent harness project including our self extensible coding agent.
+Ever is developed directly from a complete in-repository execution stack. It is not an extension wrapped around another agent. The model loop, tools, context management, terminal UI, Task control plane, recovery logic, and completion policy are maintained together as one product.
 
-Ever is the repository's durable long-running agent surface. It adds a Task control plane, resident Workers, verified completion, recovery, JSONL RPC, and an unattended execution sandbox on top of the Pi session runtime.
+## Why Ever
 
-* **[@earendil-works/pi-coding-agent](packages/coding-agent)**: Interactive coding agent CLI
-* **[@earendil-works/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
-* **[@earendil-works/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
-* **[@ever/long-tasks](packages/long-tasks)**: Durable Task, Attempt, evidence, recovery, and completion domain
+- **Task-first:** the Task is the primary user-facing unit; Sessions are internal execution records.
+- **Durable:** detached work survives terminal disconnects and resident Worker restarts.
+- **Recoverable:** interrupted attempts resume from persisted checkpoints and evidence.
+- **Verifiable:** a Task completes only after its acceptance policy passes.
+- **Observable:** status, events, evidence, and RPC output expose what the agent is doing.
+- **Bounded:** unattended work has explicit time, turn, cost, permission, and sandbox controls.
 
-To learn more about Pi:
+## Execution lifecycle
 
-* [Visit pi.dev](https://pi.dev), the project website with demos
-* [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
+```text
+Reason -> Execute -> Observe -> Verify -> Repair -> Done
+                              ^          |
+                              |----------|
+```
 
-## All Packages
+Ever reasons about the next step, executes it through the embedded tool loop, observes the result, and verifies the Task against explicit acceptance criteria. Failed verification returns the Task to repair. `Done` is a policy decision backed by evidence, not a model assertion.
 
-| Package | Description |
-|---------|-------------|
-| **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
-| **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+## Install
 
-For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
+```bash
+npm install -g --ignore-scripts @lioooooo123/ever
+ever
+```
 
-## Permissions & Containerization
+Running `ever` opens Task Home. Create a Task directly from the command line:
 
-Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
+```bash
+ever "refactor the repository and run the focused tests" \
+  --verify "npm run check" \
+  --yes
+```
 
-If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
+Detach long-running work, then inspect or reconnect later:
 
-- **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
-- **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
-- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
+```bash
+ever "upgrade the dependency and verify compatibility" --detach --yes
+ever tasks
+ever status <task-id>
+ever attach <task-id>
+```
 
-## Contributing
+Apply execution limits when a Task must stay within a fixed budget:
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).  Longer term plans for Pi can also be found in [RFCs](https://rfc.earendil.com/keyword/pi/).
+```bash
+ever "fix the failing tests" \
+  --verify "./test.sh" \
+  --max-turns 20 \
+  --max-wall-time-minutes 45 \
+  --max-cost-usd 5 \
+  --yes
+```
+
+Automation can use strict JSONL RPC framing:
+
+```bash
+printf '%s\n' '{"id":1,"method":"task.list"}' | ever --mode rpc
+```
+
+See the [Ever CLI and SDK documentation](packages/coding-agent/README.md) for providers, models, Task commands, configuration, and programmatic usage.
+
+## Task model
+
+| Concept | Meaning |
+|---|---|
+| **Task** | The durable user goal and its completion policy |
+| **Attempt** | One recoverable execution of a Task |
+| **Session** | The internal model and tool transcript for an Attempt |
+| **Evidence** | Persisted observations used by recovery and verification |
+| **Worker** | The resident process that executes a Task |
+
+This boundary keeps user workflows stable without replacing the proven model-and-tool loop with a second agent runtime.
+
+## Architecture
+
+| Module | Responsibility |
+|---|---|
+| **[@lioooooo123/ever](packages/coding-agent)** | Public CLI, embedded SDK, tools, terminal interface, and Task integration |
+| **[@lioooooo123/ever-long-tasks](packages/long-tasks)** | Durable Tasks, Attempts, evidence, recovery, and completion decisions |
+| **[@lioooooo123/ever-agent-core](packages/agent)** | Reasoning loop, state transitions, and tool execution |
+| **[@lioooooo123/ever-ai](packages/ai)** | Multi-provider model API |
+| **[@lioooooo123/ever-protocol](packages/protocol)** | Transport-neutral protocol for remote execution |
+| **[@lioooooo123/ever-client](packages/client)** | Client for remote Ever execution |
+| **[@lioooooo123/ever-server](packages/server)** | Experimental remote execution server |
+| **[@lioooooo123/ever-tui](packages/tui)** | Terminal rendering and interaction primitives |
+| **[@lioooooo123/ever-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts and schemas |
+| **[@lioooooo123/ever-evals](packages/evals)** | Evaluation harnesses and acceptance metrics |
+
+The execution kernel is embedded source code within this repository. Ever does not require a separately installed Pi package or route Tasks through a parallel wrapper lifecycle.
+
+## Safety
+
+Unattended Tasks require the platform sandbox unless the operator explicitly opts out. Ever removes ambient credentials from Worker environments and sends only the selected provider credential through an owner-only startup channel.
+
+Interactive execution runs with the permissions of its host process. Use the unattended Task path or an external sandbox when you need a stronger boundary. See the [containerization guide](packages/coding-agent/docs/containerization.md).
 
 ## Development
 
 ```bash
-npm install --ignore-scripts  # Install all dependencies without running lifecycle scripts
-npm run build         # Refresh model data, then build all packages
-npm run build:offline # Rebuild using existing model data without network access
-npm run check         # Lint, format, and type check
-./test.sh            # Run tests (skips LLM-dependent tests without API keys)
-./pi-test.sh         # Run pi from sources (can be run from any directory)
+npm install --ignore-scripts
+npm run build
+npm run build:offline
+npm run check
+./test.sh
+./ever-test.sh
 ```
 
-## Building standalone binaries from release source
+`npm run build:offline` uses the checked-in provider model data instead of refreshing it over the network. `./ever-test.sh` starts Ever from source for interactive debugging.
 
-GitHub releases include a versioned source archive covered by the release's `SHA256SUMS` file. Extract it and run the same build script used for the official standalone binaries:
+Design and implementation references:
 
-```bash
-VERSION="<release-version>"
-tar -xzf "pi-${VERSION}-source.tar.gz"
-cd "pi-${VERSION}"
-./scripts/build-binaries.sh --offline-model-data --platform linux-x64 --out "$PWD/out"
-```
+- [Ever v0.1 development specification](EVER_V0.1_DEVELOPMENT_SPEC.md)
+- [Ever architecture optimization specification](EVER_ARCHITECTURE_OPTIMIZATION_SPEC.md)
+- [Long-running control plane specification](LONG_RUNNING_CONTROL_PLANE_SPEC.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Development rules](AGENTS.md)
 
-The source archive includes the generated provider model data used for the release. `--offline-model-data` builds with that snapshot instead of refreshing it from live provider catalogs. The script still installs dependencies, builds the monorepo, compiles the Bun executable, and stages its runtime assets. Package maintainers who provide dependencies separately can pass `--skip-install --skip-deps`.
+## Supply-chain policy
 
-## Supply-chain hardening
+- Direct external dependencies are pinned to exact versions.
+- `package-lock.json` is the dependency ground truth.
+- Releases include a generated npm shrinkwrap for transitive dependency pinning.
+- CI installs dependencies with lifecycle scripts disabled.
+- Dependency lifecycle scripts require an explicit reviewed allowlist.
 
-We treat npm dependency changes as reviewed code changes.
+## Upstream attribution
 
-- Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
-- `.npmrc` sets `save-exact=true` and `min-release-age=2` to avoid same-day dependency releases during npm resolution.
-- `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
-- `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent shrinkwrap.
-- The published CLI package includes `packages/coding-agent/npm-shrinkwrap.json`, generated from the root lockfile, to pin transitive deps for npm users.
-- Release smoke tests use `npm run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
-- Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
-- CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
-- Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
-
-## Share your OSS coding agent sessions
-
-If you use Pi or other coding agents for open source work, please share your sessions.
-
-Public OSS session data helps improve coding agents with real-world tasks, tool use, failures, and fixes instead of toy benchmarks.
-
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
-
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
-
-You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
-
-I regularly publish my own `pi-mono` work sessions here:
-
-- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
+Ever began from source code derived from the Pi agent project and continues to preserve the applicable upstream copyright and MIT license notices. Ever's Task model, product identity, package namespace, control plane, recovery behavior, and release surface are maintained as Ever.
 
 ## License
 
 MIT
-
-<p align="center">
-  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
-  <br /><br />
-  <a href="https://exe.dev"><img src="packages/coding-agent/docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
-</p>

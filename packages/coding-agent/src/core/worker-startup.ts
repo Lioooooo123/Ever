@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { Credential } from "@earendil-works/pi-ai";
+import type { Credential } from "@lioooooo123/ever-ai";
 
 export interface WorkerStartupEnvelope {
 	schemaVersion: 1;

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteTaskStore } from "@ever/long-tasks";
+import { SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import { expect, it } from "vitest";
 import { requestDaemon } from "../src/cli/daemon-command.ts";
 import { workerSocketDirectory } from "../src/core/worker-socket.ts";

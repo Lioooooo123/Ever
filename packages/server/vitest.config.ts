@@ -13,7 +13,7 @@ export default mergeConfig(
 		resolve: {
 			alias: [
 				{
-					find: /^@earendil-works\/pi-protocol$/,
+					find: /^@earendil-works\/Ever-protocol$/,
 					replacement: fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
 				},
 			],

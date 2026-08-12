@@ -1,28 +1,25 @@
-# Runs the repo's /is prompt against an issue when the `pi-analyze` label is added
-# or when a staff member comments `@issuron analyze` anywhere on an issue.
+# Runs the repo's /is prompt against an issue when the `ever-analyze` label is added
+# or when a repository maintainer comments `/ever analyze` anywhere on an issue.
 #
 # Comment triggers can include one `#run-on-*` tag anywhere in the text:
-#   @issuron analyze #run-on-linux    -> ubuntu-latest (default)
-#   @issuron analyze #run-on-windows  -> windows-latest
-#   @issuron analyze #run-on-mac      -> macos-latest
+#   /ever analyze #run-on-linux    -> ubuntu-latest (default)
+#   /ever analyze #run-on-windows  -> windows-latest
+#   /ever analyze #run-on-mac      -> macos-latest
 #
 # Label triggers always run on the default Linux runner. Runner selection is
 # intentionally restricted to hardcoded aliases in the authorization step.
 #
 # Setup required before this works:
-#   1. Create a `pi-analyze` GitHub environment on the repo and add a
-#      `PI_AUTH_JSON` secret containing the contents of a pi auth.json
-#      (~/.pi/agent/auth.json).
-#   2. Create the `pi-analyze` label.
-#   3. Add a repository secret `EARENDIL_ORG_READ_TOKEN` with permission to
-#      read `earendil-works` org membership. The authorization job uses it to
-#      verify that the label actor is an active member of `earendil-works/staff`.
-#   4. Add an environment secret `PI_GIST_TOKEN` on `pi-analyze` with gist
+#   1. Create a `ever-analyze` GitHub environment on the repo and add a
+#      `EVER_AUTH_JSON` secret containing the contents of a ever auth.json
+#      (~/.ever/agent/auth.json).
+#   2. Create the `ever-analyze` label.
+#   3. Add an environment secret `EVER_GIST_TOKEN` on `ever-analyze` with gist
 #      creation permission. The analysis job uses it to upload the exported
 #      session gist.
-#   5. Add an environment secret `PI_AUTH_UPDATE_TOKEN` on `pi-analyze` with
+#   4. Add an environment secret `EVER_AUTH_UPDATE_TOKEN` on `ever-analyze` with
 #      permission to update this repo's environment secrets. The analysis job
-#      uses it to write back refreshed `PI_AUTH_JSON` contents. Fine-grained
+#      uses it to write back refreshed `EVER_AUTH_JSON` contents. Fine-grained
 #      tokens need repository permission `Environments: read and write` on this
 #      repo; classic tokens need the `repo` scope. The `Secrets` permission is
 #      not enough: it only covers repository-level Actions secrets, while every
@@ -31,7 +28,7 @@
 #      accessible by personal access token" and the stored credential goes stale
 #      until its refresh token is rejected.
 #
-# `PI_AUTH_JSON` must come from a login dedicated to this workflow. OpenAI Codex
+# `EVER_AUTH_JSON` must come from a login dedicated to this workflow. OpenAI Codex
 # rotates refresh tokens on every refresh, so sharing one auth.json with a
 # developer machine invalidates whichever copy refreshes second, and analysis
 # then fails with "OAuth refresh failed for openai-codex".
@@ -42,8 +39,9 @@
 #
 # The session runs in a high-entropy checkout directory so the recorded cwd is
 # a unique string. Import the session into a local checkout with the
-# /ir extension command (.pi/extensions/import-repro.ts):
-#   pi "/ir <gist-id | gist-url | pi.dev/session URL>"
+# /ir extension command (.ever/extensions/import-repro.ts):
+#   ever
+#   /ir <gist-id | gist-url | issue URL>
 
 name: Issue Analysis
 
@@ -74,12 +72,10 @@ jobs:
       - name: Verify sender permission
         id: verify
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          ORG_READ_TOKEN: ${{ secrets.EARENDIL_ORG_READ_TOKEN }}
         with:
           script: |
-            const ANALYZE_LABEL = 'pi-analyze';
-            const TRIGGER_RE = /@issuron\s+analyze\b/i;
+            const ANALYZE_LABEL = 'ever-analyze';
+            const TRIGGER_RE = /\/ever\s+analyze\b/i;
             const RUN_ON_TAG_RE = /#run-on-([a-z0-9][a-z0-9_-]*)\b/gi;
             const RUNNER_PROFILES = {
               linux: { runsOn: 'ubuntu-latest', os: 'linux' },
@@ -111,7 +107,7 @@ jobs:
 
             if (context.eventName === 'issues') {
               if (context.payload.action !== 'labeled' || context.payload.label?.name !== ANALYZE_LABEL) {
-                console.log('Not a pi-analyze label event');
+                console.log('Not a ever-analyze label event');
                 return;
               }
             } else if (context.eventName === 'issue_comment') {
@@ -121,7 +117,7 @@ jobs:
               }
               const body = context.payload.comment.body || '';
               if (!TRIGGER_RE.test(body)) {
-                console.log('Comment does not contain an @issuron analyze trigger');
+                console.log('Comment does not contain a /ever analyze trigger');
                 return;
               }
 
@@ -171,56 +167,6 @@ jobs:
               }
             }
 
-            if (!process.env.ORG_READ_TOKEN) {
-              await removeTriggerLabel();
-              core.setFailed('EARENDIL_ORG_READ_TOKEN is not configured; refusing to run issue analysis.');
-              return;
-            }
-
-            try {
-              const response = await fetch(
-                `https://api.github.com/orgs/earendil-works/teams/staff/memberships/${encodeURIComponent(username)}`,
-                {
-                  headers: {
-                    Accept: 'application/vnd.github+json',
-                    Authorization: `Bearer ${process.env.ORG_READ_TOKEN}`,
-                    'X-GitHub-Api-Version': '2022-11-28',
-                  },
-                },
-              );
-
-              if (response.status === 404) {
-                await removeTriggerLabel();
-                core.setFailed(`@${username} is not an active earendil-works/staff member.`);
-                return;
-              }
-
-              if (!response.ok) {
-                const body = await response.text();
-                await removeTriggerLabel();
-                core.setFailed(
-                  `Could not verify earendil-works/staff membership for @${username}: HTTP ${response.status} ${body}`,
-                );
-                return;
-              }
-
-              const membership = await response.json();
-              if (membership.state !== 'active') {
-                await removeTriggerLabel();
-                core.setFailed(`@${username} is not an active earendil-works/staff member.`);
-                return;
-              }
-              console.log(`earendil-works/staff membership for @${username}: ${membership.state}`);
-            } catch (error) {
-              await removeTriggerLabel();
-              core.setFailed(
-                `Could not verify earendil-works/staff membership for @${username}: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              );
-              return;
-            }
-
             const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -255,10 +201,10 @@ jobs:
     needs: authorize
     if: needs.authorize.outputs.should_run == 'true'
     runs-on: ${{ fromJSON(needs.authorize.outputs.runs_on) }}
-    environment: pi-analyze
+    environment: ever-analyze
     timeout-minutes: 45
     concurrency:
-      group: issue-analysis-pi-auth
+      group: issue-analysis-ever-auth
       cancel-in-progress: false
     env:
       ISSUE_ANALYSIS_MODEL: openai-codex/gpt-5.5
@@ -270,7 +216,7 @@ jobs:
         with:
           script: |
             const crypto = require('crypto');
-            core.setOutput('name', `pi-ci-${crypto.randomBytes(16).toString('hex')}`);
+            core.setOutput('name', `ever-ci-${crypto.randomBytes(16).toString('hex')}`);
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -333,18 +279,18 @@ jobs:
         id: write_auth
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PI_AUTH_JSON: ${{ secrets.PI_AUTH_JSON }}
+          EVER_AUTH_JSON: ${{ secrets.EVER_AUTH_JSON }}
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
 
-            const authJson = process.env.PI_AUTH_JSON;
+            const authJson = process.env.EVER_AUTH_JSON;
             if (!authJson) {
-              throw new Error('PI_AUTH_JSON secret is not configured for the pi-analyze environment');
+              throw new Error('EVER_AUTH_JSON secret is not configured for the ever-analyze environment');
             }
 
-            const agentDir = path.join(process.env.RUNNER_TEMP, 'pi-agent');
+            const agentDir = path.join(process.env.RUNNER_TEMP, 'ever-agent');
             fs.mkdirSync(agentDir, { recursive: true });
             const authPath = path.join(agentDir, 'auth.json');
             fs.writeFileSync(authPath, authJson, { mode: 0o600 });
@@ -352,11 +298,11 @@ jobs:
               fs.chmodSync(authPath, 0o600);
             }
 
-      - name: Run pi /is
-        id: run_pi
+      - name: Run Ever /is
+        id: run_ever
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          EVER_CODING_AGENT_DIR: ${{ runner.temp }}/ever-agent
           GH_TOKEN: ${{ github.token }}
           ISSUE_URL: ${{ github.event.issue.html_url }}
           EXTRA_INSTRUCTIONS: ${{ needs.authorize.outputs.extra_instructions }}
@@ -368,13 +314,13 @@ jobs:
             const { spawn } = require('child_process');
 
             const workdir = path.join(process.env.GITHUB_WORKSPACE, process.env.WORKDIR);
-            const outDir = path.join(process.env.RUNNER_TEMP, 'pi-out');
+            const outDir = path.join(process.env.RUNNER_TEMP, 'ever-out');
             const sessionDir = path.join(outDir, 'session');
             fs.mkdirSync(sessionDir, { recursive: true });
 
             let prompt = `/is ${process.env.ISSUE_URL}`;
             if (process.env.EXTRA_INSTRUCTIONS) {
-              prompt += '\n\nAdditional instructions from @issuron analyze comment:\n';
+              prompt += '\n\nAdditional instructions from /ever analyze comment:\n';
               prompt += process.env.EXTRA_INSTRUCTIONS;
             }
 
@@ -412,16 +358,16 @@ jobs:
             await new Promise((resolve) => output.end(resolve));
 
             if (exitCode !== 0) {
-              throw new Error(`pi /is failed with exit code ${exitCode}`);
+              throw new Error(`ever /is failed with exit code ${exitCode}`);
             }
 
       - name: Persist refreshed auth.json
         if: always() && steps.write_auth.outcome == 'success'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_TOKEN: ${{ secrets.PI_AUTH_UPDATE_TOKEN }}
-          PI_AUTH_JSON: ${{ secrets.PI_AUTH_JSON }}
-          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          GH_TOKEN: ${{ secrets.EVER_AUTH_UPDATE_TOKEN }}
+          EVER_AUTH_JSON: ${{ secrets.EVER_AUTH_JSON }}
+          EVER_CODING_AGENT_DIR: ${{ runner.temp }}/ever-agent
         with:
           script: |
             const fs = require('fs');
@@ -429,10 +375,10 @@ jobs:
             const { spawn } = require('child_process');
 
             if (!process.env.GH_TOKEN) {
-              throw new Error('PI_AUTH_UPDATE_TOKEN is not configured for the pi-analyze environment');
+              throw new Error('EVER_AUTH_UPDATE_TOKEN is not configured for the ever-analyze environment');
             }
 
-            const authPath = path.join(process.env.PI_CODING_AGENT_DIR, 'auth.json');
+            const authPath = path.join(process.env.EVER_CODING_AGENT_DIR, 'auth.json');
             if (!fs.existsSync(authPath)) {
               core.warning('auth.json was not created; skipping auth persistence');
               return;
@@ -451,7 +397,7 @@ jobs:
               throw new Error('Refusing to persist auth.json without openai-codex OAuth refresh credentials');
             }
 
-            if (authJson === process.env.PI_AUTH_JSON) {
+            if (authJson === process.env.EVER_AUTH_JSON) {
               console.log('auth.json is unchanged; skipping secret update');
               return;
             }
@@ -459,7 +405,7 @@ jobs:
             await new Promise((resolve, reject) => {
               const child = spawn(
                 'gh',
-                ['secret', 'set', 'PI_AUTH_JSON', '--env', 'pi-analyze', '--repo', process.env.GITHUB_REPOSITORY],
+                ['secret', 'set', 'EVER_AUTH_JSON', '--env', 'ever-analyze', '--repo', process.env.GITHUB_REPOSITORY],
                 { env: process.env, stdio: ['pipe', 'inherit', 'pipe'] },
               );
               const stderrChunks = [];
@@ -477,7 +423,7 @@ jobs:
                 reject(
                   new Error(
                     `gh secret set failed with exit code ${code}${details ? `: ${details}` : ''}. ` +
-                      'PI_AUTH_UPDATE_TOKEN needs repository permission "Environments: read and write" on this repo.',
+                      'EVER_AUTH_UPDATE_TOKEN needs repository permission "Environments: read and write" on this repo.',
                   ),
                 );
               });
@@ -489,7 +435,7 @@ jobs:
         if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          EVER_CODING_AGENT_DIR: ${{ runner.temp }}/ever-agent
           WORKDIR: ${{ steps.workdir.outputs.name }}
         with:
           script: |
@@ -512,7 +458,7 @@ jobs:
               return undefined;
             }
 
-            const outDir = path.join(process.env.RUNNER_TEMP, 'pi-out');
+            const outDir = path.join(process.env.RUNNER_TEMP, 'ever-out');
             const sessionFile = findFirstJsonl(path.join(outDir, 'session'));
             if (!sessionFile) {
               throw new Error('No session jsonl file found');
@@ -541,18 +487,18 @@ jobs:
         if: always() && steps.export_session_files.outcome == 'success'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PI_GIST_TOKEN: ${{ secrets.PI_GIST_TOKEN }}
+          EVER_GIST_TOKEN: ${{ secrets.EVER_GIST_TOKEN }}
         with:
-          github-token: ${{ secrets.PI_GIST_TOKEN }}
+          github-token: ${{ secrets.EVER_GIST_TOKEN }}
           script: |
             const fs = require('fs');
             const path = require('path');
 
-            if (!process.env.PI_GIST_TOKEN) {
-              throw new Error('PI_GIST_TOKEN is not configured');
+            if (!process.env.EVER_GIST_TOKEN) {
+              throw new Error('EVER_GIST_TOKEN is not configured');
             }
 
-            const outDir = path.join(process.env.RUNNER_TEMP, 'pi-out');
+            const outDir = path.join(process.env.RUNNER_TEMP, 'ever-out');
             const files = {};
             for (const filename of ['session.html', 'session.jsonl']) {
               files[filename] = { content: fs.readFileSync(path.join(outDir, filename), 'utf8') };
@@ -566,16 +512,16 @@ jobs:
             const gistId = response.data.id;
             core.setOutput('url', gistUrl);
             core.setOutput('id', gistId);
-            core.setOutput('share_url', `https://pi.dev/session/#${gistId}`);
+            core.setOutput('share_url', gistUrl);
 
       - name: Comment with session import instructions
-        if: always() && steps.run_pi.outcome == 'success' && steps.gist.outcome == 'success'
+        if: always() && steps.run_ever.outcome == 'success' && steps.gist.outcome == 'success'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GIST_URL: ${{ steps.gist.outputs.url }}
           GIST_ID: ${{ steps.gist.outputs.id }}
           SHARE_URL: ${{ steps.gist.outputs.share_url }}
-          SESSION_JSONL: ${{ runner.temp }}/pi-out/session.jsonl
+          SESSION_JSONL: ${{ runner.temp }}/ever-out/session.jsonl
         with:
           script: |
             const fs = require('fs');
@@ -621,15 +567,15 @@ jobs:
             const shareUrl = process.env.SHARE_URL;
             const lastAgentMessage = extractLastAgentMessage(process.env.SESSION_JSONL);
             const body = [
-              'Pi issue analysis finished.',
+              'Ever issue analysis finished.',
               '',
-              `Share URL: ${shareUrl}`,
-              `Gist: ${gistUrl}`,
+              `Session gist: ${shareUrl}`,
               '',
               'Continue locally from a checkout with:',
               '',
               '```sh',
-              `pi "/ir ${gistId}"`,
+              'ever',
+              `# Then run: /ir ${gistId}`,
               '```',
               '',
               '<details>',
@@ -648,7 +594,7 @@ jobs:
             });
 
       - name: Comment on analysis failure
-        if: always() && steps.run_pi.outcome == 'failure'
+        if: always() && steps.run_ever.outcome == 'failure'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GIST_URL: ${{ steps.gist.outputs.url }}
@@ -656,7 +602,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           script: |
-            const lines = ['Pi issue analysis failed; no analysis was produced.', '', `Run: ${process.env.RUN_URL}`];
+            const lines = ['Ever issue analysis failed; no analysis was produced.', '', `Run: ${process.env.RUN_URL}`];
             if (process.env.SHARE_URL) {
               lines.push(`Partial session: ${process.env.SHARE_URL}`);
             }
@@ -681,7 +627,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                name: 'pi-analyze',
+                name: 'ever-analyze',
               });
             } catch (error) {
               if (error.status !== 404) throw error;

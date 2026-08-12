@@ -1,4 +1,4 @@
-import type { CommandResult, ServerEvent, ServerSnapshot, SessionSnapshot } from "@earendil-works/pi-protocol";
+import type { CommandResult, ServerEvent, ServerSnapshot, SessionSnapshot } from "@lioooooo123/ever-protocol";
 import { toError } from "./errors.ts";
 import type { ListenerErrorHandler, Unsubscribe } from "./types.ts";
 

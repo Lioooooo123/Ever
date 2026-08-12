@@ -1,10 +1,10 @@
-import { PiServer } from "../../server.ts";
-import type { PiServerService } from "../../types.ts";
+import { EverServer } from "../../server.ts";
+import type { EverServerService } from "../../types.ts";
 import { createUnixListener } from "./listener.ts";
 import type { UnixServerOptions } from "./types.ts";
 
-/** Compose PiServer with one Unix-domain socket listener. */
-export function createUnixServer(service: PiServerService, options: UnixServerOptions): PiServer {
+/** Compose EverServer with one Unix-domain socket listener. */
+export function createUnixServer(service: EverServerService, options: UnixServerOptions): EverServer {
 	const listener = createUnixListener({
 		path: options.path,
 		mode: options.mode,
@@ -13,7 +13,7 @@ export function createUnixServer(service: PiServerService, options: UnixServerOp
 		gracefulCloseTimeoutMs: options.gracefulCloseTimeoutMs,
 		onError: options.onError,
 	});
-	return new PiServer(service, {
+	return new EverServer(service, {
 		listeners: [listener],
 		maxFrameLength: options.maxFrameLength,
 		handshakeTimeoutMs: options.handshakeTimeoutMs,

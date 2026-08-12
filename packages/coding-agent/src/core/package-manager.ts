@@ -32,8 +32,8 @@ import { CONFIG_DIR_NAME } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
+import { type EverManifest, readEverManifest } from "./ever-manifest.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
-import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 
 const NETWORK_TIMEOUT_MS = 10000;
@@ -41,7 +41,7 @@ const UPDATE_CHECK_CONCURRENCY = 4;
 const GIT_UPDATE_CONCURRENCY = 4;
 
 function isOfflineModeEnabled(): boolean {
-	const value = process.env.PI_OFFLINE;
+	const value = process.env.EVER_OFFLINE ?? process.env.PI_OFFLINE;
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
@@ -338,7 +338,7 @@ function collectFiles(
 	return files;
 }
 
-type SkillDiscoveryMode = "pi" | "agents";
+type SkillDiscoveryMode = "ever" | "agents";
 
 function collectSkillEntries(
 	dir: string,
@@ -397,7 +397,7 @@ function collectSkillEntries(
 			}
 
 			const relPath = toPosixPath(relative(root, fullPath));
-			if (mode === "pi" && dir === root && isFile && entry.name.endsWith(".md") && !ig.ignores(relPath)) {
+			if (mode === "ever" && dir === root && isFile && entry.name.endsWith(".md") && !ig.ignores(relPath)) {
 				entries.push(fullPath);
 				continue;
 			}
@@ -530,7 +530,7 @@ function collectAutoThemeEntries(dir: string): string[] {
 function resolveExtensionEntries(dir: string): string[] | null {
 	const packageJsonPath = join(dir, "package.json");
 	if (existsSync(packageJsonPath)) {
-		const manifest = readPiManifest(packageJsonPath);
+		const manifest = readEverManifest(packageJsonPath);
 		if (manifest?.extensions?.length) {
 			const entries: string[] = [];
 			for (const extPath of manifest.extensions) {
@@ -617,7 +617,7 @@ function collectAutoExtensionEntries(dir: string): string[] {
  */
 function collectResourceFiles(dir: string, resourceType: ResourceType): string[] {
 	if (resourceType === "skills") {
-		return collectSkillEntries(dir, "pi");
+		return collectSkillEntries(dir, "ever");
 	}
 	if (resourceType === "extensions") {
 		return collectAutoExtensionEntries(dir);
@@ -1757,10 +1757,10 @@ export class DefaultPackageManager implements PackageManager {
 
 	private getNpmInstallArgs(specs: string[], installRoot: string): string[] {
 		const packageManagerName = this.getPackageManagerName();
-		// Extension packages run inside pi and resolve pi APIs through loader aliases/virtual modules.
+		// Extension packages run inside Ever and resolve Ever APIs through loader aliases/virtual modules.
 		// Disable peer dependency resolution for managed installs (npm's --legacy-peer-deps, and
 		// equivalent bun/pnpm settings) so package managers do not install or solve host-provided
-		// @earendil-works/pi-* peers. Stale auto-installed pi peers can otherwise block updates.
+		// @lioooooo123/ever-* peers. Stale auto-installed legacy peers can otherwise block updates.
 		if (packageManagerName === "bun") {
 			return ["install", ...specs, "--cwd", installRoot, "--omit=peer"];
 		}
@@ -1882,7 +1882,7 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private getGitUpdateMarkerPath(targetDir: string): string {
-		return join(dirname(targetDir), `.${basename(targetDir)}.pi-update-incomplete`);
+		return join(dirname(targetDir), `.${basename(targetDir)}.ever-update-incomplete`);
 	}
 
 	private async cleanAndInstallGitDependencies(targetDir: string, markerPath: string): Promise<void> {
@@ -1980,7 +1980,7 @@ export class DefaultPackageManager implements PackageManager {
 		this.ensureGitIgnore(installRoot);
 		const packageJsonPath = join(installRoot, "package.json");
 		if (!existsSync(packageJsonPath)) {
-			const pkgJson = { name: "pi-extensions", private: true };
+			const pkgJson = { name: "ever-extensions", private: true };
 			writeFileSync(packageJsonPath, JSON.stringify(pkgJson, null, 2), "utf-8");
 		}
 	}
@@ -2144,10 +2144,10 @@ export class DefaultPackageManager implements PackageManager {
 			return true;
 		}
 
-		const manifest = readPiManifest(join(packageRoot, "package.json"));
+		const manifest = readEverManifest(join(packageRoot, "package.json"));
 		if (manifest) {
 			for (const resourceType of RESOURCE_TYPES) {
-				const entries = manifest[resourceType as keyof PiManifest];
+				const entries = manifest[resourceType as keyof EverManifest];
 				this.addManifestEntries(
 					entries,
 					packageRoot,
@@ -2180,8 +2180,8 @@ export class DefaultPackageManager implements PackageManager {
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
 	): void {
-		const manifest = readPiManifest(join(packageRoot, "package.json"));
-		const entries = manifest?.[resourceType as keyof PiManifest];
+		const manifest = readEverManifest(join(packageRoot, "package.json"));
+		const entries = manifest?.[resourceType as keyof EverManifest];
 		if (entries) {
 			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata);
 			return;
@@ -2249,8 +2249,8 @@ export class DefaultPackageManager implements PackageManager {
 		packageRoot: string,
 		resourceType: ResourceType,
 	): { allFiles: string[]; enabledByManifest: Set<string> } {
-		const manifest = readPiManifest(join(packageRoot, "package.json"));
-		const entries = manifest?.[resourceType as keyof PiManifest];
+		const manifest = readEverManifest(join(packageRoot, "package.json"));
+		const entries = manifest?.[resourceType as keyof EverManifest];
 		if (entries && entries.length > 0) {
 			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType);
 			const manifestPatterns = entries.filter(isOverridePattern);
@@ -2372,6 +2372,21 @@ export class DefaultPackageManager implements PackageManager {
 			prompts: join(projectBaseDir, "prompts"),
 			themes: join(projectBaseDir, "themes"),
 		};
+		const legacyUserBaseDir = join(getHomeDir(), ".pi", "agent");
+		const allowLegacyUserFallback = resolve(globalBaseDir) === resolve(join(getHomeDir(), CONFIG_DIR_NAME, "agent"));
+		const legacyProjectBaseDir = join(this.cwd, ".pi");
+		const legacyUserDirs = {
+			extensions: join(legacyUserBaseDir, "extensions"),
+			skills: join(legacyUserBaseDir, "skills"),
+			prompts: join(legacyUserBaseDir, "prompts"),
+			themes: join(legacyUserBaseDir, "themes"),
+		};
+		const legacyProjectDirs = {
+			extensions: join(legacyProjectBaseDir, "extensions"),
+			skills: join(legacyProjectBaseDir, "skills"),
+			prompts: join(legacyProjectBaseDir, "prompts"),
+			themes: join(legacyProjectBaseDir, "themes"),
+		};
 		const userAgentsSkillsDir = join(getHomeDir(), ".agents", "skills");
 		const projectTrusted = this.settingsManager.isProjectTrusted();
 		const projectAgentsSkillDirs = projectTrusted
@@ -2391,9 +2406,36 @@ export class DefaultPackageManager implements PackageManager {
 				this.addResource(target, path, metadata, enabled);
 			}
 		};
+		const addLegacyFallback = (
+			resourceType: ResourceType,
+			primaryDir: string,
+			legacyDir: string,
+			paths: string[],
+			metadata: PathMetadata,
+			legacyBaseDir: string,
+		) => {
+			if (existsSync(primaryDir) || !existsSync(legacyDir)) return;
+			addResources(resourceType, paths, { ...metadata, baseDir: legacyBaseDir }, [], legacyBaseDir);
+		};
 
 		if (projectTrusted) {
-			// Project extensions from .pi/
+			addLegacyFallback(
+				"extensions",
+				projectDirs.extensions,
+				legacyProjectDirs.extensions,
+				collectAutoExtensionEntries(legacyProjectDirs.extensions),
+				projectMetadata,
+				legacyProjectBaseDir,
+			);
+			addLegacyFallback(
+				"skills",
+				projectDirs.skills,
+				legacyProjectDirs.skills,
+				collectAutoSkillEntries(legacyProjectDirs.skills, "ever"),
+				projectMetadata,
+				legacyProjectBaseDir,
+			);
+			// Project extensions from .ever/
 			addResources(
 				"extensions",
 				collectAutoExtensionEntries(projectDirs.extensions),
@@ -2402,10 +2444,10 @@ export class DefaultPackageManager implements PackageManager {
 				projectBaseDir,
 			);
 
-			// Project skills from .pi/
+			// Project skills from .ever/
 			addResources(
 				"skills",
-				collectAutoSkillEntries(projectDirs.skills, "pi"),
+				collectAutoSkillEntries(projectDirs.skills, "ever"),
 				projectMetadata,
 				projectOverrides.skills,
 				projectBaseDir,
@@ -2429,6 +2471,22 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		if (projectTrusted) {
+			addLegacyFallback(
+				"prompts",
+				projectDirs.prompts,
+				legacyProjectDirs.prompts,
+				collectAutoPromptEntries(legacyProjectDirs.prompts),
+				projectMetadata,
+				legacyProjectBaseDir,
+			);
+			addLegacyFallback(
+				"themes",
+				projectDirs.themes,
+				legacyProjectDirs.themes,
+				collectAutoThemeEntries(legacyProjectDirs.themes),
+				projectMetadata,
+				legacyProjectBaseDir,
+			);
 			addResources(
 				"prompts",
 				collectAutoPromptEntries(projectDirs.prompts),
@@ -2445,7 +2503,40 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		// User extensions from ~/.pi/agent/
+		addLegacyFallback(
+			"extensions",
+			userDirs.extensions,
+			legacyUserDirs.extensions,
+			allowLegacyUserFallback ? collectAutoExtensionEntries(legacyUserDirs.extensions) : [],
+			userMetadata,
+			legacyUserBaseDir,
+		);
+		addLegacyFallback(
+			"skills",
+			userDirs.skills,
+			legacyUserDirs.skills,
+			allowLegacyUserFallback ? collectAutoSkillEntries(legacyUserDirs.skills, "ever") : [],
+			userMetadata,
+			legacyUserBaseDir,
+		);
+		addLegacyFallback(
+			"prompts",
+			userDirs.prompts,
+			legacyUserDirs.prompts,
+			allowLegacyUserFallback ? collectAutoPromptEntries(legacyUserDirs.prompts) : [],
+			userMetadata,
+			legacyUserBaseDir,
+		);
+		addLegacyFallback(
+			"themes",
+			userDirs.themes,
+			legacyUserDirs.themes,
+			allowLegacyUserFallback ? collectAutoThemeEntries(legacyUserDirs.themes) : [],
+			userMetadata,
+			legacyUserBaseDir,
+		);
+
+		// User extensions from ~/.ever/agent/
 		addResources(
 			"extensions",
 			collectAutoExtensionEntries(userDirs.extensions),
@@ -2454,10 +2545,10 @@ export class DefaultPackageManager implements PackageManager {
 			globalBaseDir,
 		);
 
-		// User skills from ~/.pi/agent/
+		// User skills from ~/.ever/agent/
 		addResources(
 			"skills",
-			collectAutoSkillEntries(userDirs.skills, "pi"),
+			collectAutoSkillEntries(userDirs.skills, "ever"),
 			userMetadata,
 			userOverrides.skills,
 			globalBaseDir,

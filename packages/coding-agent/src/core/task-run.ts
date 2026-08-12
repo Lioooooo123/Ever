@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { SqliteTaskStore } from "@ever/long-tasks";
+import { SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import { TaskApplication } from "./task-application.ts";
 import { setTaskRunContext } from "./task-run-context.ts";
 

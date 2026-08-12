@@ -325,7 +325,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				} satisfies ResponseInputItem);
 			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
 				const names = deferredTools.map((tool) => tool.name);
-				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
+				const searchCallId = `ever_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
 				messages.push({
 					type: "tool_search_call",
 					call_id: searchCallId,

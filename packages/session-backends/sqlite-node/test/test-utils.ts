@@ -8,8 +8,8 @@ import type {
 	Session as CoreSession,
 	Entry,
 	MessageEntry,
-} from "@earendil-works/pi-agent-core";
-import type { Usage } from "@earendil-works/pi-ai";
+} from "@lioooooo123/ever-agent-core";
+import type { Usage } from "@lioooooo123/ever-ai";
 import { afterEach, vi } from "vitest";
 import type { SqliteDatabaseFactory, SqliteSessionMetadata } from "../src/index.ts";
 
@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 export function createTempDir(): string {
-	const dir = mkdtempSync(join(tmpdir(), "pi-session-backend-sqlite-node-"));
+	const dir = mkdtempSync(join(tmpdir(), "ever-session-backend-sqlite-node-"));
 	tempDirs.push(dir);
 	return dir;
 }

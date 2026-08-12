@@ -1,47 +1,47 @@
-import type { JsonValue, ProtocolError, ProtocolErrorCode } from "@earendil-works/pi-protocol";
+import type { JsonValue, ProtocolError, ProtocolErrorCode } from "@lioooooo123/ever-protocol";
 
-export class PiServerError extends Error {
+export class EverServerError extends Error {
 	readonly code: ProtocolErrorCode;
 	readonly details: JsonValue | undefined;
 
 	constructor(error: ProtocolError) {
 		super(error.message);
-		this.name = "PiServerError";
+		this.name = "EverServerError";
 		this.code = error.code;
 		this.details = error.details;
 	}
 }
 
-export class PiDisconnectedError extends Error {
-	constructor(message = "Pi client is disconnected") {
+export class EverDisconnectedError extends Error {
+	constructor(message = "Ever client is disconnected") {
 		super(message);
-		this.name = "PiDisconnectedError";
+		this.name = "EverDisconnectedError";
 	}
 }
 
-export class PiClientDisposedError extends Error {
+export class EverClientDisposedError extends Error {
 	constructor() {
-		super("Pi client is disposed");
-		this.name = "PiClientDisposedError";
+		super("Ever client is disposed");
+		this.name = "EverClientDisposedError";
 	}
 }
 
-export class PiSessionOwnershipError extends Error {
+export class EverSessionOwnershipError extends Error {
 	readonly sessionId: string;
 
 	constructor(sessionId: string, message: string) {
 		super(message);
-		this.name = "PiSessionOwnershipError";
+		this.name = "EverSessionOwnershipError";
 		this.sessionId = sessionId;
 	}
 }
 
-export class PiSessionDetachedError extends Error {
+export class EverSessionDetachedError extends Error {
 	readonly sessionId: string;
 
 	constructor(sessionId: string) {
 		super(`Session ${sessionId} is not attached`);
-		this.name = "PiSessionDetachedError";
+		this.name = "EverSessionDetachedError";
 		this.sessionId = sessionId;
 	}
 }
@@ -50,7 +50,7 @@ export function toError(error: unknown): Error {
 	return error instanceof Error ? error : new Error(String(error));
 }
 
-export function toDisconnectedError(error: unknown): PiDisconnectedError {
+export function toDisconnectedError(error: unknown): EverDisconnectedError {
 	const cause = toError(error);
-	return cause instanceof PiDisconnectedError ? cause : new PiDisconnectedError(cause.message);
+	return cause instanceof EverDisconnectedError ? cause : new EverDisconnectedError(cause.message);
 }

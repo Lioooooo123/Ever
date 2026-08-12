@@ -1,7 +1,7 @@
 import { type ClientCommandContext, clientCommand } from "./commands/client.ts";
-import { type PiCommandContext, piCommand } from "./commands/pi.ts";
+import { type EverCommandContext, everCommand } from "./commands/ever.ts";
 import { type ServerCommandContext, serverCommand } from "./commands/server.ts";
 
-export type ExperimentalCliContext = PiCommandContext & ServerCommandContext & ClientCommandContext;
+export type ExperimentalCliContext = EverCommandContext & ServerCommandContext & ClientCommandContext;
 
-export const experimentalCli = piCommand.command(serverCommand).command(clientCommand);
+export const experimentalCli = everCommand.command(serverCommand).command(clientCommand);

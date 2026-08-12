@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
-import { EvidenceRefSchema, SqliteTaskStore, TaskController, VerifiedCompletion } from "@ever/long-tasks";
+import { Type } from "@lioooooo123/ever-ai";
+import { EvidenceRefSchema, SqliteTaskStore, TaskController, VerifiedCompletion } from "@lioooooo123/ever-long-tasks";
 import { defineTool, type ToolDefinition } from "./extensions/types.ts";
 
 function textResult(value: unknown) {

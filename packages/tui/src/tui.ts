@@ -317,7 +317,7 @@ export interface TUI extends Component {
 	queryTerminalColorScheme(options: { timeoutMs: number }): Promise<TerminalColorScheme | undefined>;
 }
 
-export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
+export const VIEWPORT_TUI = Symbol.for("@lioooooo123/ever-tui/viewport");
 
 export interface ViewportTUI extends TUI {
 	readonly [VIEWPORT_TUI]: true;
@@ -341,8 +341,8 @@ export abstract class TuiBase extends Container implements TUI {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
-	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
-	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1";
+	private showHardwareCursor = process.env.EVER_HARDWARE_CURSOR === "1";
+	private clearOnShrink = process.env.EVER_CLEAR_ON_SHRINK === "1";
 	protected fullRedrawCount = 0;
 	protected stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
@@ -363,7 +363,8 @@ export abstract class TuiBase extends Container implements TUI {
 	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string) {
 		super();
 		this.terminal = terminal;
-		this.logDirectory = logDirectory ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+		this.logDirectory =
+			logDirectory ?? process.env.EVER_CODING_AGENT_DIR ?? path.join(os.homedir(), ".ever", "agent");
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createInMemoryTaskStore, ScheduleEngine, TaskController } from "@ever/long-tasks";
+import { createInMemoryTaskStore, ScheduleEngine, TaskController } from "@lioooooo123/ever-long-tasks";
 import { describe, expect, it } from "vitest";
 import { SequencedEventBuffer } from "../src/daemon/event-stream.ts";
 import { createDaemonCommand, daemonCommandPayloadSha256, parseDaemonCommand } from "../src/daemon/protocol.ts";

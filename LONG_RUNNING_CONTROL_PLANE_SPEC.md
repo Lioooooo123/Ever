@@ -40,7 +40,7 @@ Ever 保留现有 `Task`、`Agent`、`Attempt`、checkpoint、lease、budget、d
 
 当前实现已经具备：
 
-- `@ever/long-tasks` SQLite 数据面
+- `@lioooooo123/ever-long-tasks` SQLite 数据面
 - settled-turn 和 pre-compaction checkpoint
 - Attempt runtime snapshot 和漂移门禁
 - Agent lease、fencing token、过期执行恢复

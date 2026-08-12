@@ -1,7 +1,7 @@
 {
-	"name": "@earendil-works/pi-client",
+	"name": "@lioooooo123/ever-client",
 	"version": "0.84.1",
-	"description": "Transport-neutral client for remote pi sessions over framed CBOR bytes",
+	"description": "Transport-neutral client for remote Ever sessions over framed CBOR bytes",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -30,24 +30,24 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [
-		"pi",
+		"ever",
 		"client",
 		"protocol",
 		"cbor",
 		"binary"
 	],
-	"author": "Earendil Works",
+	"author": "Ever contributors",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/Lioooooo123/Ever.git",
 		"directory": "packages/client"
 	},
 	"engines": {
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-protocol": "^0.84.1"
+		"@lioooooo123/ever-protocol": "^0.84.1"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

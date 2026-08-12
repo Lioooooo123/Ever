@@ -8,15 +8,15 @@
 
 ## 1. 摘要
 
-Ever 是 Pi Agent Harness 的低侵入式 fork。主要能力放在独立模块中，只对 Pi core 增加必要的通用接口。首个核心改动是在现有 Agent Session、工具系统、compaction 和 provider 之上增加持久任务运行时，使一个任务可以跨会话、跨上下文压缩、跨进程退出继续执行。
+Ever 基于上游 Pi Agent Harness 的 MIT 许可代码演进。主要能力放在独立模块中，只对现有 core 增加必要的通用接口。首个核心改动是在现有 Agent Session、工具系统、compaction 和 provider 之上增加持久任务运行时，使一个任务可以跨会话、跨上下文压缩、跨进程退出继续执行。
 
 长程任务在本规范中指持续数小时或数天、允许等待外部条件、能够在失败后恢复的工作。扩大上下文窗口不能满足这些要求。运行时需要保存目标、验收条件、执行历史、checkpoint、预算、等待条件和副作用状态，并在每次恢复前判断哪些操作可以重试。
 
-V1 保留 Pi 的会话格式和 Agent Loop，不实现新的对话系统，也不把完整执行历史反复放进模型上下文。一个 Task 可以拥有一个主 Agent 和多个 subagent。每个 Agent 使用独立 session，通过持久 inbox 交换指令、问题、进度和结果。
+V1 保留 Ever 现有的会话格式和 Agent Loop，不实现新的对话系统，也不把完整执行历史反复放进模型上下文。一个 Task 可以拥有一个主 Agent 和多个 subagent。每个 Agent 使用独立 session，通过持久 inbox 交换指令、问题、进度和结果。
 
 ## 2. 背景
 
-Pi 已提供以下基础能力：
+Ever 从上游 Pi 继承了以下基础能力：
 
 - `AgentSessionRuntime` 和 `AgentSession`
 - JSONL 或 SQLite session 持久化
@@ -27,16 +27,16 @@ Pi 已提供以下基础能力：
 
 这些能力能保存对话，却没有独立于对话的长期任务实体。进程中断后，系统也缺少统一的 lease、预算、等待条件和副作用恢复规则。
 
-Pi 默认继承启动用户的文件、进程、网络和凭据权限。无人值守执行会放大这一风险，因此 V1 不允许在没有 sandbox 的情况下静默转入后台。
+Ever 默认继承启动用户的文件、进程、网络和凭据权限。无人值守执行会放大这一风险，因此 V1 不允许在没有 sandbox 的情况下静默转入后台。
 
 ## 3. 目标
 
 V1 必须满足以下目标：
 
 1. 用户可以创建带验收条件的持久任务。
-2. 一个任务可以关联多个执行 attempt 和多个 Pi session。
+2. 一个任务可以关联多个执行 attempt 和多个 Ever session。
 3. 每个 settled turn 后生成原子 checkpoint。
-4. Pi 退出、worker 崩溃或机器重启后，任务可以从最近的安全边界恢复。
+4. Ever 退出、worker 崩溃或机器重启后，任务可以从最近的安全边界恢复。
 5. 结果未知的副作用不得自动重放。
 6. compaction 不得丢失任务目标、验收条件、预算和当前进度。
 7. 用户可以查看、暂停、恢复和取消任务。
@@ -63,7 +63,7 @@ V1 不包含以下内容：
 - Windows 开机自启动
 - 完整重放 LLM token stream
 - 对未知外部副作用进行自动补偿
-- 重写 Pi session tree 或 compaction 格式
+- 重写 Ever session tree 或 compaction 格式
 
 ## 5. 术语
 
@@ -71,7 +71,7 @@ V1 不包含以下内容：
 | --- | --- |
 | Task | 持久目标，包含验收条件、预算和工作区绑定信息 |
 | Attempt | Task 的一次连续执行，受 Turn 数和时间上限约束 |
-| Session | Pi 原生对话和工具调用历史 |
+| Session | Ever 原生对话和工具调用历史 |
 | Turn | 一次用户或运行时输入触发的 Agent Loop |
 | Settled turn | 不再有自动重试、compaction 或排队消息的 Turn 边界 |
 | Checkpoint | 最近安全状态的结构化快照 |
@@ -106,7 +106,7 @@ flowchart TD
     SubRuntimes --> Provider
     MainRuntime --> Tools["Tools"]
     SubRuntimes --> Tools
-    MainRuntime --> SessionStore["Pi Session Store"]
+    MainRuntime --> SessionStore["Ever Session Store"]
     SubRuntimes --> SessionStore
     MainWorker --> Store
     SubWorkers --> Store
@@ -116,7 +116,7 @@ flowchart TD
 
 ### 6.1 模块边界
 
-新增 workspace package：`packages/long-tasks`，包名为 `@ever/long-tasks`。该包不单独发布到 npm，由 Ever monorepo 内部使用。
+新增 workspace package：`packages/long-tasks`，包名为 `@lioooooo123/ever-long-tasks`。该包由 Ever monorepo 统一管理。
 
 模块职责如下：
 
@@ -125,7 +125,7 @@ flowchart TD
 | `TaskStore` | 数据迁移、事务、Task 查询、事件追加、checkpoint 和 lease |
 | `TaskController` | 校验命令、执行状态迁移、调用策略和调度器 |
 | `TaskScheduler` | 查找可运行 Task、处理等待条件和退避时间 |
-| `AgentWorker` | 创建或恢复某个 Agent 的 Pi session，驱动一次 attempt |
+| `AgentWorker` | 创建或恢复某个 Agent 的 Ever session，驱动一次 attempt |
 | `RecoveryEngine` | 检查未完成工具调用和未知副作用，决定恢复方式 |
 | `TaskContextBuilder` | 构建每次 LLM 调用需要的持久任务上下文 |
 | `BudgetPolicy` | Turn、时间、成本和错误次数限制 |
@@ -145,7 +145,7 @@ interface AgentCoordinator {
 
 生产实现使用 SQLite adapter，测试使用内存 adapter。消息授权、排序、去重和状态迁移必须通过同一 interface 验证，测试不得绕过该 seam 直接断言数据库内部状态。
 
-### 6.2 与 Pi core 的集成点
+### 6.2 与 Ever core 的集成点
 
 实现阶段允许修改以下位置：
 
@@ -157,7 +157,7 @@ interface AgentCoordinator {
 - `packages/coding-agent/src/cli.ts`
 - `packages/coding-agent/src/main.ts`
 
-对 Pi core 的新增接口必须保持通用，不得包含 Ever 数据库类型。计划增加两个能力：
+对 Ever core 的新增接口必须保持通用，不得包含长程任务数据库类型。计划增加两个能力：
 
 ```ts
 interface AgentSessionRuntime {
@@ -203,7 +203,7 @@ interface RuntimeSnapshot {
 
 `RuntimeSnapshot` 是恢复正确性的一部分，不是可选诊断信息。它在 Attempt 开始时固化，每个 checkpoint 保存其 hash。快照只记录标识、版本和内容 hash，不记录 provider token、环境变量值或其他凭据。
 
-恢复时先重建当前快照并比对。仅 UI 主题等不影响执行语义的变化可直接继续。provider、model、system prompt、context file、工具集、扩展、权限策略、sandbox 策略或协议版本不一致时，Agent 进入 `waiting_input`，记录 `RuntimeDriftDetected`。只有用户执行 `pi task resume <task-id> --accept-runtime-drift` 后才可创建新 Attempt，并记录 `RuntimeDriftAccepted` 及新旧快照 hash。
+恢复时先重建当前快照并比对。仅 UI 主题等不影响执行语义的变化可直接继续。provider、model、system prompt、context file、工具集、扩展、权限策略、sandbox 策略或协议版本不一致时，Agent 进入 `waiting_input`，记录 `RuntimeDriftDetected`。只有用户执行 `ever task resume <task-id> --accept-runtime-drift` 后才可创建新 Attempt，并记录 `RuntimeDriftAccepted` 及新旧快照 hash。
 
 ## 7. 持久状态模型
 
@@ -212,13 +212,13 @@ interface RuntimeSnapshot {
 默认数据库：
 
 ```text
-~/.pi/agent/long-tasks.sqlite
+~/.ever/agent/long-tasks.sqlite
 ```
 
 任务附件和大体积证据：
 
 ```text
-~/.pi/agent/tasks/<task-id>/artifacts/
+~/.ever/agent/tasks/<task-id>/artifacts/
 ```
 
 数据库和 artifacts 必须使用 `0700` 目录权限。数据库文件应使用 `0600`。敏感环境变量、provider token 和完整 shell 环境不得写入事件或 checkpoint。
@@ -697,7 +697,7 @@ subagent 支持两种工作区模式：
 主 Agent 继续使用 Task 绑定的主工作区。并发 Agent 不得写入同一工作区。`isolated_worktree` 默认位于：
 
 ```text
-~/.pi/agent/worktrees/<repo-fingerprint>/<task-id>/<agent-id>/
+~/.ever/agent/worktrees/<repo-fingerprint>/<task-id>/<agent-id>/
 ```
 
 对应分支名为 `ever/task/<task-short-id>/<agent-short-id>`。分配器创建 worktree 前必须确认分支名不存在，存在时暂停 Agent 并要求用户处理，不能复用未知分支。
@@ -857,7 +857,7 @@ RecoveryCompleted
 5. 保存 `RuntimeSnapshot` hash 和 workspace snapshot hash。
 6. 追加 `CheckpointCreated`。
 
-任一步失败，整个事务回滚。Pi 原生 session 已经写入但 Agent checkpoint 事务失败时，恢复器选择该 Agent 最近已提交 checkpoint，不假定新 session entry 已纳入任务状态。
+任一步失败，整个事务回滚。Ever 原生 session 已经写入但 Agent checkpoint 事务失败时，恢复器选择该 Agent 最近已提交 checkpoint，不假定新 session entry 已纳入任务状态。
 
 ### 11.2 Checkpoint 内容
 
@@ -928,7 +928,7 @@ type TaskUpdateInput =
 
 ### 13.1 每次调用注入的内容
 
-`TaskContextBuilder` 在 Pi 的 `context` 阶段加入一个受控消息：
+`TaskContextBuilder` 在 Ever 的 `context` 阶段加入一个受控消息：
 
 ```xml
 <long_task>
@@ -957,7 +957,7 @@ type TaskUpdateInput =
 
 ### 13.2 compaction 规则
 
-Pi 原生 compaction 继续管理会话消息。Ever 不创建第二套会话摘要系统。
+Ever 原生 compaction 继续管理会话消息，不创建第二套会话摘要系统。
 
 `session_before_compact` 处理器必须先请求 checkpoint。checkpoint 失败时取消 compaction，并把 Task 暂停为 `checkpoint_failed`。compaction 完成后记录 `CompactionFinished`，其中包含新的 compaction entry ID 和 checkpoint ID。
 
@@ -988,7 +988,7 @@ interface ToolDurabilityMetadata {
 
 ### 14.2 工具执行记录
 
-工具调用前追加 `ToolPlanned`，真正调用前追加 `ToolStarted`，返回后追加 `ToolFinished`。记录包含 Pi `toolCallId`、规范化输入 hash、风险分类、幂等键和结果摘要。
+工具调用前追加 `ToolPlanned`，真正调用前追加 `ToolStarted`，返回后追加 `ToolFinished`。记录包含 Ever `toolCallId`、规范化输入 hash、风险分类、幂等键和结果摘要。
 
 恢复时发现 `ToolStarted` 没有对应 `ToolFinished`：
 
@@ -1094,23 +1094,23 @@ Agent 工作区分配遵循第 9.7 节。Task 的 workspace fingerprint 约束�
 Phase 1 提供：
 
 ```text
-pi task create --title <title> --goal <goal> --acceptance <text>
-pi task run <task-id>
-pi task ls
-pi task show <task-id>
-pi task pause <task-id>
-pi task resume <task-id>
-pi task cancel <task-id>
-pi task events <task-id>
+ever task create --title <title> --goal <goal> --acceptance <text>
+ever task run <task-id>
+ever task ls
+ever task show <task-id>
+ever task pause <task-id>
+ever task resume <task-id>
+ever task cancel <task-id>
+ever task events <task-id>
 ```
 
 Phase 2 增加：
 
 ```text
-pi task agents <task-id>
-pi task agent show <task-id> <agent-id>
-pi task messages <task-id> [--agent <agent-id>]
-pi task steer <task-id> --agent <agent-id> --message <text>
+ever task agents <task-id>
+ever task agent show <task-id> <agent-id>
+ever task messages <task-id> [--agent <agent-id>]
+ever task steer <task-id> --agent <agent-id> --message <text>
 ```
 
 `task run` 附着当前终端，用户可以实时 steering。正常 Ctrl+C 会先请求 checkpoint，再释放 lease。第二次 Ctrl+C 立即中止，Task 根据工具状态进入 `paused` 或 `unknown_outcome`。
@@ -1120,17 +1120,17 @@ pi task steer <task-id> --agent <agent-id> --message <text>
 Phase 3 提供：
 
 ```text
-pi daemon start
-pi daemon status
-pi daemon stop
-pi task start <task-id> --max-cost-usd <amount>
-pi task schedule <task-id> --at <iso-time>
-pi task logs <task-id> --follow
+ever daemon start
+ever daemon status
+ever daemon stop
+ever task start <task-id> --max-cost-usd <amount>
+ever task schedule <task-id> --at <iso-time>
+ever task logs <task-id> --follow
 ```
 
-daemon 使用本地 Unix socket 与 CLI 通信。socket 默认位于 `~/.pi/agent/run/ever.sock`，目录权限为 `0700`。V1 不开放 TCP 监听。
+daemon 使用本地 Unix socket 与 CLI 通信。socket 默认位于 `~/.ever/agent/run/ever.sock`，目录权限为 `0700`。V1 不开放 TCP 监听。
 
-`pi daemon stop` 先停止接收新任务，等待正在执行的 Turn settled，写 checkpoint 后退出。超过 30 秒仍未 settled 时停止 worker，并按副作用恢复规则更新 Task。
+`ever daemon stop` 先停止接收新任务，等待正在执行的 Turn settled，写 checkpoint 后退出。超过 30 秒仍未 settled 时停止 worker，并按副作用恢复规则更新 Task。
 
 daemon 重启时，新的 Supervisor 从持久 owner secret 和 Worker descriptor 的旧 generation 派生一次性接管凭证；Worker 验证旧凭证后原子旋转到新 generation 凭证。旧 Supervisor 因凭证失效不能继续控制 Worker。descriptor、进程和私有 socket 任一项无法验证时保持 fail-closed。
 
@@ -1226,7 +1226,7 @@ CLI 至少显示：
 | provider 鉴权失败 | 进入 `waiting_input`，不自动重试 |
 | SQLite busy | 等待 `busy_timeout`，失败后停止当前 Turn |
 | SQLite 损坏 | 只读打开并导出诊断，不自动重建覆盖 |
-| checkpoint 写入失败 | 进入 `paused`，保留 Pi session |
+| checkpoint 写入失败 | 进入 `paused`，保留 Ever session |
 | 运行环境快照漂移 | 追加 `RuntimeDriftDetected`，进入 `waiting_input`，等待用户显式接受 |
 | worker 失联 | lease 到期，追加 `WorkerLost`，Agent 进入 `recovering` 并通过 recovery barrier |
 | 旧 worker 无法终止或确认退出 | 追加 `RecoveryBlocked`，禁止新 Turn，进入 `unknown_outcome` 或等待用户 |
@@ -1332,7 +1332,7 @@ Phase 3 额外要求 daemon 连续运行 8 小时，期间模拟 provider 超时
 
 ## 25. 性能要求
 
-- `pi task ls` 查询 10000 个 Task 时，P95 小于 200 毫秒。
+- `ever task ls` 查询 10000 个 Task 时，P95 小于 200 毫秒。
 - 追加事件和 checkpoint 的本地数据库事务，P95 小于 100 毫秒。
 - 每次任务上下文构建，P95 小于 50 毫秒，不含 artifact 文件读取。
 - scheduler 不得把全部事件加载到内存，只查询 runnable Task 索引。
@@ -1419,15 +1419,15 @@ npm run check
 新增 package 的定向验证命令：
 
 ```bash
-npm test --workspace=@ever/long-tasks
-npm run build --workspace=@ever/long-tasks
+npm test --workspace=@lioooooo123/ever-long-tasks
+npm run build --workspace=@lioooooo123/ever-long-tasks
 ```
 
 不新增其他语言或运行时。优先复用 monorepo 已有 SQLite backend、TypeBox、测试框架和日志基础设施。新增直接依赖必须固定精确版本，并通过上游 pinned dependency 检查。
 
 ## 28. 发布与回滚
 
-长程任务功能通过 `longTasks.enabled` 控制。数据库使用独立文件，不修改现有 Pi session schema。
+长程任务功能通过 `longTasks.enabled` 控制。数据库使用独立文件，不修改现有 Ever session schema。
 
 回滚步骤：
 
@@ -1441,9 +1441,9 @@ npm run build --workspace=@ever/long-tasks
 
 ## 29. 关键风险
 
-### 29.1 Pi session 不能从任意 settled 边界稳定恢复
+### 29.1 Ever session 不能从任意 settled 边界稳定恢复
 
-实现前需要验证 `AgentSessionRuntime`、`SessionManager` 和 SQLite backend 的真实恢复链路。若当前接口不足，只在 Pi core 增加通用 checkpoint 接口，不把 TaskStore 逻辑塞进 Agent Session。
+实现前需要验证 `AgentSessionRuntime`、`SessionManager` 和 SQLite backend 的真实恢复链路。若当前接口不足，只在 Ever core 增加通用 checkpoint 接口，不把 TaskStore 逻辑塞进 Agent Session。
 
 ### 29.2 shell 副作用无法可靠推断
 
@@ -1451,7 +1451,7 @@ V1 将 `bash` 默认归类为 `process`。这会产生更多人工核对，但�
 
 ### 29.3 上游持续变化导致 fork 难以同步
 
-Ever 对 core 的修改集中在少量恢复钩子。Task 控制面保留在独立 package。每次同步 upstream 时先运行 Pi 原测试，再运行 long-tasks 测试。
+Ever 对 core 的修改集中在少量恢复钩子。Task 控制面保留在独立 package。每次同步 upstream 时先运行上游原测试，再运行 long-tasks 测试。
 
 ### 29.4 无人值守权限过大
 
@@ -1479,7 +1479,7 @@ Ever 对 core 的修改集中在少量恢复钩子。Task 控制面保留在独�
 
 ## 30. 已确定的产品边界
 
-- 产品名使用 Ever，CLI 在 V1 继续兼容 `pi`。
+- 产品名和 CLI 命令统一使用 Ever 与 `ever`。
 - Task 是顶层持久实体，Session 是其执行记录之一。
 - 每个 Task 有且只有一个主 Agent，可以拥有多个持久 subagent。
 - Agent 通过持久 inbox 通信，消息采用 at-least-once delivery。

@@ -10,20 +10,20 @@ import {
 } from "../command-options.ts";
 import type { TransportAddress } from "../transport-address.ts";
 
-export interface PiCommand {
-	readonly command: "pi";
+export interface EverCommand {
+	readonly command: "ever";
 	readonly auth?: AuthInput;
 	readonly options: Args;
 	readonly listen?: readonly TransportAddress[];
 }
 
-export interface PiCommandContext {
-	runPi(command: PiCommand): void | Promise<void>;
+export interface EverCommandContext {
+	runEver(command: EverCommand): void | Promise<void>;
 }
 
 const listenOption = transportOption("--listen");
 
-export const piCommand = new Command<PiCommand, PiCommandContext>("pi")
+export const everCommand = new Command<EverCommand, EverCommandContext>("ever")
 	.option(listenOption)
 	.option(authTokenOption)
 	.option(authTokenFileOption)
@@ -37,11 +37,11 @@ export const piCommand = new Command<PiCommand, PiCommandContext>("pi")
 		return {
 			ok: true,
 			command: {
-				command: "pi",
+				command: "ever",
 				options,
 				...(auth === undefined ? {} : { auth }),
 				...(listen.length === 0 ? {} : { listen }),
 			},
 		};
 	})
-	.action((command, context) => context.runPi(command));
+	.action((command, context) => context.runEver(command));

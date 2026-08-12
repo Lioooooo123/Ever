@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Changed the directly developed coding-agent distribution to publish as `@lioooooo123/ever` with `ever-*` release artifacts, while retaining the in-repository Pi agent, AI, and TUI source modules as its execution kernel.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 - Changed `ever` to open the inherited Pi TUI directly, while explicit command-line goals are promoted to durable Tasks in the same interface.
 - Centralized Task submission and control behind an idempotent Task Application boundary and made completion verification execute exactly once.

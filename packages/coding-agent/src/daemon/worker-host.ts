@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, rmSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent } from "@lioooooo123/ever-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import type { TaskRunContext } from "../core/task-run-context.ts";
 import { getWorkerStartup } from "../core/worker-startup.ts";

@@ -5,14 +5,14 @@ import { createConnection, createServer } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
-import type { Credential } from "@earendil-works/pi-ai";
-import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
+import type { Credential } from "@lioooooo123/ever-ai";
+import { getEnvApiKey } from "@lioooooo123/ever-ai/compat";
 import {
 	resolveAgentExecutionContext,
 	SqliteTaskStore,
 	TaskNotificationDispatcher,
 	type TaskRecord,
-} from "@ever/long-tasks";
+} from "@lioooooo123/ever-long-tasks";
 import chalk from "chalk";
 import { ENV_AGENT_DIR } from "../config.ts";
 import { AuthStorage } from "../core/auth-storage.ts";

@@ -1,6 +1,6 @@
 {
-	"name": "@ever/long-tasks",
-	"version": "0.1.0",
+	"name": "@lioooooo123/ever-long-tasks",
+	"version": "0.84.1",
 	"private": true,
 	"type": "module",
 	"main": "./dist/index.js",

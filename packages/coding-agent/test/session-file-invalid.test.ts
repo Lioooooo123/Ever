@@ -29,7 +29,7 @@ async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ 
 			env: sourceProcessEnv({
 				...process.env,
 				[ENV_AGENT_DIR]: agentDir,
-				PI_OFFLINE: "1",
+				EVER_OFFLINE: "1",
 			}),
 			stdio: ["ignore", "ignore", "pipe"],
 		});

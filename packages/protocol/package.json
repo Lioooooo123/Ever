@@ -1,7 +1,7 @@
 {
-	"name": "@earendil-works/pi-protocol",
+	"name": "@lioooooo123/ever-protocol",
 	"version": "0.84.1",
-	"description": "Transport-neutral CBOR protocol for remote pi sessions",
+	"description": "Transport-neutral CBOR protocol for remote Ever sessions",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -28,11 +28,11 @@
 		"binary",
 		"framing"
 	],
-	"author": "Earendil Works",
+	"author": "Ever contributors",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/Lioooooo123/Ever.git",
 		"directory": "packages/protocol"
 	},
 	"engines": {

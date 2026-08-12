@@ -10,7 +10,7 @@ export default mergeConfig(
 			environment: "node",
 			testTimeout: 30000,
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
-			env: { PI_OFFLINE: "1" },
+			env: { EVER_OFFLINE: "1" },
 			unstubEnvs: true,
 			reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 			silent: "passed-only",
@@ -23,15 +23,15 @@ export default mergeConfig(
 		resolve: {
 			alias: [
 				{
-					find: /^@ever\/long-tasks$/,
+					find: /^@lioooooo123\/ever-long-tasks$/,
 					replacement: fileURLToPath(new URL("../long-tasks/src/index.ts", import.meta.url)),
 				},
 				{
-					find: /^@earendil-works\/pi-client$/,
+					find: /^@lioooooo123\/ever-client$/,
 					replacement: fileURLToPath(new URL("../client/src/index.ts", import.meta.url)),
 				},
 				{
-					find: /^@earendil-works\/pi-protocol$/,
+					find: /^@lioooooo123\/ever-protocol$/,
 					replacement: fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
 				},
 				{ find: /^@mariozechner\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },

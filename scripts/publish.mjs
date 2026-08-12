@@ -3,9 +3,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { getPublicWorkspacePackages } from "./release-packages.mjs";
+import { getReleasePackages } from "./release-packages.mjs";
 
-const packages = getPublicWorkspacePackages();
+const packages = getReleasePackages();
 
 const dryRun = process.argv.includes("--dry-run");
 const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
@@ -72,39 +72,42 @@ if (versions.length !== 1) {
 	throw new Error(`Publish packages are not lockstep versioned: ${versions.join(", ")}`);
 }
 
-console.log(`Publishing pi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
+console.log(`Publishing Ever packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 
-const packageStates = packages.map((pkg) => ({
-	...pkg,
-	published: false,
-	version: packageVersions.get(pkg.name),
-}));
+run("node", ["scripts/stage-coding-agent-bundles.mjs"]);
+try {
+	const packageStates = packages.map((pkg) => ({
+		...pkg,
+		published: false,
+		version: packageVersions.get(pkg.name),
+	}));
 
-for (const pkg of packageStates) {
-	assertBuildOutputExists(pkg.directory);
-	pkg.published = isPublished(pkg.name, pkg.version);
+	for (const pkg of packageStates) {
+		assertBuildOutputExists(pkg.directory);
+		pkg.published = isPublished(pkg.name, pkg.version);
 
-	if (pkg.published) {
-		console.log(`${pkg.name}@${pkg.version} is already published; validating package contents only.`);
-	} else {
-		console.log(`${pkg.name}@${pkg.version} is not published; validating package contents before publish.`);
-	}
-	validatePack(pkg.directory);
-	console.log();
-}
-
-if (dryRun) {
-	process.exit(0);
-}
-
-console.log("All packages validated; starting publication.\n");
-
-for (const pkg of packageStates) {
-	if (pkg.published) {
-		console.log(`Skipping ${pkg.name}@${pkg.version}: already published\n`);
-		continue;
+		if (pkg.published) {
+			console.log(`${pkg.name}@${pkg.version} is already published; validating package contents only.`);
+		} else {
+			console.log(`${pkg.name}@${pkg.version} is not published; validating package contents before publish.`);
+		}
+		validatePack(pkg.directory);
+		console.log();
 	}
 
-	run("npm", ["publish", "--access", "public", "--provenance", "--ignore-scripts"], { cwd: pkg.directory });
-	console.log();
+	if (!dryRun) {
+		console.log("All packages validated; starting publication.\n");
+
+		for (const pkg of packageStates) {
+			if (pkg.published) {
+				console.log(`Skipping ${pkg.name}@${pkg.version}: already published\n`);
+				continue;
+			}
+
+			run("npm", ["publish", "--access", "public", "--provenance", "--ignore-scripts"], { cwd: pkg.directory });
+			console.log();
+		}
+	}
+} finally {
+	run("node", ["scripts/stage-coding-agent-bundles.mjs", "--clean"]);
 }

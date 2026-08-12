@@ -1,7 +1,7 @@
 {
-	"name": "@earendil-works/pi-telemetry",
+	"name": "@lioooooo123/ever-telemetry",
 	"version": "0.84.1",
-	"description": "Vendor-neutral telemetry contracts and typed schema utilities for pi",
+	"description": "Vendor-neutral telemetry contracts and typed schema utilities for Ever",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -30,11 +30,11 @@
 		"tracing",
 		"observability"
 	],
-	"author": "Mario Zechner",
+	"author": "Ever contributors",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/Lioooooo123/Ever.git",
 		"directory": "packages/telemetry"
 	},
 	"engines": {

@@ -24,20 +24,20 @@ done
 
 if [[ "$NO_ENV" == "true" ]]; then
   # Unset API keys (see packages/ai/src/env-api-keys.ts)
-  unset ANTHROPIC_API_KEY
+  unset ANTHROPIC_AEVER_KEY
   unset ANTHROPIC_OAUTH_TOKEN
-  unset OPENAI_API_KEY
-  unset GEMINI_API_KEY
-  unset GROQ_API_KEY
-  unset CEREBRAS_API_KEY
-  unset XAI_API_KEY
-  unset OPENROUTER_API_KEY
-  unset ZAI_API_KEY
-  unset MISTRAL_API_KEY
-  unset MINIMAX_API_KEY
-  unset MINIMAX_CN_API_KEY
-  unset AI_GATEWAY_API_KEY
-  unset OPENCODE_API_KEY
+  unset OPENAI_AEVER_KEY
+  unset GEMINI_AEVER_KEY
+  unset GROQ_AEVER_KEY
+  unset CEREBRAS_AEVER_KEY
+  unset XAI_AEVER_KEY
+  unset OPENROUTER_AEVER_KEY
+  unset ZAI_AEVER_KEY
+  unset MISTRAL_AEVER_KEY
+  unset MINIMAX_AEVER_KEY
+  unset MINIMAX_CN_AEVER_KEY
+  unset AI_GATEWAY_AEVER_KEY
+  unset OPENCODE_AEVER_KEY
   unset COPILOT_GITHUB_TOKEN
   unset GH_TOKEN
   unset GITHUB_TOKEN
@@ -56,7 +56,7 @@ if [[ "$NO_ENV" == "true" ]]; then
   unset AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
   unset AWS_CONTAINER_CREDENTIALS_FULL_URI
   unset AWS_WEB_IDENTITY_TOKEN_FILE
-  unset AZURE_OPENAI_API_KEY
+  unset AZURE_OPENAI_AEVER_KEY
   unset AZURE_OPENAI_BASE_URL
   unset AZURE_OPENAI_RESOURCE_NAME
   echo "Running without API keys..."

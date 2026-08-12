@@ -1,5 +1,5 @@
-import type { Api, AssistantMessage, Model, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
-import { encodeServerMessage, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
+import type { Api, AssistantMessage, Model, ToolCall, ToolResultMessage, UserMessage } from "@lioooooo123/ever-ai";
+import { encodeServerMessage, PROTOCOL_VERSION } from "@lioooooo123/ever-protocol";
 import { describe, expect, test } from "vitest";
 import {
 	sanitizeProtocolDetails,
@@ -77,7 +77,7 @@ function assertValidServerPayload(item: ProtocolTranscriptItem): void {
 	).not.toThrow();
 }
 
-describe("pi-ai protocol bridge", () => {
+describe("Ever-ai protocol bridge", () => {
 	test("maps model metadata and produces protocol-valid output", () => {
 		const result = toProtocolModelMetadata(model, true);
 

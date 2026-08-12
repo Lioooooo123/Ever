@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai/compat";
+import type { Api, AssistantMessage, Model, Usage } from "@lioooooo123/ever-ai/compat";
 
 export type AgentSessionRequestKind = "agent" | "compaction" | "branch_summary";
 

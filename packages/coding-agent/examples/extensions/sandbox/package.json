@@ -1,5 +1,5 @@
 {
-	"name": "pi-extension-sandbox",
+	"name": "ever-extension-sandbox",
 	"private": true,
 	"version": "1.14.1",
 	"type": "module",
@@ -8,7 +8,7 @@
 		"build": "echo 'nothing to build'",
 		"check": "echo 'nothing to check'"
 	},
-	"pi": {
+	"ever": {
 		"extensions": [
 			"./index.ts"
 		]

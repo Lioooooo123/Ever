@@ -9,7 +9,7 @@ export type RadiusGatewayModel = {
 	reasoning: boolean;
 	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
-	cost: Model<"pi-messages">["cost"];
+	cost: Model<"ever-messages">["cost"];
 	contextWindow: number;
 	maxTokens: number;
 };
@@ -58,16 +58,16 @@ export function getRadiusCredentialConfig(credential: OAuthCredential | undefine
 	return sanitizeRadiusGatewayConfig((credential as RadiusOAuthCredential | undefined)?.gatewayConfig);
 }
 
-export function getRadiusModelsFromConfig(providerId: string, config: RadiusGatewayConfig): Model<"pi-messages">[] {
+export function getRadiusModelsFromConfig(providerId: string, config: RadiusGatewayConfig): Model<"ever-messages">[] {
 	return config.models.map((model) => ({
 		...model,
-		api: "pi-messages",
+		api: "ever-messages",
 		provider: providerId,
 		baseUrl: config.baseUrl,
 	}));
 }
 
-export function getRadiusModels(providerId: string, credential: OAuthCredential | undefined): Model<"pi-messages">[] {
+export function getRadiusModels(providerId: string, credential: OAuthCredential | undefined): Model<"ever-messages">[] {
 	const config = getRadiusCredentialConfig(credential);
 	return config ? getRadiusModelsFromConfig(providerId, config) : [];
 }

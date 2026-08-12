@@ -1,14 +1,14 @@
 /**
- * Pi Notify Extension
+ * Ever Notify Extension
  *
- * Sends a native terminal notification when Pi agent is done and waiting for input.
+ * Sends a native terminal notification when Ever agent is done and waiting for input.
  * Supports multiple terminal protocols:
  * - OSC 777: Ghostty, iTerm2, WezTerm, rxvt-unicode
  * - OSC 99: Kitty
  * - Windows toast: Windows Terminal (WSL)
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@lioooooo123/ever";
 
 function windowsToastScript(title: string, body: string): string {
 	const type = "Windows.UI.Notifications";
@@ -48,8 +48,8 @@ function notify(title: string, body: string): void {
 	}
 }
 
-export default function (pi: ExtensionAPI) {
-	pi.on("agent_end", async () => {
-		notify("Pi", "Ready for input");
+export default function (ever: ExtensionAPI) {
+	ever.on("agent_end", async () => {
+		notify("Ever", "Ready for input");
 	});
 }

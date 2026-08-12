@@ -1,5 +1,5 @@
 import { createConnection, type Socket } from "node:net";
-import { DEFAULT_MAX_FRAME_LENGTH } from "@earendil-works/pi-protocol";
+import { DEFAULT_MAX_FRAME_LENGTH } from "@lioooooo123/ever-protocol";
 import type { ByteTransport, ByteTransportFactory, ByteTransportHandlers } from "./transport.ts";
 
 const MAX_UNIX_SOCKET_PATH_BYTES = process.platform === "linux" ? 107 : 103;
@@ -9,7 +9,7 @@ export interface UnixTransportOptions {
 	maxPendingBytes?: number;
 }
 
-/** Creates fresh Unix-domain socket transports for PiClient connection attempts in Node-compatible runtimes. */
+/** Creates fresh Unix-domain socket transports for EverClient connection attempts in Node-compatible runtimes. */
 export function createUnixTransportFactory(options: UnixTransportOptions): ByteTransportFactory {
 	if (options.path.length === 0) throw new TypeError("Unix transport path must not be empty");
 	if (Buffer.byteLength(options.path) > MAX_UNIX_SOCKET_PATH_BYTES) {
