@@ -252,6 +252,11 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} task <command>            Create and manage durable long-running tasks
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
+${chalk.bold("Interactive Goal:")}
+  /goal <objective>               Start opt-in long-running work in the current Session
+  /goal status                    Inspect Goal state, usage, progress, and evidence
+  /goal pause|resume|complete     Control the active Goal without replacing the Session
+
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)
   --model <pattern>              Model pattern or ID (supports "provider/id" and optional ":<thinking>")

@@ -2,44 +2,34 @@
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-## Durable Tasks
+## Sessions and Goals
 
-Ever is a source-native durable coding agent. A Task survives terminal disconnects and daemon restarts, records Attempts and evidence in SQLite, and reaches `completed` only after its acceptance policy passes.
+Ever is Session-native. Normal prompts use the same interactive Session, history, resume, branching, and compaction flow. Long-running autonomous work is opt-in through `/goal` inside that Session.
 
 ```bash
 # Open Ever
 ever
 
-# Create, start, and follow a Task
-ever "refactor the repository and run the focused tests" --verify "npm run check" --yes
+# Start with an ordinary prompt
+ever "inspect this repository and explain the architecture"
 
-# Pin an exact provider/model for reproducible recovery
-ever "finish the migration" --provider anthropic --model claude-sonnet-4-6 --yes
+# Or open the TUI and start a long-running Goal
+ever
+/goal refactor the repository and run the focused tests
+/goal status
 
-# Submit without following the event stream
-ever "audit the architecture" --detach --yes
-
-# Inspect or reconnect
-ever tasks
-ever status <task-id>
-ever attach <task-id>
+# Resume the same Session later
+ever --continue
+ever --resume
 ```
 
-Automation uses strict JSONL framing. Each request receives exactly one response with the same `id`:
+Goal mode automatically continues after a settled turn until the agent reports verified completion, a configured budget is exhausted, or the same blocker is reported on three consecutive Goal turns. `/goal pause`, `/goal complete`, `/goal blocked`, and `/goal clear` stop an in-flight Goal turn immediately. The Goal remains part of the current Session and survives compaction, resume, and branch navigation.
 
-```bash
-printf '%s\n' '{"id":1,"method":"task.list"}' | ever --mode rpc
-```
-
-The RPC methods are `task.list`, `task.get`, `task.events`, `task.bundle`, `task.submit`, `task.pause`, `task.resume`, `task.cancel`, and `task.steer`. Mutating retries can include stable `clientId` and `commandId` values for idempotency. Unattended Tasks require the platform sandbox unless `--unsafe-no-sandbox` is explicitly supplied.
-
-Every unattended Task pins its exact model before queueing. The Supervisor removes ambient secrets from the Worker environment and sends only that Provider's credential through an owner-only, one-time startup channel; model-controlled shell commands receive no Provider, SSH, or GPG credentials.
-
-The interactive Session documentation below describes the embedded Ever runtime used by Workers and SDK consumers. An Ever Session is an internal execution record, not Ever's public unit of work.
+Detached Worker execution remains available as the advanced `ever task` control plane. It is not the default product path.
 
 ---
 
-## Embedded Ever runtime
+## Ever runtime
 
 The embedded runtime is Ever's agent execution kernel. It owns model interaction, tools, context, Sessions, and the terminal UI. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put reusable extensions, skills, prompt templates, and themes in [Ever Packages](#ever-packages).
 
@@ -47,7 +37,7 @@ Ever runs in four modes: interactive, print or JSON, RPC for process integration
 
 ## Table of Contents
 
-- [Durable Tasks](#durable-tasks)
+- [Sessions and Goals](#sessions-and-goals)
 - [Quick Start](#quick-start)
 - [Providers & Models](#providers--models)
 - [Interactive Mode](#interactive-mode)
@@ -84,7 +74,7 @@ Authenticate with an API key:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-ever "inspect this repository and run the focused checks" --yes
+ever "inspect this repository and run the focused checks"
 ```
 
 The embedded Ever runtime provides four tools by default: `read`, `write`, `edit`, and `bash`. Add runtime capabilities with [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [Ever packages](#ever-packages).
@@ -180,6 +170,9 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
+| `/goal [objective]` | Start or inspect an opt-in long-running Goal in this Session |
+| `/goal status\|pause\|resume\|complete\|blocked\|clear` | Control the active Goal lifecycle |
+| `/goal limit turns\|minutes\|tokens <n>` | Bound automatic Goal continuation |
 | `/trust` | Save project trust decision for future sessions (restart required) |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
@@ -224,9 +217,9 @@ Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUp
 
 ---
 
-## Internal Sessions
+## Sessions
 
-A Task is Ever's public unit of work. Each Task Attempt owns an Ever Session as its internal JSONL execution record, and users reconnect with `ever attach <task-id>`. Ever does not expose standalone Session selection or branching flags. SDK integrations that need the lower-level record can use `SessionManager`; see [internal Session details](docs/sessions.md).
+A Session is Ever's normal user-facing unit of work. Use `--continue`, `--resume`, `--session`, `--session-id`, and `--fork` to return to or branch existing work. `/goal` adds long-running state to the active Session without replacing its transcript or navigation model. See [Session details](docs/sessions.md).
 
 ### Compaction
 
@@ -236,7 +229,7 @@ Long sessions can exhaust context windows. Compaction summarizes older messages 
 
 **Automatic:** Enabled by default. Triggers on context overflow (recovers and retries) or when approaching the limit (proactive). Configure via `/settings` or `settings.json`.
 
-Compaction is lossy. The full history remains in the Task Attempt's Session record. Customize compaction behavior via [extensions](#extensions). See [docs/compaction.md](docs/compaction.md) for internals.
+Compaction is lossy. The full history and Goal state remain in the Session record. Customize compaction behavior via [extensions](#extensions). See [docs/compaction.md](docs/compaction.md) for internals.
 
 ---
 
@@ -452,9 +445,9 @@ See [docs/rpc.md](docs/rpc.md) for the protocol.
 
 ## Design principles
 
-Ever is Task-first: a Task is durable work with a goal, plan, state, evidence, and completion policy. Sessions are internal execution records attached to Attempts.
+Ever is Session-native. Ordinary interaction stays conversational and user-driven; `/goal` explicitly promotes one objective into bounded, automatically continuing work within the same Session.
 
-The lifecycle is `reasoning -> execute -> observe -> verify -> repair`, repeated until verification proves completion or the Task reaches a terminal failure. Checkpoints, leases, and effect records let a Worker recover without silently repeating unknown side effects.
+The Goal lifecycle is `reasoning -> execute -> observe -> verify -> repair`, repeated until evidence proves completion, a budget pauses execution, or a repeated blocker requires the user. Advanced detached Tasks additionally use checkpoints, leases, and effect records for Worker recovery.
 
 Extensions, skills, prompt templates, and packages customize execution without creating a second agent loop. Sandboxing and explicit approval boundaries protect unattended work.
 
@@ -463,7 +456,7 @@ Extensions, skills, prompt templates, and packages customize execution without c
 ## CLI Reference
 
 ```bash
-ever [task] [options]
+ever [prompt] [options]
 ```
 
 ### Package Commands
