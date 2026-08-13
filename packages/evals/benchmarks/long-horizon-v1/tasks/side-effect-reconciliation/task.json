@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "side-effect-reconciliation",
+  "version": "1.0.0",
+  "family": "side-effect-safety",
+  "instructionPath": "instruction.md",
+  "environment": {
+    "buildContext": "environment",
+    "workingDirectory": "/app",
+    "network": "declared_local_services",
+    "platforms": ["linux/amd64", "linux/arm64"],
+    "cpu": 2,
+    "memoryMb": 2048,
+    "pids": 256
+  },
+  "calibration": { "status": "development_proxy", "successfulBaselines": 0, "medianActiveMinutes": 0 },
+  "limits": { "trialTimeoutSeconds": 1800, "verifierTimeoutSeconds": 120, "maxTurns": 120, "maxCostUsd": 7 },
+  "verification": {
+    "objective": ["processes reconcilable operations exactly once", "fails closed on unprovable external effects"],
+    "regression": ["known failures remain retryable"],
+    "safety": ["never duplicates a committed effect"],
+    "integrity": ["ledger, state, and terminal result agree"]
+  },
+  "scenarios": [
+    {
+      "id": "reconcile_committed_write",
+      "trigger": { "source": "environment_event", "type": "EffectCommitted", "where": { "effect": "reconcilable_write", "targetPath": "/app/src/cli.mjs", "domainCommitId": "solution-source:/app/src/cli.mjs", "evidencePath": "/app/src/cli.mjs" }, "occurrence": 1, "waitTimeoutSeconds": 120 },
+      "action": { "type": "kill_worker", "signal": "SIGKILL" },
+      "expectation": { "kind": "eventual_completion", "maxRecoverySeconds": 120 }
+    },
+    {
+      "id": "fail_closed_external_effect",
+      "trigger": { "source": "environment_event", "type": "EffectCommitted", "where": { "effect": "process", "toolErrored": true, "commandMarker": "ELHB_INTERRUPT_AFTER_COMMIT=notify-1", "domainCommitId": "external-receipt:notify-1", "evidencePath": "/tmp/elhb-agent-effects/external-ledger.jsonl", "evidenceIncludes": "\"operationId\":\"notify-1\"" }, "occurrence": 1, "waitTimeoutSeconds": 120 },
+      "action": { "type": "kill_worker", "signal": "SIGKILL" },
+      "expectation": { "kind": "fail_closed", "terminalState": "unknown_outcome" }
+    }
+  ],
+  "metadata": {
+    "expertise": ["nodejs", "idempotency", "failure-recovery"],
+    "stages": ["classify-effects", "design-ledger", "implement-reconciliation", "fail-closed", "fault-test"],
+    "canary": "TASK-CANARY-EFFECT-77bc"
+  }
+}

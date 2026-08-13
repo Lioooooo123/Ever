@@ -6,11 +6,13 @@ Use them to measure end-to-end behavior and compare prompts, tools, skills, mode
 
 ## Running evals
 
-Eval has two execution profiles and one report command:
+Eval has four execution profiles and one report command:
 
 - `quick`: lightweight Ever Agent checks through `vitest-evals`; no Docker. It defaults to one end-to-end smoke prompt.
 - `benchmark`: Docker-isolated external benchmarks with official verifiers, Oracle gating, and resumable trials.
-- `report`: lists both job types or renders one normalized overview with the profile-specific comparison appended.
+- `long-horizon`: checked-in multi-stage tasks with hidden structured verifiers and an Oracle author gate.
+- `external`: benchmark-agnostic Harbor execution for pinned Hub datasets or local Harbor tasks.
+- `report`: lists every job type or renders one normalized overview with the profile-specific comparison appended.
 
 Run the daily smoke profile from the repository root:
 
@@ -168,6 +170,88 @@ repetition strategy, trustworthy judges, and telemetry interpretation.
 
 ## Running external benchmarks
 
+### Generic Harbor benchmarks
+
+Use `external` for any benchmark that Harbor can load. The Eval layer owns identity pinning, budgets, normalized results,
+acceptance gates, artifacts, resume, and reports. Harbor owns task loading, isolated execution, and official verification.
+Adding a dataset or a benchmark adapter does not require benchmark-specific TypeScript in Ever.
+
+Install the pinned external engine and verify it before the first run:
+
+```bash
+uv tool install harbor==0.21.0
+harbor --version
+```
+
+An external config selects either a pinned Harbor Hub dataset:
+
+```json
+{
+  "kind": "dataset",
+  "name": "<harbor-dataset-name>",
+  "ref": "<immutable-ref>",
+  "nTasks": 1
+}
+```
+
+or a local Harbor task/dataset directory:
+
+```json
+{
+  "kind": "local",
+  "path": "/absolute/path/to/harbor-task",
+  "sha256": "<canonical-directory-sha256>",
+  "nTasks": 1
+}
+```
+
+The remainder of the schema is illustrated by
+[`examples/external/ever-local.json`](examples/external/ever-local.json). Relative benchmark and artifact paths resolve
+from the config file. Replace the example artifact digest with the canonical digest produced by:
+
+```bash
+node packages/evals/scripts/hash-artifact.mjs /absolute/path/to/ever-release/node
+```
+
+For Codex subscription auth, point a named environment variable at the existing Ever `auth.json`; do not put its
+contents or path into the config:
+
+```bash
+export EVER_EVAL_AUTH_FILE=/absolute/path/to/ever-agent/auth.json
+npm run eval -- external --config packages/evals/examples/external/ever-local.json
+```
+
+The Ever Harbor shim verifies the artifact digest, copies the credential into the disposable benchmark environment,
+and submits a native unattended Task whose tool process is sandboxed from `auth.json`. Stored configs contain only
+`EVER_EVAL_AUTH_FILE`, never the credential value. Only use credential forwarding with a reviewed, digest-pinned
+benchmark: benchmark container code is inside the credential boundary even though the evaluated agent is not.
+
+Harbor built-in agents can be selected without the Ever shim:
+
+```json
+{
+  "kind": "harbor",
+  "name": "oracle",
+  "version": "1.0.0"
+}
+```
+
+Every metric in `acceptance.metrics` is a hard lower bound. Incomplete trials, missing metrics, trial-count overflow,
+wall-time overflow, cost overflow, version drift, and non-zero Harbor exits fail the command. The job still retains its
+normalized results, acceptance details, logs, and unified report where results are available.
+
+Resume an interrupted Harbor job or render its report:
+
+```bash
+npm run eval -- external --resume <job-id>
+npm run eval -- report <job-id>
+```
+
+To add a benchmark not yet represented in Harbor, convert it once to Harbor's task format or publish a Harbor dataset.
+Ever's runner and Agent integration remain unchanged.
+
+### Legacy Terminal-Bench runner
+
 The benchmark runner executes Terminal-Bench 2.1 tasks in fresh Docker containers and injects each task's official
 `tests/` directory only after the agent has stopped. It writes append-only results under `packages/evals/.eval/` and can
 resume an interrupted job.
@@ -236,6 +320,26 @@ npm run eval -- benchmark --resume <job-id>
 npm run eval -- report <job-id>
 npm run eval -- benchmark --redact <job-id> --secret-env OPENAI_API_KEY
 ```
+
+## Owned long-horizon benchmark
+
+The checked-in ELHB development proxy runs multi-stage repository tasks with Docker isolation, hidden structured verifiers, and a mandatory Oracle gate:
+
+```bash
+npm run eval -- long-horizon --suite dev --agents oracle
+```
+
+Use the resulting job ID as `--oracle-job` for model-backed runs. Task definitions live under `benchmarks/long-horizon-v1`; results use the same resumable artifact contract as the legacy benchmark runner. Tasks remain labeled `development_proxy` until human calibration is complete.
+
+Run semantic recovery as paired no-fault/fault trials:
+
+```bash
+npm run eval -- long-horizon --suite dev --lane resilience \
+  --agents ever --agent-config /absolute/path/to/agents.json \
+  --oracle-job <oracle-job-id> --provider <provider> --model <exact-model-id> --max-cost-usd 20
+```
+
+Resilience admission requires the Ever adapter's explicit durable-event projection. Fault records and continuity evidence are stored with each normalized result; an unobserved trigger invalidates the trial.
 
 Docker must be installed and `docker info` must succeed. The command rejects floating agent versions, floating model
 aliases, digest drift, mismatched models, missing budgets, benchmark symlinks, and hidden tests visible before execution.

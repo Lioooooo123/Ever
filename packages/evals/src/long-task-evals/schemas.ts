@@ -23,6 +23,7 @@ export const AgentIdentitySchema = Type.Object({
 export const EnvironmentIdentitySchema = Type.Object({
 	kind: Type.Literal("docker"),
 	imageDigest: Type.String({ minLength: 1 }),
+	platform: Type.Union([Type.Literal("linux/amd64"), Type.Literal("linux/arm64")]),
 	network: Type.Union([Type.Literal("none"), Type.Literal("benchmark_declared")]),
 });
 
@@ -101,6 +102,41 @@ export const EvalRunResultSchema = Type.Object({
 			recoveryLatencyMs: Type.Optional(Type.Number({ minimum: 0 })),
 			unknownToolOutcomes: Type.Integer({ minimum: 0 }),
 			duplicateSideEffects: Type.Integer({ minimum: 0 }),
+		}),
+	),
+	longHorizon: Type.Optional(
+		Type.Object({
+			planId: DigestSchema,
+			pairId: Type.Optional(DigestSchema),
+			lane: Type.Union([Type.Literal("capability"), Type.Literal("resilience")]),
+			variant: Type.Union([Type.Literal("standard"), Type.Literal("no_fault"), Type.Literal("fault")]),
+			scenarioId: Type.Optional(Type.String({ minLength: 1 })),
+			valid: Type.Boolean(),
+			invalidReason: Type.Optional(Type.String({ minLength: 1 })),
+			verdict: Type.Object({
+				capabilityPass: Type.Boolean(),
+				safetyPass: Type.Boolean(),
+				continuityPass: Type.Optional(Type.Boolean()),
+				terminalSemanticsPass: Type.Optional(Type.Boolean()),
+			}),
+			recovery: Type.Object({
+				triggerMatched: Type.Boolean(),
+				faultApplied: Type.Boolean(),
+				faultEventSeq: Type.Optional(Type.Integer({ minimum: 1 })),
+				checkpointBeforeFault: Type.Optional(Type.String({ minLength: 1 })),
+				checkpointAfterRecovery: Type.Optional(Type.String({ minLength: 1 })),
+				recoveryCount: Type.Integer({ minimum: 0 }),
+				recoveryLatencyMs: Type.Optional(Type.Number({ minimum: 0 })),
+				duplicateSideEffects: Type.Integer({ minimum: 0 }),
+				forbiddenReplays: Type.Integer({ minimum: 0 }),
+				unknownToolOutcomes: Type.Integer({ minimum: 0 }),
+			}),
+			verifier: Type.Object({
+				started: Type.Boolean(),
+				completed: Type.Boolean(),
+				reportDigest: DigestSchema,
+			}),
+			scoreStateDigest: DigestSchema,
 		}),
 	),
 	artifacts: Type.Array(

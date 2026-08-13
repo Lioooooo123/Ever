@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "daemon-protocol-upgrade",
+  "version": "1.0.0",
+  "family": "protocol-migration",
+  "instructionPath": "instruction.md",
+  "environment": {
+    "buildContext": "environment",
+    "workingDirectory": "/app",
+    "network": "none",
+    "platforms": ["linux/amd64", "linux/arm64"],
+    "cpu": 2,
+    "memoryMb": 2048,
+    "pids": 256
+  },
+  "calibration": { "status": "development_proxy", "successfulBaselines": 0, "medianActiveMinutes": 0 },
+  "limits": { "trialTimeoutSeconds": 1800, "verifierTimeoutSeconds": 120, "maxTurns": 100, "maxCostUsd": 6 },
+  "verification": {
+    "objective": ["upgrades requests and events atomically", "resumes an interrupted migration"],
+    "regression": ["new client and daemon interoperate", "old fixture reports migration_required"],
+    "safety": ["does not lose or duplicate events"],
+    "integrity": ["preserves sequence and fencing invariants"]
+  },
+  "scenarios": [
+    {
+      "id": "daemon-after-migration-commit",
+      "trigger": { "source": "agent_event", "type": "ToolFinished", "where": { "effect": "reconcilable_write" }, "occurrence": 1, "waitTimeoutSeconds": 120 },
+      "action": { "type": "kill_daemon", "signal": "SIGKILL" },
+      "expectation": { "kind": "eventual_completion", "maxRecoverySeconds": 120 }
+    }
+  ],
+  "metadata": {
+    "expertise": ["nodejs", "protocol-design", "durable-migration"],
+    "stages": ["inspect-protocol", "design-migration", "migrate-store", "upgrade-client-daemon", "fault-test"],
+    "canary": "TASK-CANARY-DAEMON-8c14"
+  }
+}

@@ -2,9 +2,11 @@ import { chmod, lstat, mkdir, open, readdir, readFile, writeFile } from "node:fs
 import { dirname, join, relative, resolve } from "node:path";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
+import { assertEvalJobId } from "../eval-product/job.ts";
 import { hashFile, sha256 } from "./hash.ts";
 import type { EvalRunResult } from "./schemas.ts";
 import { AgentIdentitySchema, assertEvalRunResult, BenchmarkIdentitySchema } from "./schemas.ts";
+import type { LongHorizonTrialPlan } from "./trial-plans.ts";
 
 export const EvalJobManifestSchema = Type.Object({
 	schemaVersion: Type.Literal(1),
@@ -69,6 +71,7 @@ export class LongTaskArtifactStore {
 	readonly resultsPath: string;
 
 	constructor(root: string, jobId: string) {
+		assertEvalJobId(jobId);
 		this.jobDirectory = resolve(root, jobId);
 		this.resultsPath = join(this.jobDirectory, "results.jsonl");
 	}
@@ -140,6 +143,18 @@ export class LongTaskArtifactStore {
 			await handle.sync();
 		} finally {
 			await handle.close();
+		}
+	}
+
+	async writePlans(plans: readonly LongHorizonTrialPlan[]): Promise<void> {
+		const path = join(this.jobDirectory, "plans.jsonl");
+		const text = `${plans.map((plan) => JSON.stringify(plan)).join("\n")}\n`;
+		try {
+			const existing = await readFile(path, "utf8");
+			if (existing !== text) throw new Error("Long-horizon plans differ from immutable admitted plans");
+		} catch (error) {
+			if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+			await writeFile(path, text, { mode: 0o600, flag: "wx" });
 		}
 	}
 

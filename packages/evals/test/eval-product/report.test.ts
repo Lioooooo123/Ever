@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { assertEvalJobIndex, listEvalJobs, writeEvalJobIndex } from "../../src/eval-product/job.ts";
+import { assertEvalJobId, assertEvalJobIndex, listEvalJobs, writeEvalJobIndex } from "../../src/eval-product/job.ts";
 import { formatEvalOverview, persistEvalOverview } from "../../src/eval-product/report.ts";
 import { type EvalJobManifest, LongTaskArtifactStore } from "../../src/long-task-evals/artifacts.ts";
 import type { EvalRunResult } from "../../src/long-task-evals/schemas.ts";
@@ -106,7 +106,7 @@ describe("unified Eval reports", () => {
 			repetition: 1,
 			benchmark,
 			agent,
-			environment: { kind: "docker", imageDigest: "sha256:image", network: "none" },
+			environment: { kind: "docker", imageDigest: "sha256:image", platform: "linux/arm64", network: "none" },
 			outcome: "completed",
 			official: { valid: true, metrics: { reward: 1 }, verifierExitCode: 0 },
 			usage: { wallTimeMs: 500, totalTokens: 100, estimatedCostUsd: 0.1 },
@@ -165,5 +165,99 @@ describe("unified Eval reports", () => {
 				createdAt: "2026-08-11T00:00:00.000Z",
 			}),
 		).toThrow("EvalJobIndex");
+		for (const jobId of [".", "..", "../escape", "/absolute", "nested/job"]) {
+			expect(() => assertEvalJobId(jobId)).toThrow("Invalid Eval job ID");
+		}
+		expect(() => new LongTaskArtifactStore(root, "../escape")).toThrow("Invalid Eval job ID");
+	});
+
+	it("uses long-horizon verdicts and appends the dedicated report", async () => {
+		const root = await mkdtemp(join(tmpdir(), "eval-product-"));
+		roots.push(root);
+		const jobId = "long-horizon-job";
+		const benchmark = { name: "elhb", version: "1.0.0", source: "local", resolvedDigest: digest("a") };
+		const agent = {
+			name: "ever",
+			version: "1.0.0",
+			executableDigest: digest("b"),
+			modelProvider: "openai",
+			modelId: "model-2026-08-11",
+			configurationDigest: digest("c"),
+		};
+		const store = new LongTaskArtifactStore(root, jobId);
+		await store.initialize({
+			schemaVersion: 1,
+			jobId,
+			createdAt: "2026-08-13T00:00:00.000Z",
+			benchmark,
+			agents: [agent],
+			caseIds: ["case-1"],
+			repetitions: 1,
+			maxCostUsd: 1,
+		});
+		await writeEvalJobIndex(store.jobDirectory, {
+			schemaVersion: 1,
+			jobId,
+			profile: "long-horizon",
+			createdAt: "2026-08-13T00:00:00.000Z",
+			model: { provider: agent.modelProvider, id: agent.modelId },
+		});
+		const result: EvalRunResult = {
+			schemaVersion: 1,
+			runId: "run-1",
+			caseId: "case-1",
+			repetition: 1,
+			benchmark,
+			agent,
+			environment: { kind: "docker", imageDigest: "sha256:image", platform: "linux/arm64", network: "none" },
+			outcome: "unknown_outcome",
+			official: { valid: true, metrics: { reward: 1 } },
+			usage: { wallTimeMs: 500 },
+			integrity: {
+				environmentDigest: "sha256:image",
+				instructionDigest: digest("d"),
+				verifierDigest: digest("e"),
+				artifactsDigest: digest("f"),
+				violations: [],
+			},
+			longHorizon: {
+				planId: digest("1"),
+				pairId: digest("2"),
+				lane: "resilience",
+				variant: "fault",
+				scenarioId: "fail-closed",
+				valid: true,
+				verdict: { capabilityPass: false, safetyPass: true, terminalSemanticsPass: true },
+				recovery: {
+					triggerMatched: true,
+					faultApplied: true,
+					recoveryCount: 0,
+					duplicateSideEffects: 0,
+					forbiddenReplays: 0,
+					unknownToolOutcomes: 1,
+				},
+				verifier: { started: true, completed: true, reportDigest: digest("3") },
+				scoreStateDigest: digest("4"),
+			},
+			artifacts: [],
+			errors: [{ source: "ever", code: "unknown_outcome", message: "expected" }],
+		};
+		await store.appendResult({
+			...result,
+			runId: "run-infrastructure-retry",
+			outcome: "infrastructure_error",
+			official: { valid: false, metrics: {} },
+			longHorizon: {
+				...result.longHorizon!,
+				valid: false,
+				invalidReason: "infrastructure_error",
+			},
+		});
+		await store.appendResult(result);
+		await writeFile(join(store.jobDirectory, "long-horizon-report.md"), "Continuity 1/1, invalid 0\n");
+
+		const report = await persistEvalOverview(root, jobId);
+		expect(report.summary).toMatchObject({ totalRuns: 1, successfulRuns: 1, failedRuns: 0, incompleteRuns: 0 });
+		expect(report.detailReport).toContain("Continuity 1/1");
 	});
 });

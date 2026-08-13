@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "taskId": "replace-task-id",
+  "taskVersion": "1.0.0",
+  "reviewers": ["reviewer-one", "reviewer-two"],
+  "coherentDependencyChain": true,
+  "oracleThreeRepetitionsAllPlatforms": true,
+  "objectiveMutationCaught": true,
+  "regressionMutationCaught": true,
+  "duplicateEffectMutationCaught": true,
+  "missingEventMutationCaught": true,
+  "rewardHackingFindings": [],
+  "leakageFindings": [],
+  "reviewedAt": "2026-01-01T00:00:00.000Z"
+}

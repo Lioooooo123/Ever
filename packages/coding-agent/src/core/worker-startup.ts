@@ -1,11 +1,27 @@
 import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { Credential } from "@lioooooo123/ever-ai";
+import type { ToolEffect } from "@lioooooo123/ever-long-tasks";
+
+export interface EvalEffectGateCapability {
+	directory: string;
+	effect: ToolEffect;
+	secret: string;
+	domainCommitId: string;
+	evidencePath: string;
+	evidenceIncludes?: string;
+	expectedToolError?: boolean;
+	toolName?: string;
+	targetPath?: string;
+	commandIncludes?: string;
+}
 
 export interface WorkerStartupEnvelope {
 	schemaVersion: 1;
 	token: string;
 	provider: string;
 	credential: Credential;
+	evalEffectGate?: EvalEffectGateCapability;
 }
 
 let startupEnvelope: WorkerStartupEnvelope | undefined;
@@ -31,6 +47,33 @@ export function parseWorkerStartupEnvelope(value: unknown): WorkerStartupEnvelop
 			typeof value.credential.expires !== "number")
 	)
 		throw new Error("Worker startup OAuth credential is incomplete");
+	if (value.evalEffectGate !== undefined) {
+		if (!isRecord(value.evalEffectGate)) throw new Error("Worker Eval effect gate is invalid");
+		const gate = value.evalEffectGate;
+		if (typeof gate.directory !== "string" || !isAbsolute(gate.directory))
+			throw new Error("Worker Eval effect gate directory must be absolute");
+		if (!["read_only", "reconcilable_write", "external_side_effect", "process"].includes(String(gate.effect)))
+			throw new Error("Worker Eval effect gate has an invalid effect");
+		if (typeof gate.secret !== "string" || !/^[a-f0-9]{64}$/.test(gate.secret))
+			throw new Error("Worker Eval effect gate has an invalid secret");
+		if (typeof gate.domainCommitId !== "string" || gate.domainCommitId === "")
+			throw new Error("Worker Eval effect gate has an invalid domain commit ID");
+		if (typeof gate.evidencePath !== "string" || !isAbsolute(gate.evidencePath))
+			throw new Error("Worker Eval effect gate evidence path must be absolute");
+		if (
+			gate.evidenceIncludes !== undefined &&
+			(typeof gate.evidenceIncludes !== "string" || gate.evidenceIncludes === "")
+		)
+			throw new Error("Worker Eval effect gate has invalid evidence content");
+		if (gate.expectedToolError !== undefined && typeof gate.expectedToolError !== "boolean")
+			throw new Error("Worker Eval effect gate has invalid tool outcome selector");
+		for (const selector of [gate.toolName, gate.targetPath, gate.commandIncludes]) {
+			if (selector !== undefined && (typeof selector !== "string" || selector === ""))
+				throw new Error("Worker Eval effect gate has an invalid selector");
+		}
+		if (gate.toolName === undefined && gate.targetPath === undefined && gate.commandIncludes === undefined)
+			throw new Error("Worker Eval effect gate requires a domain selector");
+	}
 	return value as unknown as WorkerStartupEnvelope;
 }
 

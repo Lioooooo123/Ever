@@ -10,5 +10,15 @@ export function sanitizeUnattendedEnvironment(environment: NodeJS.ProcessEnv): N
 	delete sanitized.SSH_AUTH_SOCK;
 	delete sanitized.GPG_AGENT_INFO;
 	delete sanitized.GOOGLE_APPLICATION_CREDENTIALS;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_DIR;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_EFFECT;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_SECRET;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_TOOL_NAME;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_TARGET_PATH;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_COMMAND_INCLUDES;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_DOMAIN_COMMIT_ID;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_EVIDENCE_PATH;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_EVIDENCE_INCLUDES;
+	delete sanitized.EVER_EVAL_EFFECT_GATE_EXPECTED_TOOL_ERROR;
 	return sanitized;
 }

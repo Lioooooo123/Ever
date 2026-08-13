@@ -1,6 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { createHash, createHmac, randomUUID } from "node:crypto";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, writeSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import type { ToolEffect } from "@lioooooo123/ever-long-tasks";
 import {
 	type AgentLease,
 	type AttemptOutcome,
@@ -28,6 +29,7 @@ import type {
 	AgentSessionLifecycleEvent,
 } from "./agent-session-lifecycle.ts";
 import type { AgentSessionRuntime } from "./agent-session-runtime.ts";
+import { type EvalEffectGateCapability, getWorkerStartupIfLoaded } from "./worker-startup.ts";
 
 function sha256(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
@@ -63,6 +65,87 @@ function xml(value: string): string {
 
 function usageRecord(value: object): Record<string, unknown> {
 	return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+export async function waitForEvalEffectRelease(
+	event: Extract<AgentSessionLifecycleEvent, { type: "after_tool" }>,
+	effect: ToolEffect,
+	cwd: string,
+	signal: AbortSignal,
+	gate: EvalEffectGateCapability | undefined,
+): Promise<void> {
+	if (gate === undefined || gate.effect !== effect) return;
+	if (gate.expectedToolError === undefined ? event.isError : gate.expectedToolError !== event.isError) return;
+	if (!isAbsolute(gate.directory) || !/^[a-f0-9]{64}$/.test(gate.secret))
+		throw new Error("Invalid Eval effect gate capability");
+	if (gate.toolName !== undefined && gate.toolName !== event.toolName) return;
+	const inputPath = typeof event.input.path === "string" ? resolve(cwd, event.input.path) : undefined;
+	if (gate.targetPath !== undefined && gate.targetPath !== inputPath) return;
+	const command = typeof event.input.command === "string" ? event.input.command : undefined;
+	if (gate.commandIncludes !== undefined && !command?.includes(gate.commandIncludes)) return;
+	if (gate.toolName === undefined && gate.targetPath === undefined && gate.commandIncludes === undefined)
+		throw new Error("Eval effect gate requires a domain selector");
+	let domainEvidence: string;
+	try {
+		domainEvidence = readFileSync(gate.evidencePath, "utf8");
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+		throw error;
+	}
+	if (gate.evidenceIncludes !== undefined && !domainEvidence.includes(gate.evidenceIncludes)) return;
+	mkdirSync(gate.directory, { recursive: true, mode: 0o700 });
+	const createdAt = new Date().toISOString();
+	const recordWithoutMac = {
+		schemaVersion: 1,
+		type: "EffectCommitted",
+		createdAt,
+		operationId: event.operationId,
+		idempotencyKey: event.operationId,
+		toolCallId: event.toolCallId,
+		effect,
+		toolName: event.toolName,
+		toolErrored: event.isError,
+		domainCommitId: gate.domainCommitId,
+		evidencePath: gate.evidencePath,
+		evidenceDigest: sha256(domainEvidence),
+		...(gate.evidenceIncludes === undefined ? {} : { evidenceIncludes: gate.evidenceIncludes }),
+		...(inputPath === undefined ? {} : { targetPath: inputPath }),
+		...(gate.commandIncludes === undefined ? {} : { commandMarker: gate.commandIncludes }),
+		payloadDigest: sha256(event.resultSummary),
+	};
+	const authenticationPayload = [
+		recordWithoutMac.operationId,
+		recordWithoutMac.idempotencyKey,
+		recordWithoutMac.toolCallId,
+		recordWithoutMac.effect,
+		recordWithoutMac.toolName,
+		String(recordWithoutMac.toolErrored),
+		recordWithoutMac.domainCommitId,
+		recordWithoutMac.evidencePath,
+		recordWithoutMac.evidenceDigest,
+		recordWithoutMac.evidenceIncludes ?? "",
+		recordWithoutMac.targetPath ?? "",
+		recordWithoutMac.commandMarker ?? "",
+		recordWithoutMac.payloadDigest,
+		recordWithoutMac.createdAt,
+	].join("\0");
+	const record = {
+		...recordWithoutMac,
+		mac: createHmac("sha256", gate.secret).update(authenticationPayload).digest("hex"),
+	};
+	const descriptor = openSync(join(gate.directory, "events.jsonl"), "a", 0o600);
+	try {
+		writeSync(descriptor, `${JSON.stringify(record)}\n`);
+		fsyncSync(descriptor);
+	} finally {
+		closeSync(descriptor);
+	}
+	const releaseToken = createHmac("sha256", gate.secret).update(event.operationId).digest("hex");
+	const releasePath = join(gate.directory, `release-${releaseToken}`);
+	while (!existsSync(releasePath)) {
+		signal.throwIfAborted();
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
 }
 
 function outcome(taskId: string, attemptId: string, state: string, reason?: string): AttemptOutcome {
@@ -292,6 +375,14 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			return undefined;
 		}
 		if (event.type === "after_tool") {
+			const effect = defaultToolEffect(event.toolName);
+			await waitForEvalEffectRelease(
+				event,
+				effect,
+				this.runtime.cwd,
+				this.stopSignal,
+				getWorkerStartupIfLoaded()?.evalEffectGate,
+			);
 			try {
 				this.store.finishToolExecution(this.requireLease(), context.attempt.id, {
 					operationId: event.operationId,

@@ -1,8 +1,16 @@
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentPreparation } from "./command-agent.ts";
 import type { AgentAdapter, AgentRunOutcome, EvalEnvironment } from "./contracts.ts";
+import {
+	type DurableEventSource,
+	type EvalDurableEvent,
+	EverDurableEventProjector,
+	type EverTaskEvent,
+} from "./durable-events.ts";
 import type { AgentIdentity, EvalCase, EvalRunResult } from "./schemas.ts";
+import type { EnvironmentFaultEvent, EnvironmentFaultEventSource, SemanticFaultTrigger } from "./semantic-faults.ts";
 
 interface EverTaskJson {
 	schemaVersion: 1;
@@ -12,12 +20,12 @@ interface EverTaskJson {
 	totalCostUsd: number;
 }
 
-interface EverEventJson {
+interface EverEventJson extends EverTaskEvent {
 	schemaVersion: 1;
 	seq: number;
 	type: string;
 	createdAt: string;
-	[key: string]: unknown;
+	payload: Record<string, unknown>;
 }
 
 export interface EverAgentConfig {
@@ -56,7 +64,15 @@ function parseEvents(text: string): EverEventJson[] {
 		.filter((line) => line.trim() !== "")
 		.map((line) => {
 			const value = parseObject(line, "ever task events");
-			if (typeof value.seq !== "number" || typeof value.type !== "string" || typeof value.createdAt !== "string") {
+			if (
+				typeof value.seq !== "number" ||
+				typeof value.taskId !== "string" ||
+				typeof value.type !== "string" ||
+				typeof value.createdAt !== "string" ||
+				typeof value.payload !== "object" ||
+				value.payload === null ||
+				Array.isArray(value.payload)
+			) {
 				throw new Error("ever task events returned an invalid payload");
 			}
 			return value as unknown as EverEventJson;
@@ -67,14 +83,121 @@ async function wait(milliseconds: number): Promise<void> {
 	await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-export class EverAgentAdapter implements AgentAdapter {
+export class EverAgentAdapter implements AgentAdapter, DurableEventSource, EnvironmentFaultEventSource {
 	readonly identity: AgentIdentity;
 	readonly #config: EverAgentConfig;
+	#projector = new EverDurableEventProjector();
 	#activeEnvironment?: EvalEnvironment;
+	#armedEnvironmentTrigger?: SemanticFaultTrigger;
+	#gateDirectory?: string;
+	#gateSecret?: string;
 
 	constructor(config: EverAgentConfig) {
 		this.identity = config.identity;
 		this.#config = config;
+	}
+
+	readDurableEvents(afterSeq: number): readonly EvalDurableEvent[] {
+		return this.#projector.read(afterSeq);
+	}
+
+	armEnvironmentTrigger(trigger: SemanticFaultTrigger): void {
+		if (trigger.source !== "environment_event" || trigger.type !== "EffectCommitted") {
+			throw new Error("Ever controlled side-effect gate only supports EffectCommitted environment events");
+		}
+		if (
+			typeof trigger.where.effect !== "string" ||
+			!["reconcilable_write", "external_side_effect", "process"].includes(trigger.where.effect)
+		)
+			throw new Error("Ever controlled side-effect gate requires a supported effect");
+		if (
+			typeof trigger.where.toolName !== "string" &&
+			typeof trigger.where.targetPath !== "string" &&
+			typeof trigger.where.commandMarker !== "string"
+		)
+			throw new Error("Ever controlled side-effect gate requires a task-domain selector");
+		if (typeof trigger.where.domainCommitId !== "string" || typeof trigger.where.evidencePath !== "string")
+			throw new Error("Ever controlled side-effect gate requires domain commit evidence");
+		this.#armedEnvironmentTrigger = trigger;
+		this.#gateDirectory = `/tmp/ever-eval-gate-${randomUUID()}`;
+		this.#gateSecret = randomBytes(32).toString("hex");
+	}
+
+	async readEnvironmentEvents(afterSeq: number): Promise<readonly EnvironmentFaultEvent[]> {
+		if (this.#activeEnvironment === undefined) return [];
+		if (this.#gateDirectory === undefined) return [];
+		if (this.#gateSecret === undefined) throw new Error("Controlled effect gate has no authentication secret");
+		const text = await this.#activeEnvironment.readFile(`${this.#gateDirectory}/events.jsonl`);
+		if (text === undefined) return [];
+		const lines = text.split("\n");
+		if (!text.endsWith("\n")) lines.pop();
+		return lines
+			.filter((line) => line !== "")
+			.map((line, index) => {
+				const value = JSON.parse(line) as unknown;
+				if (
+					typeof value !== "object" ||
+					value === null ||
+					Array.isArray(value) ||
+					Reflect.get(value, "schemaVersion") !== 1 ||
+					Reflect.get(value, "type") !== "EffectCommitted" ||
+					typeof Reflect.get(value, "operationId") !== "string" ||
+					typeof Reflect.get(value, "idempotencyKey") !== "string" ||
+					typeof Reflect.get(value, "toolCallId") !== "string" ||
+					typeof Reflect.get(value, "createdAt") !== "string" ||
+					typeof Reflect.get(value, "toolName") !== "string" ||
+					typeof Reflect.get(value, "toolErrored") !== "boolean" ||
+					typeof Reflect.get(value, "domainCommitId") !== "string" ||
+					typeof Reflect.get(value, "evidencePath") !== "string" ||
+					!/^[a-f0-9]{64}$/.test(String(Reflect.get(value, "evidenceDigest"))) ||
+					!["reconcilable_write", "external_side_effect", "process"].includes(
+						String(Reflect.get(value, "effect")),
+					) ||
+					!/^[a-f0-9]{64}$/.test(String(Reflect.get(value, "payloadDigest")))
+				) {
+					throw new Error(`Invalid controlled EffectCommitted event at line ${index + 1}`);
+				}
+				const operationId = String(Reflect.get(value, "operationId"));
+				const authenticationPayload = [
+					operationId,
+					String(Reflect.get(value, "idempotencyKey")),
+					String(Reflect.get(value, "toolCallId")),
+					String(Reflect.get(value, "effect")),
+					String(Reflect.get(value, "toolName")),
+					String(Reflect.get(value, "toolErrored")),
+					String(Reflect.get(value, "domainCommitId")),
+					String(Reflect.get(value, "evidencePath")),
+					String(Reflect.get(value, "evidenceDigest")),
+					typeof Reflect.get(value, "evidenceIncludes") === "string"
+						? String(Reflect.get(value, "evidenceIncludes"))
+						: "",
+					typeof Reflect.get(value, "targetPath") === "string" ? String(Reflect.get(value, "targetPath")) : "",
+					typeof Reflect.get(value, "commandMarker") === "string"
+						? String(Reflect.get(value, "commandMarker"))
+						: "",
+					String(Reflect.get(value, "payloadDigest")),
+					String(Reflect.get(value, "createdAt")),
+				].join("\0");
+				const expectedMac = createHmac("sha256", this.#gateSecret!).update(authenticationPayload).digest();
+				const actualMacText = Reflect.get(value, "mac");
+				if (typeof actualMacText !== "string" || !/^[a-f0-9]{64}$/.test(actualMacText))
+					throw new Error(`Unauthenticated controlled EffectCommitted event at line ${index + 1}`);
+				if (!timingSafeEqual(Buffer.from(actualMacText, "hex"), expectedMac))
+					throw new Error(`Unauthenticated controlled EffectCommitted event at line ${index + 1}`);
+				return { ...(value as Omit<EnvironmentFaultEvent, "seq">), seq: index + 1 };
+			})
+			.filter((event) => event.seq > afterSeq);
+	}
+
+	async releaseEnvironmentEvent(event: EnvironmentFaultEvent): Promise<void> {
+		if (this.#activeEnvironment === undefined || this.#gateDirectory === undefined || this.#gateSecret === undefined)
+			return;
+		const releaseToken = createHmac("sha256", this.#gateSecret).update(event.operationId).digest("hex");
+		const result = await this.#activeEnvironment.exec({
+			args: ["touch", `${this.#gateDirectory}/release-${releaseToken}`],
+			timeoutSeconds: 30,
+		});
+		if (result.exitCode !== 0 || result.timedOut) throw new Error("Cannot release controlled effect gate");
 	}
 
 	async #exec(environment: EvalEnvironment, args: string[], timeoutSeconds = 30) {
@@ -84,6 +207,39 @@ export class EverAgentAdapter implements AgentAdapter {
 			env: {
 				EVER_CODING_AGENT_DIR: "/tmp/ever-agent",
 				EVER_UNATTENDED_SANDBOX: "1",
+				...(this.#armedEnvironmentTrigger?.source === "environment_event"
+					? {
+							EVER_EVAL_EFFECT_GATE_DIR: this.#gateDirectory!,
+							EVER_EVAL_EFFECT_GATE_EFFECT: String(this.#armedEnvironmentTrigger.where.effect),
+							EVER_EVAL_EFFECT_GATE_SECRET: this.#gateSecret!,
+							EVER_EVAL_EFFECT_GATE_DOMAIN_COMMIT_ID: String(this.#armedEnvironmentTrigger.where.domainCommitId),
+							EVER_EVAL_EFFECT_GATE_EVIDENCE_PATH: String(this.#armedEnvironmentTrigger.where.evidencePath),
+							...(typeof this.#armedEnvironmentTrigger.where.evidenceIncludes === "string"
+								? {
+										EVER_EVAL_EFFECT_GATE_EVIDENCE_INCLUDES:
+											this.#armedEnvironmentTrigger.where.evidenceIncludes,
+									}
+								: {}),
+							...(typeof this.#armedEnvironmentTrigger.where.toolErrored === "boolean"
+								? {
+										EVER_EVAL_EFFECT_GATE_EXPECTED_TOOL_ERROR: this.#armedEnvironmentTrigger.where.toolErrored
+											? "1"
+											: "0",
+									}
+								: {}),
+							...(typeof this.#armedEnvironmentTrigger.where.toolName === "string"
+								? { EVER_EVAL_EFFECT_GATE_TOOL_NAME: this.#armedEnvironmentTrigger.where.toolName }
+								: {}),
+							...(typeof this.#armedEnvironmentTrigger.where.targetPath === "string"
+								? { EVER_EVAL_EFFECT_GATE_TARGET_PATH: this.#armedEnvironmentTrigger.where.targetPath }
+								: {}),
+							...(typeof this.#armedEnvironmentTrigger.where.commandMarker === "string"
+								? {
+										EVER_EVAL_EFFECT_GATE_COMMAND_INCLUDES: this.#armedEnvironmentTrigger.where.commandMarker,
+									}
+								: {}),
+						}
+					: {}),
 				...(typeof this.#config.environment === "function" ? this.#config.environment() : this.#config.environment),
 			},
 			timeoutSeconds,
@@ -109,13 +265,13 @@ export class EverAgentAdapter implements AgentAdapter {
 		budget: { maxCostUsd?: number },
 	): Promise<AgentRunOutcome> {
 		this.#activeEnvironment = environment;
+		this.#projector = new EverDurableEventProjector();
 		for (const item of this.#config.preparation?.copyIn ?? [])
 			await environment.copyIn(item.source, item.destination);
 		for (const command of this.#config.preparation?.commands ?? []) {
 			const setup = await environment.exec(command);
 			if (setup.exitCode !== 0 || setup.timedOut) throw new Error(`Ever setup failed: ${setup.stderr.trim()}`);
 		}
-
 		const manifestPath = join(runDirectory, "ever-task.json");
 		await writeFile(
 			manifestPath,
@@ -175,6 +331,7 @@ export class EverAgentAdapter implements AgentAdapter {
 			const batch = parseEvents(eventResult.stdout);
 			if (batch.length > 0) {
 				for (const event of batch) await appendFile(trajectoryPath, `${JSON.stringify(event)}\n`, { mode: 0o600 });
+				this.#projector.append(batch);
 				events.push(...batch);
 				lastSeq = batch.at(-1)!.seq;
 			}
@@ -189,6 +346,9 @@ export class EverAgentAdapter implements AgentAdapter {
 		const timedOut = task === undefined || !terminalStates.has(task.state);
 		await this.#stopDaemon(environment);
 		this.#activeEnvironment = undefined;
+		this.#armedEnvironmentTrigger = undefined;
+		this.#gateDirectory = undefined;
+		this.#gateSecret = undefined;
 		const state = timedOut ? "timed_out" : (task?.state ?? "unknown_outcome");
 		const outcome: EvalRunResult["outcome"] = timedOut
 			? "timed_out"
@@ -200,7 +360,7 @@ export class EverAgentAdapter implements AgentAdapter {
 						state === "unknown_outcome"
 					? state
 					: "failed";
-		const eventCount = (pattern: RegExp): number => events.filter((event) => pattern.test(event.type)).length;
+		const durableEvents = this.#projector.read(0);
 		return {
 			outcome,
 			usage: task === undefined ? {} : { estimatedCostUsd: task.totalCostUsd },
@@ -208,10 +368,10 @@ export class EverAgentAdapter implements AgentAdapter {
 				taskId,
 				terminalState: state,
 				turns: task?.totalTurns ?? 0,
-				checkpoints: eventCount(/checkpoint/i),
-				recoveries: eventCount(/recover(?:y|ed|ing)/i),
-				unknownToolOutcomes: eventCount(/unknown.*tool|tool.*unknown/i),
-				duplicateSideEffects: eventCount(/duplicate.*side.?effect/i),
+				checkpoints: durableEvents.filter((event) => event.type === "CheckpointSettled").length,
+				recoveries: durableEvents.filter((event) => event.type === "RecoveryFinished").length,
+				unknownToolOutcomes: events.filter((event) => event.type === "ToolOutcomeUnknown").length,
+				duplicateSideEffects: events.filter((event) => event.type === "DuplicateSideEffectDetected").length,
 			},
 			errors: outcome === "completed" ? [] : [{ source: "ever", code: state, message: `Ever ended in ${state}` }],
 		};
@@ -221,5 +381,6 @@ export class EverAgentAdapter implements AgentAdapter {
 		if (this.#activeEnvironment === undefined) return;
 		await this.#stopDaemon(this.#activeEnvironment);
 		this.#activeEnvironment = undefined;
+		this.#gateSecret = undefined;
 	}
 }

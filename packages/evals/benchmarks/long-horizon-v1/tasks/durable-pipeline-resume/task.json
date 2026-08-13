@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "durable-pipeline-resume",
+  "version": "0.1.0",
+  "family": "durable-execution",
+  "instructionPath": "instruction.md",
+  "environment": {
+    "buildContext": "environment",
+    "workingDirectory": "/app",
+    "network": "none",
+    "platforms": ["linux/amd64", "linux/arm64"],
+    "cpu": 2,
+    "memoryMb": 2048,
+    "pids": 256
+  },
+  "calibration": {
+    "status": "development_proxy",
+    "successfulBaselines": 0,
+    "medianActiveMinutes": 0
+  },
+  "limits": {
+    "trialTimeoutSeconds": 1800,
+    "verifierTimeoutSeconds": 120,
+    "maxTurns": 100,
+    "maxCostUsd": 6
+  },
+  "verification": {
+    "objective": ["resumes a multi-stage pipeline after interruption", "completes all jobs"],
+    "regression": ["keeps the public CLI contract"],
+    "safety": ["does not duplicate externally visible effects"],
+    "integrity": ["uses durable atomic state rather than verifier knowledge"]
+  },
+  "scenarios": [
+    {
+      "id": "worker-after-settled-checkpoint",
+      "trigger": {
+        "source": "agent_event",
+        "type": "CheckpointSettled",
+        "where": {},
+        "occurrence": 1,
+        "waitTimeoutSeconds": 120
+      },
+      "action": { "type": "kill_worker", "signal": "SIGKILL" },
+      "expectation": { "kind": "eventual_completion", "maxRecoverySeconds": 120 }
+    }
+  ],
+  "metadata": {
+    "expertise": ["nodejs", "durable-execution", "failure-recovery"],
+    "stages": ["inspect", "model-state", "implement", "fault-test", "document"],
+    "canary": "TASK-CANARY-PIPELINE-21af"
+  }
+}

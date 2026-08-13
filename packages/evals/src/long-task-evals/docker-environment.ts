@@ -62,9 +62,22 @@ class DockerEvalEnvironment implements EvalEnvironment {
 }
 
 export class DockerEnvironmentAdapter implements EnvironmentAdapter {
+	#architecture?: "amd64" | "arm64";
+
 	async preflight(): Promise<void> {
-		const result = await runProcess("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutSeconds: 30 });
+		const result = await runProcess("docker", ["info", "--format", "{{.ServerVersion}} {{.Architecture}}"], {
+			timeoutSeconds: 30,
+		});
 		await requireSuccess("Docker preflight", result);
+		const architecture = result.stdout.trim().split(/\s+/).at(-1);
+		if (
+			architecture !== "amd64" &&
+			architecture !== "x86_64" &&
+			architecture !== "arm64" &&
+			architecture !== "aarch64"
+		)
+			throw new Error(`Unsupported native Docker architecture: ${architecture ?? "missing"}`);
+		this.#architecture = architecture === "amd64" || architecture === "x86_64" ? "amd64" : "arm64";
 	}
 
 	async create(testCase: EvalCase, _runDirectory: string): Promise<EvalEnvironment> {
@@ -75,6 +88,16 @@ export class DockerEnvironmentAdapter implements EnvironmentAdapter {
 		const imageDigest = build.stdout.trim().split("\n").at(-1);
 		if (imageDigest === undefined || imageDigest === "")
 			throw new Error(`Docker build for ${testCase.id} returned no image digest`);
+		if (this.#architecture === undefined) throw new Error("Docker preflight did not resolve native architecture");
+		const inspected = await runProcess("docker", ["image", "inspect", imageDigest, "--format", "{{.Architecture}}"], {
+			timeoutSeconds: 30,
+		});
+		await requireSuccess(`Docker image architecture for ${testCase.id}`, inspected);
+		if (inspected.stdout.trim() !== this.#architecture) {
+			throw new Error(
+				`platform_emulation: image ${inspected.stdout.trim() || "unknown"} on native ${this.#architecture}`,
+			);
+		}
 
 		if (testCase.environment.imageDigest !== undefined && imageDigest !== testCase.environment.imageDigest) {
 			throw new Error(
@@ -83,9 +106,12 @@ export class DockerEnvironmentAdapter implements EnvironmentAdapter {
 		}
 
 		const name = `ever-eval-${randomUUID()}`;
-		const network = testCase.environment.network === "none" ? "none" : "bridge";
+		// Declared services run inside the trial container and are reached over loopback.
+		// Keeping Docker networking disabled prevents accidental internet egress.
+		const network = "none";
 		const cpus = typeof testCase.metadata.cpus === "number" ? testCase.metadata.cpus : 2;
 		const memoryMb = typeof testCase.metadata.memoryMb === "number" ? testCase.metadata.memoryMb : 4096;
+		const pids = typeof testCase.metadata.pids === "number" ? testCase.metadata.pids : 512;
 		const create = await runProcess(
 			"docker",
 			[
@@ -99,7 +125,7 @@ export class DockerEnvironmentAdapter implements EnvironmentAdapter {
 				"--memory",
 				`${Math.ceil(memoryMb)}m`,
 				"--pids-limit",
-				"512",
+				String(pids),
 				"--workdir",
 				testCase.environment.workingDirectory,
 				imageDigest,
@@ -111,7 +137,12 @@ export class DockerEnvironmentAdapter implements EnvironmentAdapter {
 		);
 		await requireSuccess(`Docker create for ${testCase.id}`, create);
 		const containerId = create.stdout.trim();
-		const identity: EnvironmentIdentity = { kind: "docker", imageDigest, network: testCase.environment.network };
+		const identity: EnvironmentIdentity = {
+			kind: "docker",
+			imageDigest,
+			platform: `linux/${this.#architecture}`,
+			network: testCase.environment.network,
+		};
 		const environment = new DockerEvalEnvironment(containerId, identity);
 		try {
 			const start = await runProcess("docker", ["start", containerId], { timeoutSeconds: 60 });
