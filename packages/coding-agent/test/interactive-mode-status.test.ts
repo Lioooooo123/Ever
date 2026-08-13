@@ -758,7 +758,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
 "[Extensions]
-  @scope/ever-scoped, answer.ts, cli-extension.ts, HazAT/ever-interactive-subagents, HazAT/ever-interactive-subagents:subagents, local-index, ever-markdown-preview, user-index"`);
+  @scope/ever-scoped, answer.ts, cli-extension.ts, ever-markdown-preview, HazAT/ever-interactive-subagents, HazAT/ever-interactive-subagents:subagents, local-index, user-index"`);
 	});
 
 	test("adds more parent folders until local extension labels are unique", () => {
