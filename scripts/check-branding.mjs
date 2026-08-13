@@ -22,7 +22,7 @@ const TEXT_EXTENSIONS = new Set([
 	".yaml",
 	".yml",
 ]);
-const IGNORED_DIRECTORIES = new Set([".git", "node_modules"]);
+const IGNORED_DIRECTORIES = new Set([".git", "dist", "node_modules"]);
 const IGNORED_PATHS = new Set([
 	"LICENSE",
 	"packages/coding-agent/src/core/export-html/vendor/highlight.min.js",
