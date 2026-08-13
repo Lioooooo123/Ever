@@ -60,7 +60,7 @@ Skill content here.`,
 		});
 
 		it("should ignore extra markdown files in auto-discovered skill dirs", async () => {
-			const skillDir = join(agentDir, "skills", "pi-skills", "browser-tools");
+			const skillDir = join(agentDir, "skills", "ever-skills", "browser-tools");
 			mkdirSync(skillDir, { recursive: true });
 			writeFileSync(
 				join(skillDir, "SKILL.md"),
@@ -163,8 +163,8 @@ Project skill`,
 			mkdirSync(sharedExtDir, { recursive: true });
 			writeFileSync(
 				join(sharedExtDir, "shared.ts"),
-				`export default function(pi) {
-	pi.registerCommand("shared", {
+				`export default function(ever) {
+	ever.registerCommand("shared", {
 		description: "shared command",
 		handler: async () => {},
 	});
@@ -199,9 +199,9 @@ Project skill`,
 			writeFileSync(
 				join(userExtDir, "user.ts"),
 				`globalThis[${JSON.stringify(loadCountKey)}] = (globalThis[${JSON.stringify(loadCountKey)}] ?? 0) + 1;
-export default function(pi) {
-	pi.on("project_trust", () => ({ trusted: "yes" }));
-	pi.registerCommand("user-trust", {
+export default function(ever) {
+	ever.on("project_trust", () => ({ trusted: "yes" }));
+	ever.registerCommand("user-trust", {
 		description: "user trust",
 		handler: async () => {},
 	});
@@ -209,8 +209,8 @@ export default function(pi) {
 			);
 			writeFileSync(
 				join(projectExtDir, "project.ts"),
-				`export default function(pi) {
-	pi.registerCommand("project-trusted", {
+				`export default function(ever) {
+	ever.registerCommand("project-trusted", {
 		description: "project trusted",
 		handler: async () => {},
 	});
@@ -243,12 +243,12 @@ export default function(pi) {
 
 			writeFileSync(
 				join(projectExtDir, "project.ts"),
-				`export default function(pi) {
-	pi.registerCommand("deploy", {
+				`export default function(ever) {
+	ever.registerCommand("deploy", {
 		description: "project deploy",
 		handler: async () => {},
 	});
-	pi.registerCommand("project-only", {
+	ever.registerCommand("project-only", {
 		description: "project only",
 		handler: async () => {},
 	});
@@ -257,12 +257,12 @@ export default function(pi) {
 
 			writeFileSync(
 				join(userExtDir, "user.ts"),
-				`export default function(pi) {
-	pi.registerCommand("deploy", {
+				`export default function(ever) {
+	ever.registerCommand("deploy", {
 		description: "user deploy",
 		handler: async () => {},
 	});
-	pi.registerCommand("user-only", {
+	ever.registerCommand("user-only", {
 		description: "user only",
 		handler: async () => {},
 	});
@@ -855,8 +855,8 @@ Content`,
 				`
 import type { ExtensionAPI } from "@lioooooo123/ever";
 import { Type } from "typebox";
-export default function(pi: ExtensionAPI) {
-  pi.registerTool({
+export default function(ever: ExtensionAPI) {
+  ever.registerTool({
     name: "duplicate-tool",
     description: "First",
     parameters: Type.Object({}),
@@ -870,8 +870,8 @@ export default function(pi: ExtensionAPI) {
 				`
 import type { ExtensionAPI } from "@lioooooo123/ever";
 import { Type } from "typebox";
-export default function(pi: ExtensionAPI) {
-  pi.registerTool({
+export default function(ever: ExtensionAPI) {
+  ever.registerTool({
     name: "duplicate-tool",
     description: "Second",
     parameters: Type.Object({}),
@@ -897,14 +897,14 @@ export default function(pi: ExtensionAPI) {
 				`
 import type { ExtensionAPI } from "@lioooooo123/ever";
 import { Type } from "typebox";
-export default function(pi: ExtensionAPI) {
-  pi.registerTool({
+export default function(ever: ExtensionAPI) {
+  ever.registerTool({
     name: "duplicate-tool",
     description: "global tool",
     parameters: Type.Object({}),
     execute: async () => ({ result: "global" }),
   });
-  pi.registerCommand("deploy", {
+  ever.registerCommand("deploy", {
     description: "global command",
     handler: async () => {},
   });
@@ -916,14 +916,14 @@ export default function(pi: ExtensionAPI) {
 				`
 import type { ExtensionAPI } from "@lioooooo123/ever";
 import { Type } from "typebox";
-export default function(pi: ExtensionAPI) {
-  pi.registerTool({
+export default function(ever: ExtensionAPI) {
+  ever.registerTool({
     name: "duplicate-tool",
     description: "explicit tool",
     parameters: Type.Object({}),
     execute: async () => ({ result: "explicit" }),
   });
-  pi.registerCommand("deploy", {
+  ever.registerCommand("deploy", {
     description: "explicit command",
     handler: async () => {},
   });

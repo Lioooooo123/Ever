@@ -177,11 +177,6 @@ function resolveSpawnContext(
 	ctx: ExtensionContext | undefined,
 ): BashSpawnContext {
 	const env = sanitizeUnattendedShellEnvironment(getShellEnv());
-	delete env.PI_SESSION_ID;
-	delete env.PI_SESSION_FILE;
-	delete env.PI_PROVIDER;
-	delete env.PI_MODEL;
-	delete env.PI_REASONING_LEVEL;
 	delete env.EVER_SESSION_ID;
 	delete env.EVER_SESSION_FILE;
 	delete env.EVER_PROVIDER;

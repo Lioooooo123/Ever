@@ -1,4 +1,8 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { startDaemon } from "../src/cli/daemon-command.ts";
 import { SequencedEventBuffer } from "../src/daemon/event-stream.ts";
 import {
 	createDaemonCommand,
@@ -9,6 +13,20 @@ import {
 } from "../src/daemon/protocol.ts";
 
 describe("daemon control protocol", () => {
+	it("reports detached daemon startup logs when the child exits", async () => {
+		const agentDir = await mkdtemp(join(tmpdir(), "ever-daemon-start-test-"));
+		const entry = join(agentDir, "failing-daemon.mjs");
+		await writeFile(entry, 'process.stderr.write("sandbox initialization failed\\n"); process.exit(23);\n');
+		const previousEntry = process.argv[1];
+		process.argv[1] = entry;
+		try {
+			await expect(startDaemon(agentDir)).rejects.toThrow("sandbox initialization failed");
+		} finally {
+			process.argv[1] = previousEntry;
+			await rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("creates and validates versioned command envelopes", () => {
 		const command = createDaemonCommand(
 			{ command: "wake", taskId: "task-1" },

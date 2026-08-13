@@ -8,11 +8,11 @@
 
 ## 1. 决策摘要
 
-Ever 将从“Pi Coding Agent 加长程任务扩展”调整为“本地优先、可安全恢复、交付可验证的长程 Coding Agent”。Pi `AgentSessionRuntime` 仍是执行内核，但 Ever 的公开产品语义由持久 Task 定义。
+Ever 将从“Ever Coding Agent 加长程任务扩展”调整为“本地优先、可安全恢复、交付可验证的长程 Coding Agent”。Ever `AgentSessionRuntime` 仍是执行内核，但 Ever 的公开产品语义由持久 Task 定义。
 
 `Task` 是产品的顶层持久实体，`Session` 是某个 Agent 的执行记录。公开的 Ever 入口不再创建脱离 Task 的临时 Session。长程任务所需的 checkpoint、lease、budget、recovery、continuation、tool policy 和 acceptance 必须位于原生执行路径，不能依赖可卸载的 Extension。
 
-本次调整保留 Pi 的模型、工具、Session、compaction、Skills、用户 Extensions、TUI 和 RPC 基础能力，不重写 Agent Loop，也不建立第二套对话历史。产品首发只打通单仓库、单 Main Agent 的可靠执行路径。多 Agent、Cron、系统托管和团队控制台不进入首发承诺。
+本次调整保留 Ever 的模型、工具、Session、compaction、Skills、用户 Extensions、TUI 和 RPC 基础能力，不重写 Agent Loop，也不建立第二套对话历史。产品首发只打通单仓库、单 Main Agent 的可靠执行路径。多 Agent、Cron、系统托管和团队控制台不进入首发承诺。
 
 产品判断是 **Pivot**：保留 durable execution、recovery、policy 和 acceptance 内核，收缩首发范围并改写市场定位。Ever 不以“能够运行数小时”作为差异点，而以进程级持久性、副作用安全恢复和机器可验证交付建立差异。
 
@@ -40,7 +40,7 @@ Ever 暂不面向以短时交互式 pair coding 为主的普通开发者，也�
 2. **副作用安全恢复**：每个变更操作都有持久 intent。结果未知时进入 `unknown_outcome`，不自动重放。
 3. **可验证交付**：完成声明必须引用真实的命令、文件、事件或 artifact，Host 验证通过后才能完成 Task。
 
-Pi 是实现这些承诺的执行内核和生态基础，不是产品对外的首要卖点。
+Ever 是实现这些承诺的执行内核和生态基础，不是产品对外的首要卖点。
 
 ### 2.4 首发黄金路径
 
@@ -59,7 +59,7 @@ ever run "升级依赖并修复测试" --verify "npm run check"
 
 ## 3. 当前问题
 
-当前长程任务通过多处接线进入普通 Pi Runtime：
+当前长程任务通过多处接线进入普通 Ever Runtime：
 
 ```text
 ever <goal>
@@ -101,7 +101,7 @@ Ever 只提供长程任务 Agent：
 - `--print`、JSON 和 RPC：仍是不同交互方式，但执行对象必须是 Task。
 - `auth`、`config`、模型列表和包管理：保留为运行环境管理命令。
 
-Pi 的普通 Session 能力继续作为内部执行内核和 SDK 能力存在，但不作为 Ever CLI 的产品入口。
+Ever 的普通 Session 能力继续作为内部执行内核和 SDK 能力存在，但不作为 Ever CLI 的产品入口。
 
 ## 5. 总体架构
 
@@ -111,7 +111,7 @@ flowchart LR
     App --> Control["Task Control Plane"]
     Control --> Worker["Resident Agent Worker"]
     Worker --> Native["NativeLongTaskAgent"]
-    Native --> Pi["Pi AgentSessionRuntime"]
+    Native --> Ever["Ever AgentSessionRuntime"]
     Native --> Store["Durable Task Store"]
     Native --> Policy["Budget / Recovery / Tool Policy"]
 ```
@@ -122,7 +122,7 @@ flowchart LR
 用户目标
 -> 持久 Task
 -> Supervisor 分配 Agent Worker
--> NativeLongTaskAgent 创建或恢复 Pi Session
+-> NativeLongTaskAgent 创建或恢复 Ever Session
 -> Policy 批准每个模型请求和工具调用
 -> Settled Turn 原子提交 checkpoint
 -> Continuation 决定继续、等待、暂停、失败或申请完成
@@ -206,9 +206,9 @@ interface NativeLongTaskAgent {
 
 它替代当前通过 `EVER_TASK_RUN_ID`、`EVER_AGENT_RUN_ID` 等环境变量拼装运行模式的方式。
 
-### 6.5 Pi AgentSessionRuntime
+### 6.5 Ever AgentSessionRuntime
 
-Pi Runtime 继续负责：
+Ever Runtime 继续负责：
 
 - Provider 调用和 Agent Loop。
 - Session 消息与 tree。
@@ -216,7 +216,7 @@ Pi Runtime 继续负责：
 - compaction。
 - Skills、Prompt、用户 Extension 和呈现模式。
 
-Pi Runtime 不理解 Ever 的 TaskStore、数据库 schema、lease 或 acceptance。
+Ever Runtime 不理解 Ever 的 TaskStore、数据库 schema、lease 或 acceptance。
 
 ### 6.6 Durable Task Store
 
@@ -230,7 +230,7 @@ Durable Task Store 是 Task 状态的唯一持久真相，当前生产 adapter �
 - Tool intent、执行结果和 unknown outcome。
 - continuation decision、acceptance evidence 和 schedule。
 
-Pi Session Store 继续保存对话历史。两者职责不同，不能建立第二套 transcript。
+Ever Session Store 继续保存对话历史。两者职责不同，不能建立第二套 transcript。
 
 ### 6.7 Budget / Recovery / Tool Policy
 
@@ -242,7 +242,7 @@ Policy 是 Host 侧确定性门禁，不依赖模型自律。
 -> 校验 Agent tool policy
 -> 校验 workspace、sandbox、预算和执行权
 -> await 持久化 ToolPlanned / ToolStarted
--> 允许 Pi 执行
+-> 允许 Ever 执行
 -> await 持久化 ToolFinished
 ```
 
@@ -256,7 +256,7 @@ Policy 包含三类规则：
 
 ## 7. 原生生命周期 seam
 
-Pi core 只增加通用的 Agent 生命周期 interface，不引入 Ever 类型。建议使用一个事件入口，避免把多个回调散落到调用方：
+Ever core 只增加通用的 Agent 生命周期 interface，不引入 Ever 类型。建议使用一个事件入口，避免把多个回调散落到调用方：
 
 ```ts
 interface AgentSessionLifecycle {
@@ -277,7 +277,7 @@ interface AgentSessionLifecycle {
 
 两个真实 adapter 证明该 seam 的必要性：
 
-1. 普通 Pi SDK Session 使用默认生命周期 adapter。
+1. 普通 Ever SDK Session 使用默认生命周期 adapter。
 2. Ever 使用 durable long-task adapter。
 
 `ever-long-tasks` 内置 Extension 删除。用户 Extension 继续通过原有 Extension interface 加载，但不能覆盖原生生命周期的安全决定。
@@ -368,7 +368,7 @@ await taskStore.persistResult()
 - 将已抓取的 `upstream/main` 合入 `zh/native-long-running-agent`。
 - 解决 Agent Harness、Session 和 Extension interface 漂移。
 - 补齐生成的 Provider model data，确保全新 worktree 可以启动 CLI。
-- 运行 `npm run check`、`./test.sh` 和 CLI 冒烟验证。
+- 运行 `npm run check`、`./scripts/test.sh` 和 CLI 冒烟验证。
 
 ### 阶段一：打通首发路径
 
@@ -452,14 +452,14 @@ await taskStore.persistResult()
 
 ```bash
 npm run check
-./test.sh
+./scripts/test.sh
 ```
 
 修改测试文件时运行对应定向测试。Daemon、Worker 和恢复测试使用临时 agent directory、临时 socket 和 faux provider，不调用真实 Provider 或付费 token。
 
 ## 12. 非目标
 
-- 不重写 Pi Agent Loop。
+- 不重写 Ever Agent Loop。
 - 不建立第二套 Session 或 compaction。
 - 不引入外部工作流引擎或远程数据库。
 - 首发不实现多机 Worker、团队控制台、RBAC 或 SSO。

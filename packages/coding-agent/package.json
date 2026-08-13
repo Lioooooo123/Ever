@@ -4,7 +4,7 @@
 	"description": "Long-running coding agent with durable Tasks, recovery, and verification, powered by Ever",
 	"everRelease": true,
 	"type": "module",
-	"piConfig": {
+	"everConfig": {
 		"name": "ever",
 		"configDir": ".ever"
 	},

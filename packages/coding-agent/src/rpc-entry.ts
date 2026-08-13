@@ -10,4 +10,4 @@ process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 configureHttpDispatcher();
 
-main(["--mode", "rpc", ...process.argv.slice(2)]);
+await main(["--mode", "rpc", ...process.argv.slice(2)]);

@@ -39,7 +39,7 @@ describe("AgentSession dynamic provider registration", () => {
 	let agentDir: string;
 
 	beforeEach(() => {
-		tempDir = join(tmpdir(), `pi-dynamic-provider-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		tempDir = join(tmpdir(), `ever-dynamic-provider-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
 		mkdirSync(agentDir, { recursive: true });
 	});
@@ -94,8 +94,8 @@ describe("AgentSession dynamic provider registration", () => {
 
 	it("applies top-level registerProvider overrides to the active model", async () => {
 		const session = await createSession([
-			(pi) => {
-				pi.registerProvider("anthropic", { baseUrl: "http://localhost:8080/top-level" });
+			(ever) => {
+				ever.registerProvider("anthropic", { baseUrl: "http://localhost:8080/top-level" });
 			},
 		]);
 
@@ -107,9 +107,9 @@ describe("AgentSession dynamic provider registration", () => {
 
 	it("applies session_start registerProvider overrides to the active model", async () => {
 		const session = await createSession([
-			(pi) => {
-				pi.on("session_start", () => {
-					pi.registerProvider("anthropic", { baseUrl: "http://localhost:8080/session-start" });
+			(ever) => {
+				ever.on("session_start", () => {
+					ever.registerProvider("anthropic", { baseUrl: "http://localhost:8080/session-start" });
 				});
 			},
 		]);
@@ -122,10 +122,10 @@ describe("AgentSession dynamic provider registration", () => {
 		session.dispose();
 	});
 
-	it("registers native pi-ai providers during extension loading", async () => {
+	it("registers native ever-ai providers during extension loading", async () => {
 		const session = await createSession([
-			(pi) => {
-				pi.registerProvider(nativeAnthropicProvider("http://localhost:8080/native-top-level"));
+			(ever) => {
+				ever.registerProvider(nativeAnthropicProvider("http://localhost:8080/native-top-level"));
 			},
 		]);
 
@@ -137,11 +137,11 @@ describe("AgentSession dynamic provider registration", () => {
 
 	it("applies command-time registerProvider overrides without reload", async () => {
 		const session = await createSession([
-			(pi) => {
-				pi.registerCommand("use-proxy", {
+			(ever) => {
+				ever.registerCommand("use-proxy", {
 					description: "Use proxy",
 					handler: async () => {
-						pi.registerProvider("anthropic", { baseUrl: "http://localhost:8080/command" });
+						ever.registerProvider("anthropic", { baseUrl: "http://localhost:8080/command" });
 					},
 				});
 			},
@@ -156,13 +156,13 @@ describe("AgentSession dynamic provider registration", () => {
 		session.dispose();
 	});
 
-	it("registers native pi-ai providers at command time", async () => {
+	it("registers native ever-ai providers at command time", async () => {
 		const session = await createSession([
-			(pi) => {
-				pi.registerCommand("use-native", {
+			(ever) => {
+				ever.registerCommand("use-native", {
 					description: "Use native provider",
 					handler: async () => {
-						pi.registerProvider(nativeAnthropicProvider("http://localhost:8080/native-command"));
+						ever.registerProvider(nativeAnthropicProvider("http://localhost:8080/native-command"));
 					},
 				});
 			},

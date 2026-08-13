@@ -21,12 +21,14 @@ The runtime example shows how to build a recreate function that closes over proc
 | `11-sessions.ts` | In-memory, persistent, continue, list sessions |
 | `12-full-control.ts` | Replace everything, no discovery |
 | `13-session-runtime.ts` | Manage runtime-backed session replacement |
+| `14-simple-agent.ts` | Small CLI coding agent with tool selection and a custom scratchpad tool |
 
 ## Running
 
 ```bash
 cd packages/coding-agent
 npx tsx examples/sdk/01-minimal.ts
+npx tsx examples/sdk/14-simple-agent.ts "Inspect this repo and suggest one improvement"
 ```
 
 ## Quick Reference

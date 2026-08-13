@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 function createTempDir(): string {
-	const dir = mkdtempSync(join(tmpdir(), "pi-stdout-clean-"));
+	const dir = mkdtempSync(join(tmpdir(), "ever-stdout-clean-"));
 	tempDirs.push(dir);
 	return dir;
 }
@@ -105,7 +105,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		const result = await runCli(["--mode", "json", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Ever long-running agent");
+		expect(result.stdout).toContain("ever - AI coding assistant");
 		expect(result.stderr).not.toContain("changed 1 package in 471ms");
 		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});
@@ -114,7 +114,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		const result = await runCli(["-p", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Ever long-running agent");
+		expect(result.stdout).toContain("ever - AI coding assistant");
 		expect(result.stderr).not.toContain("changed 1 package in 471ms");
 		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});
@@ -123,7 +123,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		const result = await runCli(["-p", "--help"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Ever long-running agent");
+		expect(result.stdout).toContain("ever - AI coding assistant");
 		expect(result.stderr).not.toContain("changed 1 package in 471ms");
 		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});

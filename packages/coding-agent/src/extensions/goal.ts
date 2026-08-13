@@ -110,6 +110,7 @@ function continuationPrompt(state: GoalState): string {
 export default function goalExtension(ever: ExtensionAPI): void {
 	let state: GoalState | undefined;
 	let continuationScheduled = false;
+	let goalRunActive = false;
 
 	function updateTools(): void {
 		const active = ever.getActiveTools().filter((name) => name !== UPDATE_GOAL_TOOL);
@@ -416,20 +417,35 @@ export default function goalExtension(ever: ExtensionAPI): void {
 	function restore(ctx: ExtensionContext): void {
 		state = restoreGoal(ctx);
 		continuationScheduled = false;
+		goalRunActive = false;
 		updateTools();
 		updateStatus(ctx);
 	}
 
 	ever.on("session_start", (_event, ctx) => restore(ctx));
 	ever.on("session_tree", (_event, ctx) => restore(ctx));
+	ever.on("agent_start", () => {
+		goalRunActive = false;
+	});
+	ever.on("message_start", (event) => {
+		if (
+			event.message.role === "custom" &&
+			(event.message.customType === GOAL_START_MESSAGE_TYPE ||
+				event.message.customType === GOAL_CONTINUE_MESSAGE_TYPE)
+		) {
+			goalRunActive = true;
+		}
+	});
 
 	ever.on("message_end", (event) => {
-		if (!state || state.status !== "active" || event.message.role !== "assistant") return;
+		if (!goalRunActive || !state || state.status !== "active" || event.message.role !== "assistant") return;
 		state = { ...state, totalTokens: state.totalTokens + event.message.usage.totalTokens };
 	});
 
 	ever.on("agent_end", (_event, ctx) => {
-		if (!state || state.status !== "active") return;
+		const completedGoalRun = goalRunActive;
+		goalRunActive = false;
+		if (!completedGoalRun || !state || state.status !== "active") return;
 		persist(ctx, { ...state, turns: state.turns + 1, updatedAt: new Date().toISOString() });
 		if (pauseForBudget(ctx) || continuationScheduled || !state) return;
 		continuationScheduled = true;

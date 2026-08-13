@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
@@ -106,6 +106,7 @@ function paths(agentDir: string) {
 		runDir,
 		socketPath: createDaemonSocketPath(agentDir),
 		pidPath: join(runDir, "ever.pid"),
+		daemonLogPath: join(runDir, "daemon-start.log"),
 		clientIdPath: join(runDir, "client-id"),
 		controlTokenPath: join(runDir, "control-token"),
 	};
@@ -228,9 +229,36 @@ export function requestDaemon(
 	});
 }
 
-async function waitForDaemon(agentDir: string, attempts = 100): Promise<DaemonResponse> {
+function daemonStartupFailure(agentDir: string, cause: unknown): Error {
+	const { daemonLogPath } = paths(agentDir);
+	let log = "";
+	try {
+		log = readFileSync(daemonLogPath, "utf8").trim().slice(-8192);
+	} catch {
+		// The log path is still useful when the child failed before opening stdio.
+	}
+	const causeMessage = cause instanceof Error ? cause.message : String(cause);
+	return new Error(`Daemon failed to start: ${causeMessage}\nStartup log: ${daemonLogPath}${log ? `\n${log}` : ""}`);
+}
+
+async function waitForDaemon(agentDir: string, child: ChildProcess, attempts = 100): Promise<DaemonResponse> {
 	let lastError: unknown;
+	let childError: Error | undefined;
+	child.once("error", (error) => {
+		childError = error;
+	});
 	for (let attempt = 0; attempt < attempts; attempt++) {
+		if (childError) throw daemonStartupFailure(agentDir, childError);
+		if (child.exitCode !== null || child.signalCode !== null) {
+			throw daemonStartupFailure(
+				agentDir,
+				new Error(
+					child.exitCode === null
+						? `daemon process exited from signal ${child.signalCode ?? "unknown"}`
+						: `daemon process exited with code ${child.exitCode}`,
+				),
+			);
+		}
 		try {
 			return await requestDaemon(agentDir, { command: "status" });
 		} catch (error) {
@@ -238,7 +266,7 @@ async function waitForDaemon(agentDir: string, attempts = 100): Promise<DaemonRe
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 	}
-	throw lastError instanceof Error ? lastError : new Error("Daemon did not start");
+	throw daemonStartupFailure(agentDir, lastError ?? new Error("Daemon did not start"));
 }
 
 async function serve(
@@ -783,13 +811,28 @@ export async function startDaemon(agentDir: string, unsafeNoSandbox = false): Pr
 	}
 	const cliEntry = process.argv[1];
 	if (!cliEntry) throw new Error("Cannot determine CLI entry point");
-	const child = spawn(
-		process.execPath,
-		[...process.execArgv, cliEntry, "daemon", "serve", ...(unsafeNoSandbox ? ["--unsafe-no-sandbox"] : [])],
-		{ detached: true, stdio: "ignore", env: process.env },
-	);
-	child.unref();
-	return waitForDaemon(agentDir);
+	const { runDir, daemonLogPath } = paths(agentDir);
+	mkdirSync(runDir, { recursive: true, mode: 0o700 });
+	chmodSync(runDir, 0o700);
+	const logFd = openSync(daemonLogPath, "w", 0o600);
+	let child: ChildProcess;
+	try {
+		child = spawn(
+			process.execPath,
+			[...process.execArgv, cliEntry, "daemon", "serve", ...(unsafeNoSandbox ? ["--unsafe-no-sandbox"] : [])],
+			{ detached: true, stdio: ["ignore", logFd, logFd], env: process.env },
+		);
+	} finally {
+		closeSync(logFd);
+	}
+	try {
+		const response = await waitForDaemon(agentDir, child);
+		child.unref();
+		return response;
+	} catch (error) {
+		if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+		throw error;
+	}
 }
 
 export async function attachTask(

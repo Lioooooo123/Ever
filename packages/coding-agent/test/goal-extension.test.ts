@@ -85,10 +85,18 @@ function setup(initialEntries: Array<Record<string, unknown>> = []) {
 		return updateGoalTool.execute("tool-call", params, undefined, undefined, ctx);
 	}
 
+	async function beginGoalRun(customType = "session-goal-continue"): Promise<void> {
+		await emit("agent_start");
+		await emit("message_start", {
+			message: { role: "custom", customType, content: "goal", display: false, timestamp: Date.now() },
+		});
+	}
+
 	return {
 		activeTools: () => activeTools,
 		appendEntry,
 		abort,
+		beginGoalRun,
 		editor,
 		emit,
 		notify,
@@ -158,6 +166,7 @@ describe("goal extension", () => {
 		vi.useFakeTimers();
 		const runtime = setup([activeGoal("finish the migration", { maxAutomaticTurns: 1 })]);
 		await runtime.emit("session_start", { reason: "startup" });
+		await runtime.beginGoalRun();
 		await runtime.emit("agent_end");
 		await vi.runAllTimersAsync();
 
@@ -166,6 +175,7 @@ describe("goal extension", () => {
 			{ triggerTurn: true, deliverAs: "followUp" },
 		);
 
+		await runtime.beginGoalRun();
 		await runtime.emit("agent_end");
 		expect(runtime.appendEntry).toHaveBeenLastCalledWith(
 			"session-goal",
@@ -197,6 +207,7 @@ describe("goal extension", () => {
 		const runtime = setup([activeGoal("publish safely")]);
 		await runtime.emit("session_start", { reason: "startup" });
 		for (let report = 1; report <= 3; report++) {
+			await runtime.beginGoalRun();
 			const result = await runtime.runUpdateGoal({
 				status: "blocked",
 				summary: "still waiting",
@@ -227,6 +238,7 @@ describe("goal extension", () => {
 	it("tracks tokens and exposes lifecycle state through /goal status", async () => {
 		const runtime = setup([activeGoal("measure work")]);
 		await runtime.emit("session_start", { reason: "startup" });
+		await runtime.beginGoalRun();
 		const message = fauxAssistantMessage("working");
 		await runtime.emit("message_end", { message });
 		await runtime.emit("agent_end");
@@ -237,6 +249,40 @@ describe("goal extension", () => {
 			"info",
 		);
 		expect(runtime.notify).toHaveBeenLastCalledWith(expect.stringContaining("Turns: 1"), "info");
+	});
+
+	it("does not continue or charge Goal budgets after an ordinary Session turn", async () => {
+		const runtime = setup([activeGoal("stay scoped")]);
+		await runtime.emit("session_start", { reason: "startup" });
+		await runtime.emit("agent_start");
+		const message = fauxAssistantMessage("ordinary response");
+		await runtime.emit("message_end", { message });
+		await runtime.emit("agent_end");
+		await runtime.runGoal("status");
+
+		expect(runtime.sendMessage).not.toHaveBeenCalled();
+		expect(runtime.notify).toHaveBeenLastCalledWith(expect.stringContaining("Turns: 0"), "info");
+		expect(runtime.notify).toHaveBeenLastCalledWith(expect.stringContaining("Tokens: 0/unlimited"), "info");
+	});
+
+	it("does not duplicate a Goal started while an ordinary Session turn is running", async () => {
+		const runtime = setup();
+		await runtime.emit("session_start", { reason: "startup" });
+		await runtime.emit("agent_start");
+		runtime.setIdle(false);
+		await runtime.runGoal("continue after the current response");
+
+		expect(runtime.sendMessage).toHaveBeenCalledTimes(1);
+		await runtime.emit("agent_end");
+		expect(runtime.sendMessage).toHaveBeenCalledTimes(1);
+
+		await runtime.beginGoalRun("session-goal-start");
+		await runtime.emit("agent_end");
+		expect(runtime.sendMessage).toHaveBeenCalledTimes(2);
+		expect(runtime.sendMessage).toHaveBeenLastCalledWith(
+			expect.objectContaining({ customType: "session-goal-continue" }),
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
 	});
 
 	it("supports pause, resume, limits, completion, and clear without replacing the Session", async () => {

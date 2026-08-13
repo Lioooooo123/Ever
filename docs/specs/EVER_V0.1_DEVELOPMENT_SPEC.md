@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-Ever 是以 Pi Agent 为原生执行内核的持久 Coding Agent。用户只操作 Task；Session 是 Task 内部的执行检查点，不是公开的一级工作流。
+Ever 是以 Ever Agent 为原生执行内核的持久 Coding Agent。用户只操作 Task；Session 是 Task 内部的执行检查点，不是公开的一级工作流。
 
 V0.1 必须形成以下闭环：
 
@@ -17,12 +17,12 @@ Reason / Plan -> Execute -> Observe -> Verify
                               +-> Repair -> 下一轮 Reason / Plan
 ```
 
-Pi 继续拥有 Provider、模型、认证、流式生成、Agent Loop、工具、Session、压缩、扩展和原 TUI。Ever 只拥有 Task、Worker、lease/fencing、预算、策略、恢复、验收、验证证据和经验记录。不得增加第二套 Agent Loop、Provider 抽象或平行 Session lifecycle。
+Ever 继续拥有 Provider、模型、认证、流式生成、Agent Loop、工具、Session、压缩、扩展和原 TUI。Ever 只拥有 Task、Worker、lease/fencing、预算、策略、恢复、验收、验证证据和经验记录。不得增加第二套 Agent Loop、Provider 抽象或平行 Session lifecycle。
 
 ## 2. V0.1 产品不变量
 
 1. 每次公开执行都必须创建、恢复或控制一个持久 Task。
-2. `ever` 无参数时引导创建 Task，随后进入原 Pi TUI；不得创建脱离 Task 的临时 Session。
+2. `ever` 无参数时引导创建 Task，随后进入原 Ever TUI；不得创建脱离 Task 的临时 Session。
 3. `--session`、`--session-id`、`--resume`、`--continue`、`--fork`、`--no-session` 和 `--export` 只允许 Ever 内部桥接，不是公开 CLI 入口。
 4. Task checkpoint 只能在 settled Turn 后推进。
 5. 恢复已有 checkpoint 时不得自动重放原始 goal；继续执行只能使用持久化的 continuation 决策或用户新输入。
@@ -36,12 +36,12 @@ Pi 继续拥有 Provider、模型、认证、流式生成、Agent Loop、工具�
 
 接口：`handleEverCommand(args, agentDir, cwd): Promise<boolean>`。
 
-该模块隐藏参数分类、Task 创建、Task 控制和 Pi CLI 内部桥接。调用方只需要知道返回值表示命令是否已完全处理。
+该模块隐藏参数分类、Task 创建、Task 控制和 Ever CLI 内部桥接。调用方只需要知道返回值表示命令是否已完全处理。
 
 行为：
 
 - `ever`：TTY 中引导创建 Task；非 TTY 返回缺少目标错误。
-- `ever <goal>`：创建前台 Task并进入 Pi TUI。
+- `ever <goal>`：创建前台 Task并进入 Ever TUI。
 - `ever <goal> --detach --yes`：创建后台 Task并唤醒 daemon。
 - `ever attach <id>`：可靠交接后恢复 checkpoint；没有 checkpoint 时才提交初始 goal。
 - 公开 Session 参数：在进入 SessionManager 前拒绝。
@@ -51,7 +51,7 @@ Pi 继续拥有 Provider、模型、认证、流式生成、Agent Loop、工具�
 
 接口：`activateTaskRun(input): string[]`。
 
-职责是将 Task 状态投影为 Pi CLI 参数，同时设置进程内 Task 上下文。它不是新的执行器。
+职责是将 Task 状态投影为 Ever CLI 参数，同时设置进程内 Task 上下文。它不是新的执行器。
 
 - 新 Task：附加 durable context，并提交一次原始 goal。
 - 已有 checkpoint：打开 checkpoint Session，但不提交原始 goal。
@@ -80,7 +80,7 @@ Experience Record 是跨 Task 的结构化失败经验，不直接修改 Prompt�
 ## 4. 权限与安全
 
 1. 后台 Task 的副作用工具必须运行在 sandbox，除非用户显式传入 `--unsafe-no-sandbox`。
-2. 前台 Task 可以沿用 Pi 的交互式写入体验，但进入 Task 前必须有明确授权语义。
+2. 前台 Task 可以沿用 Ever 的交互式写入体验，但进入 Task 前必须有明确授权语义。
 3. 所有 durable Task 的 shell 子进程默认剥离 daemon capability、Provider credential、SSH/GPG agent 等敏感环境；需要透传的变量必须进入显式 allowlist。
 4. 路径授权以真实解析后的 workspace root 为准，禁止通过符号链接或相对路径逃逸。
 
@@ -91,27 +91,27 @@ Ever 对外发布面必须统一：
 - CLI 与独立二进制名：`ever`
 - 仓库：`Lioooooo123/Ever`
 - GitHub release asset：`ever-*`
-- README、安装锁、本地 release smoke、更新检查不得把用户导向 Pi 产品包
+- README、安装锁、本地 release smoke、更新检查不得把用户导向 Ever 产品包
 
-Pi workspace 包可以继续作为内部上游依赖存在；是否 fork/改名这些内部包不属于 V0.1。
+Ever workspace 包可以继续作为内部上游依赖存在；是否 fork/改名这些内部包不属于 V0.1。
 
 ## 6. 实施阶段
 
 ### Phase 1：Task-only 与可靠恢复
 
 - 封闭公开 Session 参数。
-- `ever` 无参数引导创建 Task 并复用 Pi TUI。
+- `ever` 无参数引导创建 Task 并复用 Ever TUI。
 - checkpoint 恢复不重放 goal。
 - 增加 Worker 交接屏障。
 - 修复 TUI 退出 drain 回归。
 - 补齐 CLI、checkpoint、attach 和 shutdown 回归测试。
 
-验收：`npm run check`、相关定向测试、`./test.sh` 全部通过。
+验收：`npm run check`、相关定向测试、`./scripts/test.sh` 全部通过。
 
 ### Phase 2：Ever 发布面
 
 - 统一 package metadata、install-lock、独立二进制、release assets、README、更新检查和 changelog 链接。
-- 保持 Pi 内部 workspace 依赖，不批量改上游包身份。
+- 保持 Ever 内部 workspace 依赖，不批量改上游包身份。
 
 验收：隔离目录中 Node 与 Bun 的 `ever --help`、`ever --version`、交互启动和一个真实 Prompt smoke 通过。
 
@@ -137,7 +137,7 @@ Pi workspace 包可以继续作为内部上游依赖存在；是否 fork/改名�
 
 ## 7. 非目标
 
-- 不重写 Pi Agent Loop。
+- 不重写 Ever Agent Loop。
 - 不引入第二套 Provider、工具或 Session abstraction。
 - V0.1 不开放多 subagent、schedule 或自主修改源码并发布。
 - 不为未发布的数据格式盲目增加迁移；发现真实旧数据后再增加一次性、可回滚迁移。

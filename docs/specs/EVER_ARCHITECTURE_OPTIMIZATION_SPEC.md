@@ -10,17 +10,17 @@
 
 ## 1. 架构决策
 
-Ever 基于 Pi Agent 深度开发。Pi 是 Ever 的原生执行内核，继续负责模型 Provider、认证、模型目录、流式协议、Agent Loop、Session、工具、Extension、上下文压缩和 Eval。Ever 在 Pi 的原生 seam 上增加持久 Task、常驻 Worker、预算、策略、恢复和验收。
+Ever 基于 Ever Agent 深度开发。Ever 是 Ever 的原生执行内核，继续负责模型 Provider、认证、模型目录、流式协议、Agent Loop、Session、工具、Extension、上下文压缩和 Eval。Ever 在 Ever 的原生 seam 上增加持久 Task、常驻 Worker、预算、策略、恢复和验收。
 
 V0.1 采用以下决定：
 
 1. Task 是 Ever 的顶层实体，Session 是 Task 内一次 Attempt 的执行记录。
-2. `NativeLongTaskAgent` 是唯一长程执行模块，内部直接拥有 Pi Harness 和 Pi Session。
+2. `NativeLongTaskAgent` 是唯一长程执行模块，内部直接拥有 Ever Harness 和 Ever Session。
 3. 不增加 `AgentBackend`、`ProviderGateway` 或第二套生命周期协议。
-4. 长程正确性进入 Pi Harness 的 awaited hooks，不再由内置 Extension、环境变量和异步 listener 拼装。
-5. Pi Session log 保存会话事实，Ever Task Store 保存跨进程任务事实。两者通过稳定 ID 和 settled checkpoint 绑定，不复制两套恢复状态机。
-6. Provider 路由和成本策略复用 Pi `Models` 与 `Provider`。未来的 Ever Managed Provider 也实现为 Pi Provider。
-7. Pi Eval 继续作为统一 Eval 基础设施。Acceptance 只判断一个 Task 是否完成。
+4. 长程正确性进入 Ever Harness 的 awaited hooks，不再由内置 Extension、环境变量和异步 listener 拼装。
+5. Ever Session log 保存会话事实，Ever Task Store 保存跨进程任务事实。两者通过稳定 ID 和 settled checkpoint 绑定，不复制两套恢复状态机。
+6. Provider 路由和成本策略复用 Ever `Models` 与 `Provider`。未来的 Ever Managed Provider 也实现为 Ever Provider。
+7. Ever Eval 继续作为统一 Eval 基础设施。Acceptance 只判断一个 Task 是否完成。
 8. Ever 的公开执行入口全部创建或操作持久 Task，不保留公开的 transient Session 模式。
 
 ## 2. 设计范围
@@ -28,7 +28,7 @@ V0.1 采用以下决定：
 ### 2.1 目标
 
 - 终端关闭、客户端断线、Worker 崩溃和进程重启后，Task 仍能恢复。
-- 恢复只从 Pi Session 的 settled checkpoint 开始。
+- 恢复只从 Ever Session 的 settled checkpoint 开始。
 - 工具调用、Provider 请求和用户控制命令都具有可审计的持久记录。
 - 旧 Worker 未确认退出时，新 Worker 不能继续执行。
 - 无法确认结果的工具或 Provider 调用进入 `unknown_outcome`，系统不自动重放。
@@ -41,7 +41,7 @@ V0.1 采用以下决定：
 - V0.1 不接入 Codex CLI、Claude Code CLI 或其他 Agent Backend。
 - 不建立通用 Agent Backend 市场或能力协商协议。
 - 不在 Attempt 运行中切换 Agent 内核。
-- 不重新实现 Pi Provider、认证、模型发现、流式协议或 Eval。
+- 不重新实现 Ever Provider、认证、模型发现、流式协议或 Eval。
 - 不让模型文本直接决定 Task 完成。
 - 不实现多 Agent、Cron、团队控制台、余额充值和发票系统。
 - 不保证任意外部副作用都能自动恢复。无法核对的结果必须等待用户处理。
@@ -54,12 +54,12 @@ V0.1 采用以下决定：
 | --- | --- | --- |
 | Task、Attempt、checkpoint、budget、tool durability | `TECHNICAL_SPEC.md` | V0.1 固定为单 Main Agent，删除 `longTasks.enabled` |
 | Supervisor、Worker、命令日志、事件重连、recovery barrier | `LONG_RUNNING_CONTROL_PLANE_SPEC.md` | 保留协议，V0.1 不实现 Cron 和多 Agent 调度 |
-| Pi 与 Ever 的模块关系 | 本规格 | Pi 是原生内核，不是可替换 Backend |
-| Provider 与模型调用 | Pi `packages/ai` | Ever 只增加路由策略和费用账本 |
-| Eval | Pi `packages/evals` | 增加长程恢复、成本和质量评测，不另建框架 |
+| Ever 与 Ever 的模块关系 | 本规格 | Ever 是原生内核，不是可替换 Backend |
+| Provider 与模型调用 | Ever `packages/ai` | Ever 只增加路由策略和费用账本 |
+| Eval | Ever `packages/evals` | 增加长程恢复、成本和质量评测，不另建框架 |
 | 产品范围和验收指标 | `EVER_PRD_V0.1.md` | 本规格不扩大产品范围 |
 
-被本规格明确取代的旧设计包括：公开 transient Session、`longTasks.enabled`、任务模式环境变量、内置长任务 Extension，以及把 Pi 包装成通用 Agent Backend 的方案。
+被本规格明确取代的旧设计包括：公开 transient Session、`longTasks.enabled`、任务模式环境变量、内置长任务 Extension，以及把 Ever 包装成通用 Agent Backend 的方案。
 
 ## 4. 目标架构
 
@@ -75,9 +75,9 @@ flowchart LR
     NATIVE --> POLICY["Policy Kernel"]
     NATIVE --> ACCEPT["Acceptance Runner"]
     NATIVE --> BUNDLE["Verified Change Bundle"]
-    NATIVE --> PI["Pi Native Runtime"]
+    NATIVE --> RUNTIME["Ever Native Runtime"]
 
-    PI --> HARNESS["Agent Harness / Session"]
+    RUNTIME --> HARNESS["Agent Harness / Session"]
     HARNESS --> LOOP["Agent Loop / Tools / Compaction"]
     HARNESS --> MODELS["Models / Provider / Auth"]
     MODELS --> PROVIDERS["Remote or Local Providers"]
@@ -85,7 +85,7 @@ flowchart LR
     STORE --> POLICY
     STORE --> ACCEPT
     STORE --> BUNDLE
-    EVAL["Pi Eval Plane"] -. "发布门禁" .-> PI
+    EVAL["Ever Eval Plane"] -. "发布门禁" .-> RUNTIME
 ```
 
 执行链只有一份：
@@ -95,22 +95,22 @@ Task
   -> Attempt claim
   -> Resident Worker
   -> NativeLongTaskAgent
-  -> Pi Harness / Session
-  -> Pi Models / Provider
+  -> Ever Harness / Session
+  -> Ever Models / Provider
 ```
 
-Task Store 不解释 Provider 流或 Pi 内部事件。Pi Runtime 也不直接修改 Task 状态。`NativeLongTaskAgent` 在 Pi 的 awaited hooks 上提交跨进程事实，把两边连接起来。
+Task Store 不解释 Provider 流或 Ever 内部事件。Ever Runtime 也不直接修改 Task 状态。`NativeLongTaskAgent` 在 Ever 的 awaited hooks 上提交跨进程事实，把两边连接起来。
 
-## 5. Pi Native Runtime
+## 5. Ever Native Runtime
 
-Pi Native Runtime 是 Ever 的执行底座，包含以下现有能力：
+Ever Native Runtime 是 Ever 的执行底座，包含以下现有能力：
 
 - `packages/ai`：Provider 注册、认证、模型发现、流式调用、普通完成调用和 deferred 请求。
 - `packages/agent`：Agent Loop、工具调用、上下文转换和 Harness 生命周期。
 - `packages/coding-agent`：Session、Extension、工具资源、compaction 和交互运行时。
-- `packages/evals`：Pi Harness、质量评分、对比实验、成本与延迟统计、可恢复 benchmark。
+- `packages/evals`：Ever Harness、质量评分、对比实验、成本与延迟统计、可恢复 benchmark。
 
-Ever 对 Pi 的改动应进入这些原生 seam，不在外面镜像一套 BackendEvent：
+Ever 对 Ever 的改动应进入这些原生 seam，不在外面镜像一套 BackendEvent：
 
 - 补齐并严格等待 `before_request`、`after_response`、`before_tool`、`after_tool`、`before_compaction` 和 settled hook。
 - hook 接收稳定的 request ID、operation ID、Attempt identity 和 execution permit。
@@ -118,7 +118,7 @@ Ever 对 Pi 的改动应进入这些原生 seam，不在外面镜像一套 Backe
 - Provider 请求只能在 `before_request` 完成预算预留后发出。
 - Session 只有在 settled 状态下才能导出可恢复 checkpoint。
 
-Pi SDK 仍可独立创建普通 Session。这个兼容面属于 Pi，不属于 Ever 的公开产品入口。
+Ever SDK 仍可独立创建普通 Session。这个兼容面属于 Ever，不属于 Ever 的公开产品入口。
 
 ## 6. Ever 长程运行模块
 
@@ -131,7 +131,7 @@ Task Application 是 CLI、TUI、JSON 和 RPC 的共同入口，负责：
 - 返回 Task snapshot 和可重连事件流。
 - 让所有变更命令先进入 Command Journal。
 
-它不创建 Pi Session，也不直接调用 Worker。
+它不创建 Ever Session，也不直接调用 Worker。
 
 ### 6.2 Task Control Plane
 
@@ -142,7 +142,7 @@ Task Control Plane 负责：
 - Attempt claim 和 fencing token。
 - 等待、暂停、恢复、取消和人工确认。
 
-它不理解 Pi 消息格式、Provider 事件或工具实现。
+它不理解 Ever 消息格式、Provider 事件或工具实现。
 
 ### 6.3 Supervisor 与 Worker Registry
 
@@ -162,7 +162,7 @@ Resident Worker 领取一个 `ClaimedAttempt`，持有 lease 并运行 `NativeLo
 
 - 定期续租并在每个外部动作前重新校验 fencing token；
 - 消费已持久化的控制命令和 inbox；
-- 将 pause、stop、cancel 转换成 Pi Runtime 内部的安全中断；
+- 将 pause、stop、cancel 转换成 Ever Runtime 内部的安全中断；
 - 进程退出前请求 settled checkpoint；
 - lease 失效后停止进入下一次 Provider 或工具调用。
 
@@ -183,7 +183,7 @@ interface NativeLongTaskAgent {
 模块内部负责：
 
 - 校验 Attempt claim 并加载不可变运行快照；
-- 创建或恢复 Pi Harness 和 Pi Session；
+- 创建或恢复 Ever Harness 和 Ever Session；
 - 安装 Ever durable hooks；
 - 驱动预算、工具安全、checkpoint、continuation 和 recovery；
 - 运行 AcceptancePlan；
@@ -194,7 +194,7 @@ interface NativeLongTaskAgent {
 
 #### 6.5.1 持续执行循环
 
-`NativeLongTaskAgent` 不建立第二套基础 Agent Loop。它在 Pi Agent 每个 settled Turn 外维护 Task 级循环：
+`NativeLongTaskAgent` 不建立第二套基础 Agent Loop。它在 Ever Agent 每个 settled Turn 外维护 Task 级循环：
 
 ```text
 Reason / Plan
@@ -206,13 +206,13 @@ Reason / Plan
 ```
 
 - `Reason / Plan`：基于 Task goal、当前 checkpoint、未完成项和历史失败选择下一段有界工作。
-- `Execute`：由 Pi Agent Loop 调用模型与工具；Ever 只在原生 awaited hooks 上执行预算、权限和副作用约束。
-- `Observe`：把 Pi Session、工具结果、Provider usage、工作区变化和控制命令归并为持久 Progress。
+- `Execute`：由 Ever Agent Loop 调用模型与工具；Ever 只在原生 awaited hooks 上执行预算、权限和副作用约束。
+- `Observe`：把 Ever Session、工具结果、Provider usage、工作区变化和控制命令归并为持久 Progress。
 - `Verify`：运行 AcceptancePlan，检查证据完整性、状态一致性和未知副作用。
 - `Done`：仅在验收通过、必需证据齐全且不存在 `unknown_outcome` 时成立。
 - `Repair`：根据失败分类改变计划、实现或验证方法，再回到下一轮 `Reason / Plan`；不得原样重放未知副作用。
 
-每轮只在 Pi Session settled 后提交 checkpoint 和 continuation decision。Session 中断只结束本次执行上下文，不结束 Task。
+每轮只在 Ever Session settled 后提交 checkpoint 和 continuation decision。Session 中断只结束本次执行上下文，不结束 Task。
 
 失败沉淀为结构化 Experience Record，至少包含失败签名、适用上下文、根因分类、无效尝试、修复动作、验证证据和来源 Task。后续 Task 只能检索与当前上下文匹配的记录。运行时缺陷、安全违规、未知副作用和未经验证的推测不得自动晋升为 Prompt、Skill 或策略；稳定经验必须经过重放 Eval 和人工批准后才能晋升，原始记录保持可回滚。
 
@@ -247,24 +247,24 @@ Verified Change Bundle 至少包含：
 
 ### 7.1 两类事实源
 
-Pi Session log 是对话与 Agent 执行上下文的事实源，保存消息、tool result、compaction 和 Session 分支。Ever Task Store 是跨进程任务控制的事实源，保存 Task 状态、lease、工具 operation、Provider request、预算、命令和验收。
+Ever Session log 是对话与 Agent 执行上下文的事实源，保存消息、tool result、compaction 和 Session 分支。Ever Task Store 是跨进程任务控制的事实源，保存 Task 状态、lease、工具 operation、Provider request、预算、命令和验收。
 
 两类事实通过以下稳定标识关联：
 
 - Task ID；
 - Attempt ID；
 - execution ID；
-- Pi Session ID 与 settled entry ID；
-- tool operation ID 与 Pi tool call ID；
+- Ever Session ID 与 settled entry ID；
+- tool operation ID 与 Ever tool call ID；
 - provider request ID 与 budget reservation ID。
 
-Ever 不把 Pi event stream 再保存成一套可独立恢复的 BackendEvent 状态机。
+Ever 不把 Ever event stream 再保存成一套可独立恢复的 BackendEvent 状态机。
 
 ### 7.2 Attempt 运行快照
 
 每个 Attempt 创建时冻结：
 
-- Pi build version 与 upstream commit；
+- Ever build version 与 upstream commit；
 - Session、Harness、Prompt、Skill、Extension 和工具 schema hash；
 - Provider、模型、认证模式和路由计划；
 - PolicySnapshot、CostPolicy、PriceCatalogSnapshot 和 AcceptancePlan；
@@ -278,13 +278,13 @@ Ever 不把 Pi event stream 再保存成一套可独立恢复的 BackendEvent �
 每次工具执行使用稳定 operation ID。`before_tool` 必须按以下顺序完成：
 
 ```text
-Pi 解析 tool call
+Ever 解析 tool call
   -> NativeLongTaskAgent 规范化 ToolIntent
   -> Store 事务校验 Attempt、lease、execution ID 和 fencing token
   -> Policy Kernel 判定风险、授权、幂等键和 reconcile 策略
   -> 同一事务写入 ToolPlanned、ToolAuthorized、ToolStarted
   -> 返回 execution permit
-  -> Pi 调用工具 adapter
+  -> Ever 调用工具 adapter
   -> after_tool 写入 ToolFinished 和结果摘要
 ```
 
@@ -292,7 +292,7 @@ Pi 解析 tool call
 
 工具记录包含：
 
-- operation ID、Pi tool call ID 和规范化输入 hash；
+- operation ID、Ever tool call ID 和规范化输入 hash；
 - effect：`read_only | reconcilable_write | process | external_side_effect`；
 - execution ID、fencing token、sandbox ID 和进程组；
 - 幂等键、reconcile adapter 和结果摘要。
@@ -310,11 +310,11 @@ Pi 解析 tool call
 
 ## 9. Provider 与成本协议
 
-### 9.1 复用 Pi Provider
+### 9.1 复用 Ever Provider
 
-Pi `Provider` 和 `Models` 继续负责认证、模型目录、流式调用、普通完成、deferred 请求和取消。Ever 不定义平行的 `InferenceRequest` 或 `ProviderGateway`。
+Ever `Provider` 和 `Models` 继续负责认证、模型目录、流式调用、普通完成、deferred 请求和取消。Ever 不定义平行的 `InferenceRequest` 或 `ProviderGateway`。
 
-Ever Cost Optimizer 输出 Pi 能直接使用的模型选择与请求策略：
+Ever Cost Optimizer 输出 Ever 能直接使用的模型选择与请求策略：
 
 ```ts
 type CostPolicy = {
@@ -334,7 +334,7 @@ RoutingPlan 在 Attempt 开始时冻结允许的 Provider、模型、服务等�
 
 低价时段调度只影响 Task 何时启动或进入下一阶段，不改变工具安全和验收语义。Batch 只用于彼此独立的评审、日志分析和候选评分，不能批处理带工具反馈的顺序 Agent Loop。
 
-未来的 Ever Managed Provider 必须实现 Pi `Provider` interface，并使用独立认证模式。BYOK 和平台凭据不能混用。
+未来的 Ever Managed Provider 必须实现 Ever `Provider` interface，并使用独立认证模式。BYOK 和平台凭据不能混用。
 
 ### 9.2 Provider 请求日志
 
@@ -345,7 +345,7 @@ before_request
   -> 校验 lease、execution ID 和 fencing token
   -> 按冻结价格与最大 token 上界预留预算
   -> 写入 ProviderRequestStarted
-  -> 调用 Pi Models.stream 或对应 deferred 操作
+  -> 调用 Ever Models.stream 或对应 deferred 操作
   -> after_response 原子写入 usage、费用和 ProviderRequestFinished
   -> 结算预算并释放差额
 ```
@@ -356,12 +356,12 @@ Usage Ledger 保存 Provider、模型、服务等级、request ID、输入 token
 
 ## 10. Checkpoint 与 continuation
 
-Task checkpoint 只能在 Pi 的 Turn 或 Session settled seam 提交。`ToolFinished` 只关闭工具 operation，不推进 checkpoint。
+Task checkpoint 只能在 Ever 的 Turn 或 Session settled seam 提交。`ToolFinished` 只关闭工具 operation，不推进 checkpoint。
 
 一个 checkpoint 事务同时保存：
 
 1. `TurnSettled` 或对应生命周期事件；
-2. Pi Session ID、settled entry ID 和 session checkpoint；
+2. Ever Session ID、settled entry ID 和 session checkpoint；
 3. 已 settled 的工具 operation ID 和 Provider request ID；
 4. inbox 消费与确认游标；
 5. budget reservation 的结算状态；
@@ -369,7 +369,7 @@ Task checkpoint 只能在 Pi 的 Turn 或 Session settled seam 提交。`ToolFin
 7. RuntimeSnapshot、workspace snapshot 和内容 hash；
 8. `CheckpointCreated`。
 
-任一步失败，整个 Task checkpoint 事务回滚。Pi 已经写入较新的 Session entry 时，恢复器仍从最近已提交的 Task checkpoint 开始。
+任一步失败，整个 Task checkpoint 事务回滚。Ever 已经写入较新的 Session entry 时，恢复器仍从最近已提交的 Task checkpoint 开始。
 
 创建 checkpoint 的位置：
 
@@ -378,7 +378,7 @@ Task checkpoint 只能在 Pi 的 Turn 或 Session settled seam 提交。`ToolFin
 - Task 进入等待或暂停前；
 - Attempt 正常结束前。
 
-Continuation 根据目标、结构化进度、AcceptancePlan、预算和 no-progress 计数决定继续、等待、replan、暂停或结束。Compaction 只管理 Pi Session 上下文，不能结束 Task 或替代 continuation。
+Continuation 根据目标、结构化进度、AcceptancePlan、预算和 no-progress 计数决定继续、等待、replan、暂停或结束。Compaction 只管理 Ever Session 上下文，不能结束 Task 或替代 continuation。
 
 ## 11. 控制命令与 attach
 
@@ -423,7 +423,7 @@ Fencing token 只能阻止旧 Worker 写数据库，不能停止已开始的 she
 
 ## 13. Extension 边界
 
-删除 `ever-long-tasks` 内置 Extension。以下行为进入 Pi Harness durable hooks 或 `NativeLongTaskAgent`：
+删除 `ever-long-tasks` 内置 Extension。以下行为进入 Ever Harness durable hooks 或 `NativeLongTaskAgent`：
 
 - Task 上下文和 continuation；
 - inbox 领取和确认；
@@ -432,13 +432,13 @@ Fencing token 只能阻止旧 Worker 写数据库，不能停止已开始的 she
 - settled checkpoint；
 - AcceptancePlan 和证据绑定。
 
-用户 Extension 继续通过 Pi 原有 interface 加载，可以增加工具、Prompt、Skill、资源和显示能力。自定义工具必须声明 durability metadata；缺失时按最高副作用等级处理。
+用户 Extension 继续通过 Ever 原有 interface 加载，可以增加工具、Prompt、Skill、资源和显示能力。自定义工具必须声明 durability metadata；缺失时按最高副作用等级处理。
 
 Extension 不能直接写 Task Store、确认 inbox、结算预算、改变 acceptance 或绕过 Policy Kernel。
 
 ## 14. Eval 与 Acceptance 分工
 
-Acceptance 是单个 Task 的运行时完成判定，Eval 是 Pi 和 Ever 变更的发布门禁。
+Acceptance 是单个 Task 的运行时完成判定，Eval 是 Ever 和 Ever 变更的发布门禁。
 
 `packages/evals` 继续作为统一 Eval Plane，覆盖：
 
@@ -462,8 +462,8 @@ Cost Optimizer 的新路由只有在 Eval 达到 `minimumQualityTier` 后才能�
 
 ### Attempt
 
-- `pi_runtime_snapshot_json`
-- `pi_session_ref`
+- `ever_runtime_snapshot_json`
+- `ever_session_ref`
 - `routing_plan_json`
 - `price_catalog_snapshot_json`
 - `execution_trust_level`
@@ -496,7 +496,7 @@ Cost Optimizer 的新路由只有在 Eval 达到 `minimumQualityTier` 后才能�
 9. 旧执行体未确认退出时，新 Worker 不能运行新 Turn。
 10. `unknown_outcome` 和 `provider_outcome_unknown` 不自动重放。
 11. 控制命令先持久化，再影响运行时。
-12. Pi Session 结束不等于 Task 完成。
+12. Ever Session 结束不等于 Task 完成。
 13. Task 完成必须通过 AcceptancePlan。
 14. Client detach 不停止 Worker。
 15. Compaction 不结束 Task 或 Attempt。
@@ -510,13 +510,13 @@ Cost Optimizer 的新路由只有在 Eval 达到 `minimumQualityTier` 后才能�
 
 测试通过 `NativeLongTaskAgent.run(claim)` 的公开 interface 观察行为，不测试内部模块拼装：
 
-- 新建与恢复 Pi Session；
+- 新建与恢复 Ever Session；
 - 预算、deadline 和 continuation；
 - durable steering、pause、stop 和 cancel；
 - AcceptancePlan 与 Verified Change Bundle；
 - runtime drift 和 fail-closed 行为。
 
-### 17.2 Pi Harness durability contract
+### 17.2 Ever Harness durability contract
 
 - `before_request` 完成前不调用 Provider；
 - `before_tool` 完成前不调用工具 adapter；
@@ -541,7 +541,7 @@ Cost Optimizer 的新路由只有在 Eval 达到 `minimumQualityTier` 后才能�
 
 ### 17.4 Eval gate
 
-- quick profile 检查 Pi 原生工作流；
+- quick profile 检查 Ever 原生工作流；
 - benchmark profile 检查真实仓库任务与官方 verifier；
 - fault profile 检查 crash-safe 恢复；
 - routing profile 比较质量、成本和延迟。
@@ -552,28 +552,28 @@ CI 使用 Fake Provider、可控子进程和临时工作区，不调用真实 Pr
 
 每个阶段都要能独立合并、验证和回滚。兼容 shim 只服务迁移，不形成长期双实现。
 
-### 阶段一：同步 Pi 上游并建立基线
+### 阶段一：同步 Ever 上游并建立基线
 
 - 将最新已抓取的 `upstream/main` 合入架构分支。
 - 解决 Harness、Session、Extension 和 Provider interface 漂移。
 - 记录基准 SHA，不在长期规格中保存提交数量。
 - 保留现有 Ever Task 行为。
-- 运行 `npm run check`、`./test.sh` 和 CLI 冒烟验证。
+- 运行 `npm run check`、`./scripts/test.sh` 和 CLI 冒烟验证。
 
-完成标准：基线改动可单独合并，现有长任务能力没有回归，后续开发基于当前 Pi core。
+完成标准：基线改动可单独合并，现有长任务能力没有回归，后续开发基于当前 Ever core。
 
-### 阶段二：把长程正确性移入 Pi 原生 seam
+### 阶段二：把长程正确性移入 Ever 原生 seam
 
 阶段二按可独立验证的小步实施：
 
-1. 补齐 Pi Harness awaited hooks，不改变现有默认行为。
+1. 补齐 Ever Harness awaited hooks，不改变现有默认行为。
 2. 增加工具 operation 和 Provider request 的持久协议及故障测试。
 3. 实现 `NativeLongTaskAgent`，先以 shadow assertions 比对旧 Extension 行为。
 4. 将 context、inbox、budget、checkpoint、continuation 和 acceptance 逐项切换到新模块。
 5. 同时迁移环境变量的生产方和消费方，改用不透明 Attempt claim。
 6. parity contract 通过后删除内置长任务 Extension，保留一个发布周期的显式兼容 shim。
 
-完成标准：长程正确性不依赖 Extension、环境变量或异步 listener 时序；Pi Session log 与 Task Store 对工具、Provider 和 checkpoint 的结论一致。
+完成标准：长程正确性不依赖 Extension、环境变量或异步 listener 时序；Ever Session log 与 Task Store 对工具、Provider 和 checkpoint 的结论一致。
 
 ### 阶段三：收拢 Ever 唯一入口
 
@@ -603,11 +603,11 @@ Cost Optimizer 可以在阶段二之后独立演进。Managed Provider 等商业
 - routing quality regression；
 - cost estimate error。
 
-日志使用 Task ID、Attempt ID、execution ID、Pi Session ID、operation ID 和 provider request ID 关联。日志不能记录 API Key、完整凭据、Authorization header 或未经授权的源代码内容。
+日志使用 Task ID、Attempt ID、execution ID、Ever Session ID、operation ID 和 provider request ID 关联。日志不能记录 API Key、完整凭据、Authorization header 或未经授权的源代码内容。
 
 ## 20. 安全规则
 
-- Pi Runtime 在受控 sandbox 中运行，限制 cwd、mount、网络、进程和凭据范围。
+- Ever Runtime 在受控 sandbox 中运行，限制 cwd、mount、网络、进程和凭据范围。
 - Sandbox preflight 失败时，Task 保持 queued 或 paused，不能回退到宿主机执行。
 - SecretResolver 按 Provider 和工具注入最小凭据，不透传完整宿主环境。
 - RuntimeSnapshot 记录 sandbox、Prompt、Skill、Extension 和工具 schema hash，不记录密钥值。
@@ -617,7 +617,7 @@ Cost Optimizer 可以在阶段二之后独立演进。Managed Provider 等商业
 
 ## 21. 回滚
 
-- Pi Harness 新 hook 以默认无操作行为合入，旧 Pi SDK 调用方不受影响。
+- Ever Harness 新 hook 以默认无操作行为合入，旧 Ever SDK 调用方不受影响。
 - 阶段二切换期间保留显式兼容 shim，发生问题时按能力逐项切回，不回滚 schema。
 - schema 先增加读取兼容，再启用写入；旧版本不能理解新状态时 fail closed。
 - Cost Optimizer 可以回到固定模型路由，预算预留、Provider request journal 和 Usage Ledger 不能关闭。
@@ -627,11 +627,11 @@ Cost Optimizer 可以在阶段二之后独立演进。Managed Provider 等商业
 
 满足以下条件后，架构迁移才算完成：
 
-1. Pi 的 Provider、Models、Agent Loop、Session、Extension 和 Eval 仍是唯一原生实现。
+1. Ever 的 Provider、Models、Agent Loop、Session、Extension 和 Eval 仍是唯一原生实现。
 2. Ever 没有 `AgentBackend`、`ProviderGateway` 或平行生命周期协议。
 3. `NativeLongTaskAgent` 只暴露 `run(claim)`，调用方不参与内部状态机。
 4. 所有 Provider 请求和工具调用都经过 awaited、持久化的执行屏障。
-5. checkpoint 只在 Pi Session settled seam 提交。
+5. checkpoint 只在 Ever Session settled seam 提交。
 6. Recovery barrier 能终止并确认旧进程或 sandbox，不只依赖 lease。
 7. durable stop、steer、pause、resume 和 cancel 通过 Command Journal 生效。
 8. Worker kill、Provider unknown、tool unknown、checkpoint 和 Acceptance 故障测试通过。

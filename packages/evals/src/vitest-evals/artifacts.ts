@@ -10,7 +10,7 @@ import {
 } from "vitest";
 import type { HarnessRun } from "vitest-evals/harness";
 
-export const EVER_SESSION_SNAPSHOT_ARTIFACT = "piSessionJsonl";
+export const EVER_SESSION_SNAPSHOT_ARTIFACT = "everSessionJsonl";
 
 const evalSessionArtifactKey = Symbol("ever-evals-session-artifact");
 const evalSourceArtifactKey = Symbol("ever-evals-source-artifact");

@@ -33,7 +33,7 @@ function testModel(id: string) {
 }
 
 describe("ModelRuntime auth options", () => {
-	it("accepts a pi-ai CredentialStore", async () => {
+	it("accepts a ever-ai CredentialStore", async () => {
 		const credentials = new InMemoryCredentialStore();
 		await credentials.modify("anthropic", async () => ({ type: "api_key", key: "stored-key" }));
 		const runtime = await ModelRuntime.create({ credentials, modelsPath: null });
@@ -138,12 +138,6 @@ describe("ModelRuntime auth options", () => {
 					refresh: "",
 					expires: Number.MAX_SAFE_INTEGER,
 				},
-				radius: {
-					type: "oauth",
-					access: "radius-access",
-					refresh: "radius-refresh",
-					expires: Date.now() + 60 * 60_000,
-				},
 			}),
 			modelsPath: null,
 		});
@@ -152,7 +146,7 @@ describe("ModelRuntime auth options", () => {
 		expect(runtime.isUsingSubscription("anthropic")).toBe(true);
 		expect(runtime.isUsingOAuth("openrouter")).toBe(true);
 		expect(runtime.isUsingSubscription("openrouter")).toBe(false);
-		expect(runtime.isUsingOAuth("radius")).toBe(true);
+		expect(runtime.isUsingOAuth("radius")).toBe(false);
 		expect(runtime.isUsingSubscription("radius")).toBe(false);
 	});
 

@@ -1012,7 +1012,7 @@ export class InteractiveMode {
 	async run(): Promise<void> {
 		await this.init();
 
-		if (!(process.env.EVER_OFFLINE ?? process.env.PI_OFFLINE)) {
+		if (!process.env.EVER_OFFLINE) {
 			const controller = new AbortController();
 			const timeout = setTimeout(() => controller.abort(), 15_000);
 			void this.session.modelRuntime
@@ -1103,7 +1103,7 @@ export class InteractiveMode {
 	}
 
 	private async checkForPackageUpdates(): Promise<string[]> {
-		if (process.env.EVER_OFFLINE ?? process.env.PI_OFFLINE) {
+		if (process.env.EVER_OFFLINE) {
 			return [];
 		}
 

@@ -98,7 +98,7 @@ describe("NodeExecutionEnv", () => {
 	it("expands home-relative paths and file URLs", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
-		expect(getOrThrow(await env.absolutePath("~/pi-node-env-test"))).toBe(join(homedir(), "pi-node-env-test"));
+		expect(getOrThrow(await env.absolutePath("~/ever-node-env-test"))).toBe(join(homedir(), "ever-node-env-test"));
 		const filePath = join(root, "file with spaces.txt");
 		expect(getOrThrow(await env.absolutePath(pathToFileURL(filePath).href))).toBe(filePath);
 	});
@@ -291,10 +291,10 @@ describe("NodeExecutionEnv", () => {
 
 	it.each([
 		["a missing override preserves the base value", undefined, "x:/stale/parent.jsonl"],
-		["an empty override shadows the base value", { PI_SESSION_FILE: "" }, "x:"],
+		["an empty override shadows the base value", { EVER_SESSION_FILE: "" }, "x:"],
 		[
 			"a string override replaces the base value",
-			{ PI_SESSION_FILE: "/sessions/current.jsonl" },
+			{ EVER_SESSION_FILE: "/sessions/current.jsonl" },
 			"x:/sessions/current.jsonl",
 		],
 	] as const)(
@@ -304,14 +304,14 @@ describe("NodeExecutionEnv", () => {
 			const env = new NodeExecutionEnv({
 				cwd: root,
 				shellEnv: {
-					PI_SESSION_FILE: "/stale/parent.jsonl",
-					PI_CODING_AGENT: "true",
-					PI_NODE_ENV_PRESERVED_TEST: "preserved",
+					EVER_SESSION_FILE: "/stale/parent.jsonl",
+					EVER_CODING_AGENT: "true",
+					EVER_NODE_ENV_PRESERVED_TEST: "preserved",
 				},
 			});
 			const result = getOrThrow(
 				await env.exec(
-					`printf '%s:%s|%s|%s' "\${PI_SESSION_FILE+x}" "\${PI_SESSION_FILE-}" "$PI_CODING_AGENT" "$PI_NODE_ENV_PRESERVED_TEST"`,
+					`printf '%s:%s|%s|%s' "\${EVER_SESSION_FILE+x}" "\${EVER_SESSION_FILE-}" "$EVER_CODING_AGENT" "$EVER_NODE_ENV_PRESERVED_TEST"`,
 					{ env: overrides },
 				),
 			);
@@ -322,9 +322,9 @@ describe("NodeExecutionEnv", () => {
 
 	it("can replace rather than inherit the default shell environment", async () => {
 		const root = createTempDir();
-		const inheritedKey = "PI_NODE_ENV_INHERITED_TEST";
-		const configuredKey = "PI_NODE_ENV_CONFIGURED_TEST";
-		const explicitKey = "PI_NODE_ENV_EXPLICIT_TEST";
+		const inheritedKey = "EVER_NODE_ENV_INHERITED_TEST";
+		const configuredKey = "EVER_NODE_ENV_CONFIGURED_TEST";
+		const explicitKey = "EVER_NODE_ENV_EXPLICIT_TEST";
 		const previousInherited = process.env[inheritedKey];
 		process.env[inheritedKey] = "host";
 		try {

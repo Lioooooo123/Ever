@@ -1,7 +1,4 @@
-import type { OAuthCredential } from "../auth/types.ts";
 import type { Model, ThinkingLevelMap } from "../types.ts";
-
-export const DEFAULT_RADIUS_GATEWAY = "https://radius.pi.dev";
 
 export type RadiusGatewayModel = {
 	id: string;
@@ -17,10 +14,6 @@ export type RadiusGatewayModel = {
 export type RadiusGatewayConfig = {
 	baseUrl: string;
 	models: RadiusGatewayModel[];
-};
-
-export type RadiusOAuthCredential = OAuthCredential & {
-	gatewayConfig?: RadiusGatewayConfig;
 };
 
 function isRadiusGatewayModel(value: unknown): value is RadiusGatewayModel {
@@ -54,10 +47,6 @@ export function normalizeRadiusGatewayUrl(value: string): string {
 	return withScheme.replace(/\/+$/u, "");
 }
 
-export function getRadiusCredentialConfig(credential: OAuthCredential | undefined): RadiusGatewayConfig | undefined {
-	return sanitizeRadiusGatewayConfig((credential as RadiusOAuthCredential | undefined)?.gatewayConfig);
-}
-
 export function getRadiusModelsFromConfig(providerId: string, config: RadiusGatewayConfig): Model<"ever-messages">[] {
 	return config.models.map((model) => ({
 		...model,
@@ -65,11 +54,6 @@ export function getRadiusModelsFromConfig(providerId: string, config: RadiusGate
 		provider: providerId,
 		baseUrl: config.baseUrl,
 	}));
-}
-
-export function getRadiusModels(providerId: string, credential: OAuthCredential | undefined): Model<"ever-messages">[] {
-	const config = getRadiusCredentialConfig(credential);
-	return config ? getRadiusModelsFromConfig(providerId, config) : [];
 }
 
 function truncateHttpBody(body: string): string {

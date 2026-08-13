@@ -7,13 +7,13 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import * as _bundledPiAgentCore from "@lioooooo123/ever-agent-core";
+import * as _bundledEverAgentCore from "@lioooooo123/ever-agent-core";
 import type { Provider } from "@lioooooo123/ever-ai";
-import * as _bundledPiAiCompat from "@lioooooo123/ever-ai/compat";
-import * as _bundledPiAiOauth from "@lioooooo123/ever-ai/oauth";
-import * as _bundledPiAiProviders from "@lioooooo123/ever-ai/providers/all";
+import * as _bundledEverAiCompat from "@lioooooo123/ever-ai/compat";
+import * as _bundledEverAiOauth from "@lioooooo123/ever-ai/oauth";
+import * as _bundledEverAiProviders from "@lioooooo123/ever-ai/providers/all";
 import type { KeyId } from "@lioooooo123/ever-tui";
-import * as _bundledPiTui from "@lioooooo123/ever-tui";
+import * as _bundledEverTui from "@lioooooo123/ever-tui";
 import { createJiti } from "jiti/static";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
@@ -24,7 +24,7 @@ import * as _bundledTypeboxValue from "typebox/value";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @lioooooo123/ever.
-import * as _bundledPiCodingAgent from "../../index.ts";
+import * as _bundledEverCodingAgent from "../../index.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import { readEverManifest } from "../ever-manifest.ts";
@@ -54,23 +54,16 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@sinclair/typebox": _bundledTypebox,
 	"@sinclair/typebox/compile": _bundledTypeboxCompile,
 	"@sinclair/typebox/value": _bundledTypeboxValue,
-	"@lioooooo123/ever-agent-core": _bundledPiAgentCore,
-	"@lioooooo123/ever-tui": _bundledPiTui,
+	"@lioooooo123/ever-agent-core": _bundledEverAgentCore,
+	"@lioooooo123/ever-tui": _bundledEverTui,
 	// Extensions resolve the ever-ai root to the compat entrypoint (a strict
 	// superset of the core entrypoint): existing extensions using the old
 	// global API keep working at runtime until compat is removed.
-	"@lioooooo123/ever-ai": _bundledPiAiCompat,
-	"@lioooooo123/ever-ai/compat": _bundledPiAiCompat,
-	"@lioooooo123/ever-ai/oauth": _bundledPiAiOauth,
-	"@lioooooo123/ever-ai/providers/all": _bundledPiAiProviders,
-	"@lioooooo123/ever": _bundledPiCodingAgent,
-	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
-	"@mariozechner/pi-tui": _bundledPiTui,
-	"@mariozechner/pi-ai": _bundledPiAiCompat,
-	"@mariozechner/pi-ai/compat": _bundledPiAiCompat,
-	"@mariozechner/pi-ai/oauth": _bundledPiAiOauth,
-	"@mariozechner/pi-ai/providers/all": _bundledPiAiProviders,
-	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
+	"@lioooooo123/ever-ai": _bundledEverAiCompat,
+	"@lioooooo123/ever-ai/compat": _bundledEverAiCompat,
+	"@lioooooo123/ever-ai/oauth": _bundledEverAiOauth,
+	"@lioooooo123/ever-ai/providers/all": _bundledEverAiProviders,
+	"@lioooooo123/ever": _bundledEverCodingAgent,
 };
 
 const require = createRequire(import.meta.url);
@@ -102,34 +95,27 @@ function getAliases(): Record<string, string> {
 		return fileURLToPath(import.meta.resolve(specifier));
 	};
 
-	const piCodingAgentEntry = packageIndex;
-	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@lioooooo123/ever-agent-core");
-	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@lioooooo123/ever-tui");
+	const everCodingAgentEntry = packageIndex;
+	const everAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@lioooooo123/ever-agent-core");
+	const everTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@lioooooo123/ever-tui");
 	// Extensions resolve the ever-ai root to the compat entrypoint (a strict
 	// superset of the core entrypoint): existing extensions using the old
 	// global API keep working at runtime until compat is removed.
-	const piAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@lioooooo123/ever-ai/compat");
-	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@lioooooo123/ever-ai/oauth");
-	const piAiProvidersEntry = resolveWorkspaceOrImport(
+	const everAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@lioooooo123/ever-ai/compat");
+	const everAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@lioooooo123/ever-ai/oauth");
+	const everAiProvidersEntry = resolveWorkspaceOrImport(
 		"ai/dist/providers/all.js",
 		"@lioooooo123/ever-ai/providers/all",
 	);
 
 	_aliases = {
-		"@lioooooo123/ever": piCodingAgentEntry,
-		"@lioooooo123/ever-agent-core": piAgentCoreEntry,
-		"@lioooooo123/ever-tui": piTuiEntry,
-		"@lioooooo123/ever-ai/providers/all": piAiProvidersEntry,
-		"@lioooooo123/ever-ai/compat": piAiCompatEntry,
-		"@lioooooo123/ever-ai/oauth": piAiOauthEntry,
-		"@lioooooo123/ever-ai": piAiCompatEntry,
-		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
-		"@mariozechner/pi-agent-core": piAgentCoreEntry,
-		"@mariozechner/pi-tui": piTuiEntry,
-		"@mariozechner/pi-ai/providers/all": piAiProvidersEntry,
-		"@mariozechner/pi-ai/compat": piAiCompatEntry,
-		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
-		"@mariozechner/pi-ai": piAiCompatEntry,
+		"@lioooooo123/ever": everCodingAgentEntry,
+		"@lioooooo123/ever-agent-core": everAgentCoreEntry,
+		"@lioooooo123/ever-tui": everTuiEntry,
+		"@lioooooo123/ever-ai/providers/all": everAiProvidersEntry,
+		"@lioooooo123/ever-ai/compat": everAiCompatEntry,
+		"@lioooooo123/ever-ai/oauth": everAiOauthEntry,
+		"@lioooooo123/ever-ai": everAiCompatEntry,
 		typebox: typeboxEntry,
 		"typebox/compile": typeboxCompileEntry,
 		"typebox/value": typeboxValueEntry,

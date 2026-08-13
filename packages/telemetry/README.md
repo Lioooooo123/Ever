@@ -24,7 +24,7 @@ Applications can use the in-memory reference or provide an adapter for OpenTelem
 - [Typed Schemas](#typed-schemas)
   - [Start and Completion Attributes](#start-and-completion-attributes)
 - [Schema Metadata](#schema-metadata)
-- [Pi Package Integration](#pi-package-integration)
+- [Ever Package Integration](#ever-package-integration)
 - [Security and Portability](#security-and-portability)
 - [API Reference](#api-reference)
 - [Development](#development)
@@ -362,13 +362,13 @@ Parent metadata is descriptive schema data:
 
 Adapters do not need to understand schema objects. Instrumentation helpers and tests use them to keep emitted names and attributes consistent.
 
-## Pi Package Integration
+## Ever Package Integration
 
 Package ownership is intentionally split:
 
 - `@lioooooo123/ever-telemetry` owns the vendor-neutral contract, no-op and in-memory reference contexts, schema utilities, and adapter conformance suite;
 - `@lioooooo123/ever-ai` accepts and propagates `telemetryContext` in provider request options but owns no telemetry schema;
-- `@lioooooo123/ever-agent-core` owns and exports the pi AI-request and harness schemas, their combined readonly schema tuple, and typed span helpers.
+- `@lioooooo123/ever-agent-core` owns and exports the ever AI-request and harness schemas, their combined readonly schema tuple, and typed span helpers.
 
 ```typescript
 import {
@@ -380,7 +380,7 @@ import {
 } from '@lioooooo123/ever-agent-core';
 ```
 
-The Ever schemas use Ever-owned `ever.ai.*`, `ever.harness.*`, and `ever.session.*` names. Adapters may translate them to backend conventions without changing the emitted pi vocabulary.
+The Ever schemas use Ever-owned `ever.ai.*`, `ever.harness.*`, and `ever.session.*` names. Adapters may translate them to backend conventions without changing the emitted ever vocabulary.
 
 ## Security and Portability
 

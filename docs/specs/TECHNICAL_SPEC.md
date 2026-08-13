@@ -3,12 +3,12 @@
 - 状态：Draft
 - 版本：0.5
 - 日期：2026-08-10
-- 目标上游：[`earendil-works/pi`](https://github.com/earendil-works/pi)
+- 目标仓库：[`Lioooooo123/Ever`](https://github.com/Lioooooo123/Ever)
 - 目标读者：Ever 维护者、实现工程师、代码评审者
 
 ## 1. 摘要
 
-Ever 基于上游 Pi Agent Harness 的 MIT 许可代码演进。主要能力放在独立模块中，只对现有 core 增加必要的通用接口。首个核心改动是在现有 Agent Session、工具系统、compaction 和 provider 之上增加持久任务运行时，使一个任务可以跨会话、跨上下文压缩、跨进程退出继续执行。
+Ever 基于上游 Ever Agent Harness 的 MIT 许可代码演进。主要能力放在独立模块中，只对现有 core 增加必要的通用接口。首个核心改动是在现有 Agent Session、工具系统、compaction 和 provider 之上增加持久任务运行时，使一个任务可以跨会话、跨上下文压缩、跨进程退出继续执行。
 
 长程任务在本规范中指持续数小时或数天、允许等待外部条件、能够在失败后恢复的工作。扩大上下文窗口不能满足这些要求。运行时需要保存目标、验收条件、执行历史、checkpoint、预算、等待条件和副作用状态，并在每次恢复前判断哪些操作可以重试。
 
@@ -16,7 +16,7 @@ V1 保留 Ever 现有的会话格式和 Agent Loop，不实现新的对话系统
 
 ## 2. 背景
 
-Ever 从上游 Pi 继承了以下基础能力：
+Ever 从上游 Ever 继承了以下基础能力：
 
 - `AgentSessionRuntime` 和 `AgentSession`
 - JSONL 或 SQLite session 持久化
@@ -1413,7 +1413,7 @@ Phase 4 不阻塞前三个阶段发布。
 npm install --ignore-scripts
 npm run build:offline
 npm run check
-./test.sh
+./scripts/test.sh
 ```
 
 新增 package 的定向验证命令：
@@ -1502,9 +1502,9 @@ Ever 对 core 的修改集中在少量恢复钩子。Task 控制面保留在独�
 
 ## 31. 参考资料
 
-- [Pi Agent Harness](https://github.com/earendil-works/pi)
-- [Pi coding-agent README](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/README.md)
-- [Pi compaction 文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md)
-- [Pi extension 文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)
-- [Pi MIT License](https://github.com/earendil-works/pi/blob/main/LICENSE)
+- [Ever Agent Harness](https://github.com/Lioooooo123/Ever)
+- [Ever coding-agent README](https://github.com/Lioooooo123/Ever/blob/main/packages/coding-agent/README.md)
+- [Ever compaction 文档](https://github.com/Lioooooo123/Ever/blob/main/packages/coding-agent/docs/compaction.md)
+- [Ever extension 文档](https://github.com/Lioooooo123/Ever/blob/main/packages/coding-agent/docs/extensions.md)
+- [Ever MIT License](https://github.com/Lioooooo123/Ever/blob/main/LICENSE)
 - [Temporal Durable Execution](https://docs.temporal.io/)

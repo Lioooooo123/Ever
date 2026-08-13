@@ -1,7 +1,7 @@
 /**
  * ever-messages API implementation.
  *
- * Streams pi's own message protocol directly to a backend: the request is a
+ * Streams Ever's message protocol directly to a backend: the request is a
  * single POST of `{ model, context, options }` to `<baseUrl>/messages`, the
  * response is an SSE stream of serialized assistant-message events plus a
  * terminal `done`/`error` event. This is the wire protocol spoken by the
@@ -401,8 +401,8 @@ export const stream: StreamFunction<"ever-messages", EverMessagesOptions> = (
 				throw new Error(`${model.provider} response has no body`);
 			}
 
-			for await (const piEvent of readEverMessagesEvents(response.body)) {
-				const event = convertEvent(piEvent);
+			for await (const everEvent of readEverMessagesEvents(response.body)) {
+				const event = convertEvent(everEvent);
 				eventStream.push(event);
 				if (event.type === "done" || event.type === "error") {
 					return;

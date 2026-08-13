@@ -7,29 +7,29 @@ vi.mock("../src/config.ts", async (importOriginal) => {
 	const actual = await importOriginal();
 	return {
 		...(actual as Record<string, unknown>),
-		PACKAGE_NAME: "@example/pi-coding-agent",
+		PACKAGE_NAME: "@example/ever-coding-agent",
 	};
 });
 
 import { shouldRunFirstTimeSetup } from "../src/cli/startup-ui.ts";
 
 describe("shouldRunFirstTimeSetup in forked distributions", () => {
-	const originalPiExperimental = process.env.EVER_EXPERIMENTAL;
+	const originalEverExperimental = process.env.EVER_EXPERIMENTAL;
 	let tempDir: string;
 	let settingsPath: string;
 
 	beforeEach(() => {
-		tempDir = mkdtempSync(join(tmpdir(), "pi-first-time-setup-fork-"));
+		tempDir = mkdtempSync(join(tmpdir(), "ever-first-time-setup-fork-"));
 		settingsPath = join(tempDir, "settings.json");
 		process.env.EVER_EXPERIMENTAL = "1";
 	});
 
 	afterEach(() => {
 		rmSync(tempDir, { recursive: true, force: true });
-		if (originalPiExperimental === undefined) {
+		if (originalEverExperimental === undefined) {
 			delete process.env.EVER_EXPERIMENTAL;
 		} else {
-			process.env.EVER_EXPERIMENTAL = originalPiExperimental;
+			process.env.EVER_EXPERIMENTAL = originalEverExperimental;
 		}
 	});
 

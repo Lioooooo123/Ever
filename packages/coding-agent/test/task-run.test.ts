@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("activateTaskRun", () => {
-	it("routes a durable Task into the inherited Pi CLI arguments", () => {
+	it("routes a durable Task into the inherited Ever CLI arguments", () => {
 		const root = mkdtempSync(join(tmpdir(), "ever-task-run-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
@@ -22,7 +22,7 @@ describe("activateTaskRun", () => {
 		const task = submitInteractiveTask({
 			agentDir,
 			cwd: workspace,
-			goal: "复用原 Pi TUI",
+			goal: "复用原 Ever TUI",
 			model: { provider: "openai-codex", id: "gpt-5.4" },
 		});
 
@@ -40,7 +40,7 @@ describe("activateTaskRun", () => {
 				"--model",
 				"gpt-5.4",
 				"--append-system-prompt",
-				"复用原 Pi TUI",
+				"复用原 Ever TUI",
 			]),
 		);
 		expect(getTaskRunContext()).toMatchObject({ taskId: task.id, acceptRuntimeDrift: false });

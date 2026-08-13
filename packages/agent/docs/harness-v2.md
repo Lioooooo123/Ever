@@ -24,7 +24,7 @@ One harness executes runs against one session. The session has four kinds of sta
 
 - **Durable runs.** An accepted prompt is a durable operation. After a crash, a new process reconstructs the operation from its records and resumes from the last durable boundary. Every state that a crash can produce is recoverable.
 - **Durable responses.** Partial streams are process-local. Every settled assistant-generation and deferred-fetch response is appended completely before classification, including retryable errors, overflow, deferred, and aborted responses. An `aborted` response means operation abort only when an earlier `abort_requested` won its append race; otherwise it is a provider interruption.
-- **Lanes.** A lane is a named position in the conversation tree with at most one operation. Lanes run in parallel; runs and queued messages stay on their accepting lane. A Slack channel can be a session with one lane per thread. Interactive pi uses one hidden lane. Extensions receive the full lane-aware harness API; for example, a subagent may use another lane in its parent's session.
+- **Lanes.** A lane is a named position in the conversation tree with at most one operation. Lanes run in parallel; runs and queued messages stay on their accepting lane. A Slack channel can be a session with one lane per thread. Interactive ever uses one hidden lane. Extensions receive the full lane-aware harness API; for example, a subagent may use another lane in its parent's session.
 - **No partial outcomes.** A crash inside any operation — run, compaction, navigation — leaves one of two states: the operation has not happened, or recovery can complete it. Nothing in between is observable.
 - **Harness API.** Events observe execution and cannot change it. Hooks intercept execution and can change it: context, requests, tools, run boundaries. Extensions build on events and hooks.
 - **Deterministic stepping.** Every effect — durable write, provider request, tool execution, hook, timer — crosses one injected boundary. In `drive: "manual"` the harness parks before each effect and a test drives it call by call: stop at any boundary, inject input, or close and reopen to simulate a crash. Production and tests run the same procedures; the drive mode only controls the boundary (section 15).
@@ -686,7 +686,7 @@ function isRecoverableLength(message: AssistantMessage, intendedOutputLimit: num
 }
 ```
 
-`usage.output` includes reported reasoning tokens. `intendedOutputLimit` is the caller's `maxTokens`, or `model.maxTokens`, captured before context clamping. The sent value cannot be the reference: some providers reject explicit caps (OpenAI Codex returns HTTP 400 for `max_output_tokens`), while pi clamps others to remaining context. Thus 16 reasoning tokens against a 128k intent and zero-output Xiaomi/Qwen pressure are recoverable, but a fully used explicit 1,024 cap is genuine. Xiaomi compatibility is the only percentage check; there is no general percentage heuristic.
+`usage.output` includes reported reasoning tokens. `intendedOutputLimit` is the caller's `maxTokens`, or `model.maxTokens`, captured before context clamping. The sent value cannot be the reference: some providers reject explicit caps (OpenAI Codex returns HTTP 400 for `max_output_tokens`), while ever clamps others to remaining context. Thus 16 reasoning tokens against a 128k intent and zero-output Xiaomi/Qwen pressure are recoverable, but a fully used explicit 1,024 cap is genuine. Xiaomi compatibility is the only percentage check; there is no general percentage heuristic.
 
 A recoverable response remains a complete transcript entry. After usage commits, overflow classification starts no tool plan. The overflow compaction names that response and omits it from summary preparation and retained-tail construction. **Compaction preparation** is the summary input and proposed tail passed to `before_compaction` and, when needed, structural generation; `CompactionEntry.retainedTail` uses the same filtered preparation. The response remains queryable; omission affects context, not history.
 
@@ -3897,13 +3897,13 @@ repo.create({ id?, parentSessionId? }): Promise<Session>;
 
 ## 18. Telemetry
 
-Telemetry passes context explicitly; core uses no `AsyncLocalStorage`, global current span, or runtime-specific context. Adapters may activate ambient context internally, for example for OTel HTTP instrumentation, but pi always supplies the parent.
+Telemetry passes context explicitly; core uses no `AsyncLocalStorage`, global current span, or runtime-specific context. Adapters may activate ambient context internally, for example for OTel HTTP instrumentation, but ever always supplies the parent.
 
-Pi ships no exporter. `InMemoryTelemetryContext` is the deterministic reference; applications may use it or bridge `TelemetryContext` to another backend. Adapters own backend ids/native contexts and must obey the callback contract; core carries no trace ids.
+Ever ships no exporter. `InMemoryTelemetryContext` is the deterministic reference; applications may use it or bridge `TelemetryContext` to another backend. Adapters own backend ids/native contexts and must obey the callback contract; core carries no trace ids.
 
 ### Package ownership
 
-`@lioooooo123/ever-telemetry` owns/exports the generic contract, schema machinery, no-op, and memory reference; `/testing` exports runner-independent conformance. Pi-ai imports only `TelemetryContext` for options and emits no spans. Agent `harness/telemetry.ts` owns AI/harness schemas and starters plus their readonly composition tuple. Agent root re-exports them and the generic surface: one generic contract, one domain-schema owner.
+`@lioooooo123/ever-telemetry` owns/exports the generic contract, schema machinery, no-op, and memory reference; `/testing` exports runner-independent conformance. Ever-ai imports only `TelemetryContext` for options and emits no spans. Agent `harness/telemetry.ts` owns AI/harness schemas and starters plus their readonly composition tuple. Agent root re-exports them and the generic surface: one generic contract, one domain-schema owner.
 
 `AgentHarnessOptions.telemetryContext` defaults to the no-op context, and the agent-side request wrapper emits `ever.ai.request` through the agent-owned AI schema.
 
@@ -3974,7 +3974,7 @@ A `TelemetrySpan` is also a child `TelemetryContext`. Passing it down creates ne
 
 ### Typed schema
 
-The low-level adapter accepts the open `SpanAttributes` bag. Pi instrumentation never constructs untyped span names or attribute bags directly. The agent package exports the two plain, serializable domain schema objects and their typed helpers for that purpose.
+The low-level adapter accepts the open `SpanAttributes` bag. Ever instrumentation never constructs untyped span names or attribute bags directly. The agent package exports the two plain, serializable domain schema objects and their typed helpers for that purpose.
 
 ```ts
 type TelemetryAttributeType =
@@ -4065,7 +4065,7 @@ The following tables are normative input to the schema objects. `!` means a requ
 
 #### AI request schema
 
-`AI_TELEMETRY_SCHEMA` declares no pi-written span events and one span. Its parent rule is `{ kind: "any" }`:
+`AI_TELEMETRY_SCHEMA` declares no ever-written span events and one span. Its parent rule is `{ kind: "any" }`:
 
 | span | allowed parents | status |
 |---|---|---|
@@ -4119,7 +4119,7 @@ The three operation spans share `ever.session.id` (string, required, high cardin
 
 Parent text maps directly to `TelemetryParentDefinition`: root/application is `root_or_external`, root/current or any caller is `any`, and finite lists are exact `spans`. Tool spans wrap only phase-two `fx.executeTool` and report raw `is_error`, not final `terminate`; plans are session-write spans. Blocked, invalid, genuine-length, aborted-before-start, and interrupted-without-replay results emit no tool span; every live execution or safe replay emits one. Live tools parent to turn with turn id; reconciliation omits turn id and parents to resumed run. `ever.hook.name` contains exactly `before_run`, `before_resume`, `before_run_end`, `transform_context`, `before_request`, `before_payload`, `after_response`, `before_tool`, `after_tool`, `before_compaction`, and `before_navigation`; `ever.event.type` contains exactly section 10 discriminants. Each handler invocation has its own span/status without failing its parent. Harness schema initially declares no span events.
 
-One session-write span covers one append. Singles use their kind; arrays use `multi` and omit item type when mixed. Dynamic ids/names are attributes. One step span covers one in-process provider attempt; durable step id correlates attempts, and deferred fetch parents to resumed run. Hook structural sources emit hook/write but no step/AI span. Generated structural requests emit step/AI but no public message lifecycle. Prepared/post-move writes need no provider span. The schemas exhaust pi instrumentation vocabulary.
+One session-write span covers one append. Singles use their kind; arrays use `multi` and omit item type when mixed. Dynamic ids/names are attributes. One step span covers one in-process provider attempt; durable step id correlates attempts, and deferred fetch parents to resumed run. Hook structural sources emit hook/write but no step/AI span. Generated structural requests emit step/AI but no public message lifecycle. Prepared/post-move writes need no provider span. The schemas exhaust ever instrumentation vocabulary.
 
 Marker-interrupted active attempt spans may end `aborted`; response/usage appends are write spans. Unmarked `aborted` yields step `retry` below cap or `failed` at cap, never operation `aborted`; deferred interruption uses those outcomes without retry events. Synthetic recovery emits writes but no AI span. Abort outside an attempt creates no assistant step span. The operation ends `aborted`; deferred cancellation emits AI span only when attempted.
 
@@ -4467,11 +4467,11 @@ I0, I1, and I2 may proceed independently. I3 → I4 → I5 is serial and begins 
 - [x] **I0 — telemetry contracts, typed schemas, and no-op context.** Dependencies: none.
   - Primary files: `packages/telemetry/src/index.ts`, `packages/telemetry/src/memory.ts`, `packages/telemetry/src/testing/`, and focused tests; ever-ai request-option types/propagation and focused tests; `packages/agent/src/harness/telemetry.ts`, `packages/agent/src/index.ts`, focused tests, package scripts, `packages/agent/scripts/generate-telemetry-docs.ts`, and generated `packages/agent/docs/telemetry-schema.md`. Do not edit `agent-harness.ts`; its canonical context type is landed, while H0 owns option renaming/defaulting/storage and execution threading after convergence.
   - In telemetry, implement the one canonical section 18 callback-based `TelemetryContext` / `TelemetrySpan` contract, shared no-op context, deterministic in-memory reference adapter, runner-independent adapter conformance cases, serializable `defineTelemetrySchema()` machinery, and `createTypedSpanStarter(context, schemas)` composition with child-bound starters.
-  - In ever-ai, add optional `telemetryContext` to `ProviderRequestOptions` so every stream, deferred, and image option inherits it; provider, `Models`, `ImagesModels`, direct dispatch, and simple-option conversion preserve it. Pi-ai owns no domain schema or helper.
+  - In ever-ai, add optional `telemetryContext` to `ProviderRequestOptions` so every stream, deferred, and image option inherits it; provider, `Models`, `ImagesModels`, direct dispatch, and simple-option conversion preserve it. Ever-ai owns no domain schema or helper.
   - In agent, define the landed `AI_TELEMETRY_SCHEMA` and `HARNESS_TELEMETRY_SCHEMA`, their inferred types, the readonly `AGENT_TELEMETRY_SCHEMAS` composition tuple, and typed `startAiSpan()` / `startHarnessSpan()` helpers. Export both schemas, the tuple, and helpers, and re-export the generic telemetry surface from the agent package root. Do not duplicate the generic contract and do not adopt OTel or another external semantic convention.
-  - Generate the combined repository-only Markdown reference from the runtime schema values with the named agent package scripts. Production helpers perform no runtime schema validation; schemas compile-time-check each pi-written start/end/event call and remain importable as machine-readable data.
+  - Generate the combined repository-only Markdown reference from the runtime schema values with the named agent package scripts. Production helpers perform no runtime schema validation; schemas compile-time-check each ever-written start/end/event call and remain importable as machine-readable data.
   - Wire telemetry before ever-ai in workspace, local-release, publish, profiling, and coding-agent binary build order; add source-test aliases and refresh workspace/generated dependency locks.
-  - Landed coverage: focused tests exercise no-op synchronous admission, returned-value and sync/async rejection preservation, explicit no-op child propagation, one shared frozen inert span with no payload inspection, exact start/optional-end inference, multi-schema vocabulary composition, child-starter parent propagation, rejection of duplicate span names and missing, unknown, empty-schema, and invalid closed-set attributes, absence of declared span events, schema JSON serialization, the in-memory reference against every exported adapter conformance case, option propagation across provider/`Models` stream and deferred dispatch, direct and `ImagesModels` image dispatch, built-in simple-option conversion, and generated-document freshness. O2 will use the reference adapter to test pi's runtime status and nesting behavior with captured spans.
+  - Landed coverage: focused tests exercise no-op synchronous admission, returned-value and sync/async rejection preservation, explicit no-op child propagation, one shared frozen inert span with no payload inspection, exact start/optional-end inference, multi-schema vocabulary composition, child-starter parent propagation, rejection of duplicate span names and missing, unknown, empty-schema, and invalid closed-set attributes, absence of declared span events, schema JSON serialization, the in-memory reference against every exported adapter conformance case, option propagation across provider/`Models` stream and deferred dispatch, direct and `ImagesModels` image dispatch, built-in simple-option conversion, and generated-document freshness. O2 will use the reference adapter to test ever's runtime status and nesting behavior with captured spans.
 - [ ] **I1 — hook registry and runner.** Dependencies: none.
   - Primary files: `packages/agent/src/harness/hooks.ts`, `packages/agent/test/harness/hooks.test.ts`.
   - Implement typed registration, stable-id validation, ordered aggregation, error isolation, fail-closed `before_tool`, and per-id resume data handling.

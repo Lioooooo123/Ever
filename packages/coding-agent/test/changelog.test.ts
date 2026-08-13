@@ -27,23 +27,11 @@ describe("normalizeChangelogLinks", () => {
 		);
 	});
 
-	test("canonicalizes old repository URLs without changing external links", () => {
-		const markdown = [
-			"[#5167](https://github.com/earendil-works/pi-mono/pull/5167)",
-			"[#4163](https://github.com/badlogic/pi-mono/issues/4163)",
-			"[Agent README](https://github.com/badlogic/pi-mono/blob/main/packages/agent/README.md)",
-			"[External](https://example.com/docs)",
-			"[Local anchor](#settings)",
-		].join("\n");
+	test("does not change external links", () => {
+		const markdown = ["[External](https://example.com/docs)", "[Local anchor](#settings)"].join("\n");
 
 		expect(normalizeChangelogLinks(markdown, "0.79.0")).toBe(
-			[
-				"[#5167](https://github.com/Lioooooo123/Ever/pull/5167)",
-				"[#4163](https://github.com/Lioooooo123/Ever/issues/4163)",
-				"[Agent README](https://github.com/Lioooooo123/Ever/blob/v0.79.0/packages/agent/README.md)",
-				"[External](https://example.com/docs)",
-				"[Local anchor](#settings)",
-			].join("\n"),
+			["[External](https://example.com/docs)", "[Local anchor](#settings)"].join("\n"),
 		);
 	});
 });

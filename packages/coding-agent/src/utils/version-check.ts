@@ -52,7 +52,7 @@ export async function getLatestEverRelease(
 	currentVersion: string,
 	options: { timeoutMs?: number; retry?: boolean } = {},
 ): Promise<LatestEverRelease | undefined> {
-	if (process.env.EVER_OFFLINE ?? process.env.PI_OFFLINE) return undefined;
+	if (process.env.EVER_OFFLINE) return undefined;
 
 	const response = await fetchWithRetry(
 		LATEST_VERSION_URL,
@@ -97,7 +97,7 @@ export async function getLatestEverVersion(
 }
 
 export async function checkForNewEverVersion(currentVersion: string): Promise<LatestEverRelease | undefined> {
-	if (process.env.EVER_SKIP_VERSION_CHECK ?? process.env.PI_SKIP_VERSION_CHECK) return undefined;
+	if (process.env.EVER_SKIP_VERSION_CHECK) return undefined;
 
 	try {
 		const latestRelease = await getLatestEverRelease(currentVersion);

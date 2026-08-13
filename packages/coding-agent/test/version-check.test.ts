@@ -10,7 +10,7 @@ import {
 import { allowNetwork } from "./test-network-env.ts";
 
 const originalSkipVersionCheck = process.env.EVER_SKIP_VERSION_CHECK;
-const originalLegacySkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+const originalLegacySkipVersionCheck = process.env.EVER_SKIP_VERSION_CHECK;
 
 beforeEach(() => {
 	allowNetwork();
@@ -24,9 +24,9 @@ afterEach(() => {
 		process.env.EVER_SKIP_VERSION_CHECK = originalSkipVersionCheck;
 	}
 	if (originalLegacySkipVersionCheck === undefined) {
-		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.EVER_SKIP_VERSION_CHECK;
 	} else {
-		process.env.PI_SKIP_VERSION_CHECK = originalLegacySkipVersionCheck;
+		process.env.EVER_SKIP_VERSION_CHECK = originalLegacySkipVersionCheck;
 	}
 });
 
