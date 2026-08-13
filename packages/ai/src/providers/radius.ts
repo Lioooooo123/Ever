@@ -2,26 +2,20 @@ import { everMessagesApi } from "../api/ever-messages.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadRadiusOAuth } from "../auth/oauth/load.ts";
 import type { Provider } from "../models.ts";
-import {
-	DEFAULT_RADIUS_GATEWAY,
-	getRadiusModels,
-	getRadiusModelsFromConfig,
-	loadRadiusGatewayConfig,
-	normalizeRadiusGatewayUrl,
-} from "./radius-config.ts";
+import { getRadiusModelsFromConfig, loadRadiusGatewayConfig, normalizeRadiusGatewayUrl } from "./radius-config.ts";
 
 export interface RadiusProviderOptions {
 	id?: string;
 	name?: string;
-	gateway?: string;
+	gateway: string;
 }
 
 /** Radius gateway provider with a persisted, dynamically refreshed catalog. */
-export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"ever-messages"> {
+export function radiusProvider(options: RadiusProviderOptions): Provider<"ever-messages"> {
 	const id = options.id ?? "radius";
 	const name = options.name ?? "Radius";
-	const gateway = normalizeRadiusGatewayUrl(options.gateway ?? DEFAULT_RADIUS_GATEWAY);
-	let models = getRadiusModels(id, undefined);
+	const gateway = normalizeRadiusGatewayUrl(options.gateway);
+	let models: ReturnType<typeof getRadiusModelsFromConfig> = [];
 	const streams = everMessagesApi();
 
 	return {
@@ -44,23 +38,6 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"e
 					}))
 				) {
 					return;
-				}
-			}
-
-			// Import catalogs cached by the pre-ModelsStore Radius implementation.
-			if (!stored && context.credential?.type === "oauth") {
-				const legacy = getRadiusModels(id, context.credential);
-				if (legacy.length > 0) {
-					if (
-						!(await context.publish({
-							persist: { models: legacy, checkedAt: Date.now() },
-							update: () => {
-								models = legacy;
-							},
-						}))
-					) {
-						return;
-					}
 				}
 			}
 

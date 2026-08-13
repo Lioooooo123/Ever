@@ -85,7 +85,7 @@ const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP
  */
 async function readPipedStdin(): Promise<string | undefined> {
 	// If stdin is a TTY, we're running interactively - don't read stdin
-	if (process.stdin.isTTY) {
+	if (process.stdin.isTTY || process.stdin.readableEnded || process.stdin.destroyed) {
 		return undefined;
 	}
 
@@ -143,7 +143,7 @@ function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
 }
 
 function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
-	return !parsed.print && parsed.mode === undefined && (parsed.help === true || parsed.listModels !== undefined);
+	return parsed.help === true || (!parsed.print && parsed.mode === undefined && parsed.listModels !== undefined);
 }
 
 async function runAuthCommand(args: string[]): Promise<boolean> {
@@ -579,8 +579,7 @@ export interface MainOptions {
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
-	const offlineMode =
-		args.includes("--offline") || isTruthyEnvFlag(process.env.EVER_OFFLINE ?? process.env.PI_OFFLINE);
+	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.EVER_OFFLINE);
 	if (offlineMode) {
 		process.env.EVER_OFFLINE = "1";
 		process.env.EVER_SKIP_VERSION_CHECK = "1";
@@ -946,7 +945,7 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	const startupBenchmark = isTruthyEnvFlag(process.env.EVER_STARTUP_BENCHMARK ?? process.env.PI_STARTUP_BENCHMARK);
+	const startupBenchmark = isTruthyEnvFlag(process.env.EVER_STARTUP_BENCHMARK);
 	if (startupBenchmark && appMode !== "interactive") {
 		console.error(chalk.red("Error: EVER_STARTUP_BENCHMARK only supports interactive mode"));
 		process.exit(1);

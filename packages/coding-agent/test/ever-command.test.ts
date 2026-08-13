@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
-import { submitAsyncTask, submitInteractiveTask } from "../src/cli/ever-command.ts";
+import { handleEverCommand, submitAsyncTask, submitInteractiveTask } from "../src/cli/ever-command.ts";
 import { handleTaskCommand } from "../src/cli/task-command.ts";
 import { TaskApplication } from "../src/core/task-application.ts";
 
@@ -14,6 +14,12 @@ afterEach(() => {
 });
 
 describe("ever async submission", () => {
+	it("routes ordinary prompts through the native Session runtime", async () => {
+		const args = ["inspect", "this", "repository"];
+		expect(await handleEverCommand(args, "/tmp/agent", "/tmp/workspace")).toBe(false);
+		expect(args).toEqual(["inspect", "this", "repository"]);
+	});
+
 	it("creates a foreground Task without unattended sandbox approval", () => {
 		const root = mkdtempSync(join(tmpdir(), "ever-submit-"));
 		temporaryPaths.push(root);
@@ -24,7 +30,7 @@ describe("ever async submission", () => {
 		const task = submitInteractiveTask({
 			agentDir,
 			cwd: workspace,
-			goal: "在原 Pi TUI 中完成任务",
+			goal: "在原 Ever TUI 中完成任务",
 			model: { provider: "openai-codex", id: "gpt-5.4" },
 		});
 

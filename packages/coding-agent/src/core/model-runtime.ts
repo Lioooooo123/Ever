@@ -183,7 +183,7 @@ export class ModelRuntime implements Models {
 		const providers = builtinProviderCatalog
 			.builtinProviders()
 			.map((provider) =>
-				provider.id === "radius" || options.catalogBaseUrl === undefined
+				options.catalogBaseUrl === undefined
 					? provider
 					: withRemoteCatalog(provider, options.catalogBaseUrl, builtinModelDataGeneratedAt),
 			);
@@ -193,7 +193,7 @@ export class ModelRuntime implements Models {
 			modelsPath,
 			modelsStore,
 			providers,
-			process.env.EVER_OFFLINE === undefined && process.env.PI_OFFLINE === undefined,
+			process.env.EVER_OFFLINE === undefined,
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();

@@ -42,7 +42,7 @@ test("synchronizes private dependencies without touching registry aliases, gener
 			private: true,
 			dependencies: {
 				"@lioooooo123/ever": "^1.0.0",
-				"@mariozechner/pi-ai": "npm:@lioooooo123/ever-ai@1.0.0",
+				"@example/ai-compat": "npm:@lioooooo123/ever-ai@1.0.0",
 			},
 		});
 		await writeManifest(root, "packages/coding-agent/install-lock", {
@@ -59,7 +59,7 @@ test("synchronizes private dependencies without touching registry aliases, gener
 
 		const evalsManifest = await readManifest(root, "packages/evals");
 		assert.equal(evalsManifest.dependencies["@lioooooo123/ever"], "^2.0.0");
-		assert.equal(evalsManifest.dependencies["@mariozechner/pi-ai"], "npm:@lioooooo123/ever-ai@1.0.0");
+		assert.equal(evalsManifest.dependencies["@example/ai-compat"], "npm:@lioooooo123/ever-ai@1.0.0");
 		const generatedManifest = await readManifest(root, "packages/coding-agent/install-lock");
 		assert.equal(generatedManifest.dependencies["@lioooooo123/ever"], "^1.0.0");
 

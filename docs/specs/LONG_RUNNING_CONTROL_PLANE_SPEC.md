@@ -143,7 +143,7 @@ flowchart LR
     end
 
     Store["SQLite Task Store"]
-    SessionStore["Pi Session JSONL / SQLite"]
+    SessionStore["Ever Session JSONL / SQLite"]
     Sandbox["Sandbox / Tool Adapters"]
     Provider["Model Provider"]
 
@@ -973,7 +973,7 @@ npm run check
 (cd packages/long-tasks && node "../../node_modules/vitest/dist/cli.js" --run test/continuation-controller.test.ts)
 (cd packages/long-tasks && node "../../node_modules/vitest/dist/cli.js" --run test/schedule-engine.test.ts)
 (cd packages/coding-agent && node "../../node_modules/vitest/dist/cli.js" --run test/daemon-supervisor-process.test.ts)
-./test.sh
+./scripts/test.sh
 ```
 
 只在修改对应测试文件时运行其定向测试并迭代至通过。Daemon 进程测试必须使用临时 agent directory、临时 socket 和 faux provider，不使用真实 API、密钥或付费 token。

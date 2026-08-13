@@ -7,18 +7,24 @@
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 - Added the `ever` guided asynchronous task command, persistent daemon consumption, and desktop task notifications.
 - Added versioned JSON task submission, inspection, event streaming, and daemon control for black-box Eval runners.
-- Added Task-aware reuse of the inherited Pi TUI, Task-first JSONL RPC, durable steering, verified completion bundles, resident Worker recovery, and OS-level unattended execution sandbox.
+- Added Task-aware reuse of the native Ever TUI, Task-first JSONL RPC, durable steering, verified completion bundles, resident Worker recovery, and OS-level unattended execution sandbox.
+- Added `/goal` as the opt-in long-running mode for a Session, with automatic continuation, verified completion reporting, repeated-blocker handling, branch-aware recovery, and turn, time, and token budgets.
+
+### Breaking Changes
+
+- Removed all pre-Ever configuration directories, environment variables, package manifests, module aliases, and resource-discovery fallbacks. Existing state must be placed under `.ever` or `~/.ever/agent` and configured with `EVER_*` variables.
 
 ### Changed
 
-- Changed the directly developed coding-agent distribution to publish as `@lioooooo123/ever` with `ever-*` release artifacts, while retaining the in-repository Pi agent, AI, and TUI source modules as its execution kernel.
+- Changed the directly developed coding-agent distribution to publish as `@lioooooo123/ever` with `ever-*` release artifacts, with the in-repository Ever agent, AI, and TUI source modules as its execution kernel.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
-- Changed bare `ever` to open a unified Task Home for Provider setup, model selection, Task creation, foreground entry, background submission, inspection, and recovery; explicit command-line goals still enter the inherited Pi TUI as durable Tasks.
+- Changed bare `ever` and command-line prompts to use the native Session runtime again; long-running intent is now expressed through `/goal`, while the existing control plane remains available under `ever task`.
 - Centralized Task submission and control behind an idempotent Task Application boundary and made completion verification execute exactly once.
 - Pinned unattended Task models at submission and isolated Resident Worker credentials to a one-time, Provider-scoped startup channel instead of inheriting the host environment.
 
 ### Fixed
 
+- Fixed Goal Mode transcript noise, misleading paused-while-running state, duplicate resume turns, accidental Goal replacement, and ambiguous lifecycle commands.
 - Fixed Resident Worker startup failures when deep agent directories exceeded Unix-domain socket path limits.
 
 ## [0.84.1] - 2026-08-07

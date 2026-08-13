@@ -76,7 +76,7 @@ export function isFocusable(component: Component | null): component is Component
  * Components emit this at the cursor position when focused.
  * TUI finds and strips this marker, then positions the hardware cursor there.
  */
-export const CURSOR_MARKER = "\x1b_pi:c\x07";
+export const CURSOR_MARKER = "\x1b_ever:c\x07";
 
 export { visibleWidth };
 

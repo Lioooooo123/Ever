@@ -30,7 +30,7 @@
 
 - After code changes (not docs): `npm run check` (full output, no tail). Fix all errors, warnings, and infos before committing. Does not run tests.
 - Never run `npm run build` or `npm test` unless requested by the user.
-- Never run the full vitest suite directly: it includes e2e tests that activate when endpoint/auth env vars are present. For all non-e2e tests, run `./test.sh` from the repo root. Otherwise run specific tests from the package root:
+- Never run the full vitest suite directly: it includes e2e tests that activate when endpoint/auth env vars are present. For all non-e2e tests, run `./scripts/test.sh` from the repo root. Otherwise run specific tests from the package root:
   - Vitest: `node "$(git rev-parse --show-toplevel)/node_modules/vitest/dist/cli.js" --run test/specific.test.ts`
   - `packages/tui` (`node:test`): `node --test test/specific.test.ts`
 - If you create or modify a test file, run it and iterate on test or implementation until it passes.
@@ -100,7 +100,7 @@ Run the TUI in a controlled terminal (from the repo root):
 
 ```bash
 tmux new-session -d -s ever-test -x 80 -y 24
-tmux send-keys -t ever-test "./ever-test.sh" Enter
+tmux send-keys -t ever-test "./scripts/ever-test.sh" Enter
 sleep 3 && tmux capture-pane -t ever-test -p     # capture after startup
 tmux send-keys -t ever-test "your prompt here" Enter
 tmux send-keys -t ever-test Escape               # special keys (also C-o for ctrl+o, etc.)
@@ -138,17 +138,17 @@ Attribution:
    /tmp/ever-local-release/node/ever --help
    /tmp/ever-local-release/node/ever --version
    /tmp/ever-local-release/node/ever --list-models
-   /tmp/ever-local-release/node/ever "Say exactly: ok" --yes
+   /tmp/ever-local-release/node/ever -p "Say exactly: ok"
    /tmp/ever-local-release/node/ever
 
    # Bun binary smoke tests
    /tmp/ever-local-release/bun/ever --help
    /tmp/ever-local-release/bun/ever --version
    /tmp/ever-local-release/bun/ever --list-models
-   /tmp/ever-local-release/bun/ever "Say exactly: ok" --yes
+   /tmp/ever-local-release/bun/ever -p "Say exactly: ok"
    /tmp/ever-local-release/bun/ever
    ```
-   Verify both Node and Bun startup, model/account listing, Task Home startup, and at least one real Task with the intended default provider. The bare commands `/tmp/ever-local-release/node/ever` and `/tmp/ever-local-release/bun/ever` start Ever's Task-first interface. Failures are release blockers unless the user explicitly accepts the risk.
+   Verify both Node and Bun startup, model/account listing, the Session TUI, one ordinary prompt, and one `/goal` lifecycle smoke with the intended default provider. The bare commands `/tmp/ever-local-release/node/ever` and `/tmp/ever-local-release/bun/ever` start Ever's Session-native interface. Failures are release blockers unless the user explicitly accepts the risk.
 
 3. **Run the release script**:
    ```bash

@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function createTempDir(): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "pi-session-file-invalid-")));
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "ever-session-file-invalid-")));
 	tempDirs.push(dir);
 	return dir;
 }
@@ -43,8 +43,8 @@ async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ 
 	return { code, stderr };
 }
 
-describe("legacy --session handling", () => {
-	it("rejects ordinary sessions and preserves the supplied file", async () => {
+describe("--session handling", () => {
+	it("rejects an invalid Session file and preserves it", async () => {
 		const tempRoot = createTempDir();
 		const agentDir = join(tempRoot, "agent");
 		const projectDir = join(tempRoot, "project");
@@ -57,7 +57,7 @@ describe("legacy --session handling", () => {
 		const result = await runCli(["--session", sessionFile, "-p", "hi"], projectDir, agentDir);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Session file is not a valid Ever session");
 		expect(result.stderr).not.toContain("SessionManager.open");
 		expect(result.stderr).not.toContain("at ");
 		expect(readFileSync(sessionFile, "utf8")).toBe(originalContent);

@@ -13,4 +13,4 @@ import { main } from "./main.ts";
 // Runtime settings are applied once SettingsManager has loaded global/project settings.
 configureHttpDispatcher();
 
-main(process.argv.slice(2));
+await main(process.argv.slice(2));

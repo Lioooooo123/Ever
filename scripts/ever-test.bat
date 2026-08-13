@@ -6,7 +6,7 @@ set "POWERSHELL_EXE=powershell.exe"
 
 where %POWERSHELL_EXE% >nul 2>nul
 if errorlevel 1 (
-	>&2 echo powershell.exe not found. Install PowerShell or run ever-test.ps1 directly.
+	>&2 echo powershell.exe not found. Install PowerShell or run scripts\ever-test.ps1 directly.
 	exit /b 1
 )
 

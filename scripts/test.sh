@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+readonly script_dir repo_root
+
 # Isolate user resources, credentials, temporary files, and tool configuration.
 temp_parent="${TMPDIR:-/tmp}"
 temp_parent="${temp_parent%/}"
@@ -39,7 +43,7 @@ trap cleanup EXIT
 # Start from an empty environment and allow only required platform and test settings.
 test_env=(
 	"PATH=$PATH"
-	"PWD=$PWD"
+	"PWD=$repo_root"
 	"HOME=$test_root/home"
 	"USERPROFILE=$test_root/home"
 	"TMPDIR=$test_root/tmp"
@@ -76,4 +80,5 @@ for name in CI GITHUB_ACTIONS; do
 done
 
 echo "Running tests without API keys in isolated home: $test_root/home"
+cd "$repo_root"
 env -i "${test_env[@]}" npm test

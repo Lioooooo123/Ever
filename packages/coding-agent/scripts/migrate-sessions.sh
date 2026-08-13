@@ -9,7 +9,7 @@
 
 set -e
 
-AGENT_DIR="${EVER_CODING_AGENT_DIR:-${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.ever/agent}}}"
+AGENT_DIR="${EVER_CODING_AGENT_DIR:-${EVER_CODING_AGENT_DIR:-${EVER_AGENT_DIR:-$HOME/.ever/agent}}}"
 DRY_RUN=false
 
 if [[ "$1" == "--dry-run" ]]; then

@@ -21,7 +21,6 @@ Use `/login` in interactive mode, then select a provider:
 - GitHub Copilot
 - xAI (Grok/X subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
-- Radius
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.ever/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
 
@@ -53,7 +52,7 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 
 ### Radius
 
-Radius is a dynamic `ever-messages` gateway. `/login radius` stores OAuth tokens in `auth.json`; the gateway catalog is refreshed independently and cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`.
+Radius is a dynamic `ever-messages` gateway and is not enabled implicitly. Declare a trusted gateway in `models.json` with `"oauth": "radius"` and an explicit `baseUrl`; the configured provider then appears in `/login`. Its OAuth tokens are stored in `auth.json`, while its catalog is refreshed independently and cached in `models-store.json`. A gateway address embedded only in stored credentials is never trusted.
 
 ## API Keys
 
@@ -88,7 +87,6 @@ ever
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
 | OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
 | OpenCode Go | `OPENCODE_API_KEY` | `opencode-go` |
-| Radius | `RADIUS_API_KEY` | `radius` |
 | Hugging Face | `HF_TOKEN` | `huggingface` |
 | Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
 | Together AI | `TOGETHER_API_KEY` | `together` |

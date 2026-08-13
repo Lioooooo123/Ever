@@ -1,21 +1,21 @@
 # Ever
 
-**A Task-first coding agent for work that must survive, recover, and prove it is done.**
+**A Session-native coding agent with an opt-in long-running Goal mode.**
 
-Ever runs development work as durable Tasks instead of disposable chat sessions. A Task keeps its plan, attempts, evidence, verification results, and recovery state across terminal disconnects and daemon restarts.
+Ever uses Sessions for normal interactive and one-shot work. When a job needs autonomous continuation across multiple turns, start a Goal inside the current Session with `/goal`.
 
 Ever is developed directly from a complete in-repository execution stack. It is not an extension wrapped around another agent. The model loop, tools, context management, terminal UI, Task control plane, recovery logic, and completion policy are maintained together as one product.
 
 ## Why Ever
 
-- **Task-first:** the Task is the primary user-facing unit; Sessions are internal execution records.
-- **Durable:** detached work survives terminal disconnects and resident Worker restarts.
-- **Recoverable:** interrupted attempts resume from persisted checkpoints and evidence.
-- **Verifiable:** a Task completes only after its acceptance policy passes.
-- **Observable:** status, events, evidence, and RPC output expose what the agent is doing.
-- **Bounded:** unattended work has explicit time, turn, cost, permission, and sandbox controls.
+- **Session-native:** ordinary prompts, history, resume, branching, and compaction use the same Session runtime.
+- **Opt-in:** long-running behavior starts only after `/goal`; normal Sessions never auto-continue.
+- **Durable:** Goal state is stored in the Session and follows resume, compaction, and tree navigation.
+- **Verifiable:** the agent must report concrete evidence before it can complete a Goal.
+- **Bounded:** Goal continuation has explicit turn, time, and optional token limits.
+- **Recoverable:** the advanced `ever task` control plane remains available for detached Worker execution.
 
-## Execution lifecycle
+## Goal lifecycle
 
 ```text
 Reason -> Execute -> Observe -> Verify -> Repair -> Done
@@ -23,7 +23,7 @@ Reason -> Execute -> Observe -> Verify -> Repair -> Done
                               |----------|
 ```
 
-Ever reasons about the next step, executes it through the embedded tool loop, observes the result, and verifies the Task against explicit acceptance criteria. Failed verification returns the Task to repair. `Done` is a policy decision backed by evidence, not a model assertion.
+Ever reasons about the next step, executes it through the embedded tool loop, observes the result, and records progress in the active Goal. A Goal continues after each settled turn until verified completion, a budget pause, or the same blocker is reported on three consecutive Goal turns.
 
 ## Install
 
@@ -32,59 +32,59 @@ npm install -g --ignore-scripts @lioooooo123/ever
 ever
 ```
 
-Running `ever` opens Task Home. Create a Task directly from the command line:
+Running `ever` opens a normal interactive Session. A prompt remains ordinary Session work:
 
 ```bash
-ever "refactor the repository and run the focused tests" \
-  --verify "npm run check" \
-  --yes
+ever
+ever "inspect this repository and explain the architecture"
+ever -p "summarize the current diff"
 ```
 
-Detach long-running work, then inspect or reconnect later:
+Inside the TUI, opt into long-running execution with one command:
 
 ```bash
-ever "upgrade the dependency and verify compatibility" --detach --yes
-ever tasks
-ever status <task-id>
-ever attach <task-id>
+/goal refactor the repository and run the focused tests
+/goal status
+/goal pause
+/goal resume
+/goal complete
+/goal clear
 ```
 
-Apply execution limits when a Task must stay within a fixed budget:
+Adjust the active Goal budget without leaving the Session:
 
 ```bash
-ever "fix the failing tests" \
-  --verify "./test.sh" \
-  --max-turns 20 \
-  --max-wall-time-minutes 45 \
-  --max-cost-usd 5 \
-  --yes
+/goal limit turns 20
+/goal limit minutes 45
+/goal limit tokens 100000
 ```
 
-Automation can use strict JSONL RPC framing:
+The durable Worker control plane is an advanced interface for detached automation:
 
 ```bash
-printf '%s\n' '{"id":1,"method":"task.list"}' | ever --mode rpc
+ever task submit --manifest task.json --yes --json
+ever task ls
+ever task show <task-id>
 ```
 
-See the [Ever CLI and SDK documentation](packages/coding-agent/README.md) for providers, models, Task commands, configuration, and programmatic usage.
+See the [Ever CLI and SDK documentation](packages/coding-agent/README.md) for Sessions, `/goal`, providers, models, and programmatic usage.
 
-## Task model
+## Runtime model
 
 | Concept | Meaning |
 |---|---|
-| **Task** | The durable user goal and its completion policy |
-| **Attempt** | One recoverable execution of a Task |
-| **Session** | The internal model and tool transcript for an Attempt |
-| **Evidence** | Persisted observations used by recovery and verification |
-| **Worker** | The resident process that executes a Task |
+| **Session** | The normal user-facing conversation, tool transcript, history, and branch tree |
+| **Goal** | Opt-in long-running state scoped to the current Session |
+| **Evidence** | Concrete verification required before agent-reported Goal completion |
+| **Task / Attempt / Worker** | Advanced detached control-plane records used by `ever task` |
 
-This boundary keeps user workflows stable without replacing the proven model-and-tool loop with a second agent runtime.
+Goal mode deepens the existing Session lifecycle instead of introducing a second interactive runtime.
 
 ## Architecture
 
 | Module | Responsibility |
 |---|---|
-| **[@lioooooo123/ever](packages/coding-agent)** | Public CLI, embedded SDK, tools, terminal interface, and Task integration |
+| **[@lioooooo123/ever](packages/coding-agent)** | Public Session CLI, `/goal`, embedded SDK, tools, and terminal interface |
 | **[@lioooooo123/ever-long-tasks](packages/long-tasks)** | Durable Tasks, Attempts, evidence, recovery, and completion decisions |
 | **[@lioooooo123/ever-agent-core](packages/agent)** | Reasoning loop, state transitions, and tool execution |
 | **[@lioooooo123/ever-ai](packages/ai)** | Multi-provider model API |
@@ -95,11 +95,11 @@ This boundary keeps user workflows stable without replacing the proven model-and
 | **[@lioooooo123/ever-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts and schemas |
 | **[@lioooooo123/ever-evals](packages/evals)** | Evaluation harnesses and acceptance metrics |
 
-The execution kernel is embedded source code within this repository. Ever does not require a separately installed Pi package or route Tasks through a parallel wrapper lifecycle.
+The execution kernel is embedded source code within this repository. Ever does not require a separately installed runtime package or route Tasks through a parallel wrapper lifecycle.
 
 ## Safety
 
-Unattended Tasks require the platform sandbox unless the operator explicitly opts out. Ever removes ambient credentials from Worker environments and sends only the selected provider credential through an owner-only startup channel.
+Advanced unattended Tasks require the platform sandbox unless the operator explicitly opts out. Ever removes ambient credentials from Worker environments and sends only the selected provider credential through an owner-only startup channel.
 
 Interactive execution runs with the permissions of its host process. Use the unattended Task path or an external sandbox when you need a stronger boundary. See the [containerization guide](packages/coding-agent/docs/containerization.md).
 
@@ -110,17 +110,18 @@ npm install --ignore-scripts
 npm run build
 npm run build:offline
 npm run check
-./test.sh
-./ever-test.sh
+./scripts/test.sh
+./scripts/ever-test.sh
 ```
 
-`npm run build:offline` uses the checked-in provider model data instead of refreshing it over the network. `./ever-test.sh` starts Ever from source for interactive debugging.
+`npm run build:offline` uses the checked-in provider model data instead of refreshing it over the network. `./scripts/ever-test.sh` starts Ever from source for interactive debugging.
 
 Design and implementation references:
 
-- [Ever v0.1 development specification](EVER_V0.1_DEVELOPMENT_SPEC.md)
-- [Ever architecture optimization specification](EVER_ARCHITECTURE_OPTIMIZATION_SPEC.md)
-- [Long-running control plane specification](LONG_RUNNING_CONTROL_PLANE_SPEC.md)
+- [Documentation index](docs/README.md)
+- [Ever v0.1 development specification](docs/specs/EVER_V0.1_DEVELOPMENT_SPEC.md)
+- [Ever architecture optimization specification](docs/specs/EVER_ARCHITECTURE_OPTIMIZATION_SPEC.md)
+- [Long-running control plane specification](docs/specs/LONG_RUNNING_CONTROL_PLANE_SPEC.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Development rules](AGENTS.md)
 
@@ -134,7 +135,7 @@ Design and implementation references:
 
 ## Upstream attribution
 
-Ever began from source code derived from the Pi agent project and continues to preserve the applicable upstream copyright and MIT license notices. Ever's Task model, product identity, package namespace, control plane, recovery behavior, and release surface are maintained as Ever.
+Ever began from upstream MIT-licensed agent source and continues to preserve the applicable copyright and license notices. Ever's Task model, product identity, package namespace, control plane, recovery behavior, and release surface are maintained as Ever.
 
 ## License
 

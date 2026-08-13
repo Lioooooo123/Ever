@@ -21,7 +21,7 @@ describe("getThemeExportColors", () => {
 	let previousAgentDir: string | undefined;
 
 	beforeEach(() => {
-		tempRoot = mkdtempSync(join(tmpdir(), "pi-theme-export-"));
+		tempRoot = mkdtempSync(join(tmpdir(), "ever-theme-export-"));
 		previousAgentDir = process.env[ENV_AGENT_DIR];
 		const agentDir = join(tempRoot, "agent");
 		process.env[ENV_AGENT_DIR] = agentDir;

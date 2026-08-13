@@ -61,7 +61,7 @@ Before submitting a PR:
 
 ```bash
 npm run check
-./test.sh
+./scripts/test.sh
 ```
 
 Both must pass.
@@ -98,5 +98,5 @@ No. It is a guardrail against burnout and tracker spam. Short, concrete, reprodu
 
 ## Where can I learn about plans?
 
-The upstream Pi project uses Earendil RFCs to discuss larger changes. Not all of them are public, but
-quite a few are. They can be found at [rfc.earendil.com](https://rfc.earendil.com/keyword/pi/).
+The upstream Ever project uses Earendil RFCs to discuss larger changes. Not all of them are public, but
+quite a few are. They can be found at [rfc.earendil.com](https://rfc.earendil.com/keyword/ever/).

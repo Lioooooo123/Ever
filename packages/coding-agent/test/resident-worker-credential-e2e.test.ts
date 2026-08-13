@@ -144,6 +144,18 @@ it("runs a durable Task with only its provider credential delivered over the Wor
 		JSON.stringify({ "local-test": { type: "api_key", key: "channel-secret" } }),
 		{ mode: 0o600 },
 	);
+	const manifestPath = join(workspace, "task.json");
+	writeFileSync(
+		manifestPath,
+		JSON.stringify({
+			schemaVersion: 1,
+			goal: "finish using the provided proof",
+			workspaceRoot: ".",
+			unattendedApproved: true,
+			model: { provider: "local-test", id: "local-model" },
+			limits: { maxTurns: 10, maxWallTimeMinutes: 5 },
+		}),
+	);
 
 	try {
 		const repositoryRoot = join(import.meta.dirname, "..", "..", "..");
@@ -153,14 +165,12 @@ it("runs a durable Task with only its provider credential delivered over the Wor
 				"--tsconfig",
 				join(repositoryRoot, "tsconfig.json"),
 				join(repositoryRoot, "packages", "coding-agent", "src", "cli.ts"),
-				"finish using the provided proof",
-				"--detach",
+				"task",
+				"submit",
+				"--manifest",
+				manifestPath,
 				"--yes",
 				"--unsafe-no-sandbox",
-				"--provider",
-				"local-test",
-				"--model",
-				"local-model",
 				"--json",
 			],
 			{ cwd: workspace, env: { ...process.env, EVER_CODING_AGENT_DIR: agentDir } },

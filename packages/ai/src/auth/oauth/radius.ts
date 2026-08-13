@@ -30,7 +30,7 @@ const REDIRECT_URI = `http://${CALLBACK_HOST}:${CALLBACK_PORT}${CALLBACK_PATH}`;
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
 const LOGIN_METHOD_BROWSER = "browser";
 const LOGIN_METHOD_DEVICE_CODE = "device-code";
-const OAUTH_CLIENT_ID = "pi-gateway";
+const OAUTH_CLIENT_ID = "ever-gateway";
 const OAUTH_SCOPE = "gateway offline_access";
 const OAUTH_DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 

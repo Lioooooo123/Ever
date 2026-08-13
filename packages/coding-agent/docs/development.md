@@ -14,7 +14,7 @@ npm run build
 Run from source:
 
 ```bash
-/path/to/Ever/ever-test.sh
+/path/to/Ever/scripts/ever-test.sh
 ```
 
 The script can be run from any directory. Ever keeps the caller's current working directory.
@@ -25,7 +25,7 @@ Configure via `package.json`:
 
 ```json
 {
-  "piConfig": {
+  "everConfig": {
     "name": "ever",
     "configDir": ".ever"
   }
@@ -55,7 +55,7 @@ Never use `__dirname` directly for package assets.
 ## Testing
 
 ```bash
-./test.sh                         # Run non-LLM tests (no API keys needed)
+./scripts/test.sh                 # Run non-LLM tests (no API keys needed)
 npm test                          # Run all tests
 npm test -- test/specific.test.ts # Run specific test
 ```

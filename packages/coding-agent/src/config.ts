@@ -366,7 +366,7 @@ export function getUpdateInstruction(packageName: string): string {
  */
 export function getPackageDir(): string {
 	// Allow override via environment variable (useful for Nix/Guix where store paths tokenize poorly)
-	const envDir = process.env.EVER_PACKAGE_DIR ?? process.env.PI_PACKAGE_DIR;
+	const envDir = process.env.EVER_PACKAGE_DIR;
 	if (envDir) {
 		return normalizePath(envDir);
 	}
@@ -464,17 +464,13 @@ export function getBundledInteractiveAssetPath(name: string): string {
 }
 
 // =============================================================================
-// App Config (from package.json everConfig; piConfig is a legacy read-only fallback)
+// App Config (from package.json everConfig)
 // =============================================================================
 
 interface PackageJson {
 	name?: string;
 	version?: string;
 	everConfig?: {
-		name?: string;
-		configDir?: string;
-	};
-	piConfig?: {
 		name?: string;
 		configDir?: string;
 	};
@@ -488,7 +484,7 @@ try {
 	if (err.code !== "ENOENT") throw e;
 }
 
-const everConfig = pkg.everConfig ?? pkg.piConfig;
+const everConfig = pkg.everConfig;
 export const PACKAGE_NAME: string = pkg.name || "@lioooooo123/ever";
 export const APP_NAME: string = everConfig?.name || "ever";
 export const APP_TITLE: string = "Ever";
@@ -515,7 +511,7 @@ export function getShareViewerUrl(gistId: string): string {
 
 /** Get the agent config directory (e.g., ~/.ever/agent/) */
 export function getAgentDir(): string {
-	const envDir = process.env[ENV_AGENT_DIR] ?? process.env.PI_CODING_AGENT_DIR;
+	const envDir = process.env[ENV_AGENT_DIR];
 	if (envDir) {
 		return expandTildePath(envDir);
 	}

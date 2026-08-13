@@ -10,7 +10,7 @@
 
 ## 1. 产品决策
 
-Ever 不与 Claude Code、Codex 或其他通用 Coding Agent 竞争“谁更会写代码”。V0.1 基于 Pi 做成一个原生的可靠任务产品，专门承接用户希望交出去、不想持续盯守的本地仓库任务。
+Ever 不与 Claude Code、Codex 或其他通用 Coding Agent 竞争“谁更会写代码”。V0.1 基于 Ever 做成一个原生的可靠任务产品，专门承接用户希望交出去、不想持续盯守的本地仓库任务。
 
 一句话定位：
 
@@ -35,9 +35,9 @@ Ever 不与 Claude Code、Codex 或其他通用 Coding Agent 竞争“谁更会�
 - 写文件、推送、发布等操作结果不明时，是否会重复执行副作用。
 - 用户离开后，Agent 是否真的完成了预先约定的验收，而不是只说“完成了”。
 - 用户能否用预算和截止时间约束任务，并看见实际成本与节省来源。
-- Task 能否与 Pi Session 生命周期解耦，不因 Session 中断而丢失预算、证据与审计记录。
+- Task 能否与 Ever Session 生命周期解耦，不因 Session 中断而丢失预算、证据与审计记录。
 
-Ever 不替代最强 Coding Agent。V0.1 先把 Pi 变成可托付的异步 Worker。
+Ever 不替代最强 Coding Agent。V0.1 先把 Ever 变成可托付的异步 Worker。
 
 ## 3. 目标用户
 
@@ -67,7 +67,7 @@ Ever 不替代最强 Coding Agent。V0.1 先把 Pi 变成可托付的异步 Work
 2. 崩溃后从已知边界恢复，不重复危险操作。
 3. 在预算和期限内选择合适的执行路径。
 4. 最终用预先声明的验收命令、变更摘要和证据完成交付。
-5. Pi Session 即使中断，也不改变上层 Task、预算、验收与交付心智。
+5. Ever Session 即使中断，也不改变上层 Task、预算、验收与交付心智。
 
 用户购买的不是 checkpoint、lease 或事件表。用户购买的是少盯守、少返工、少事故和可验收。
 
@@ -85,9 +85,9 @@ Task 是持久业务实体，Session 只是 Task 的一次执行记录。Ever �
 
 如果某个有副作用的工具调用已经发出，但结果不明，Task 必须进入人工确认或专门恢复路径，不得直接再执行一次。
 
-### 5.4 Pi 是原生执行底座
+### 5.4 Ever 是原生执行底座
 
-Ever 直接深化 Pi Agent。Pi 继续负责 Agent Loop、Provider、模型、工具、Session、compaction、Extension 和 Eval；Ever 负责持久 Task、Worker、预算、策略、恢复、验收和交付物。V0.1 不增加 `AgentBackend`、`ProviderGateway` 或第二套生命周期协议。
+Ever 直接深化 Ever Agent。Ever 继续负责 Agent Loop、Provider、模型、工具、Session、compaction、Extension 和 Eval；Ever 负责持久 Task、Worker、预算、策略、恢复、验收和交付物。V0.1 不增加 `AgentBackend`、`ProviderGateway` 或第二套生命周期协议。
 
 ### 5.5 成本优化服从质量与安全
 
@@ -112,7 +112,7 @@ ever run "升级依赖并修复测试" \
 Ever 应完成以下闭环：
 
 1. 检查仓库、工作树、权限、沙箱、预算和验收命令。
-2. 创建持久 Task，并冻结一次 Attempt 的 Pi Runtime 与成本策略。
+2. 创建持久 Task，并冻结一次 Attempt 的 Ever Runtime 与成本策略。
 3. 在后台执行，用户可以关闭终端。
 4. 用户通过 `status` 查看进度，通过 `attach` 持续观察和转向，通过 `stop` 安全停止。
 5. Worker 崩溃后从 settled checkpoint 恢复。
@@ -128,7 +128,7 @@ Ever 应完成以下闭环：
 - 一个本地 Git 仓库。
 - 一个主 Agent。
 - 一个活跃 Attempt。
-- 只使用 Pi Native Backend。
+- 只使用 Ever Native Backend。
 - 四个主要命令：`run`、`status`、`attach`、`stop`。
 - `ever <goal>` 创建、启动并附着一个持久 Task。
 - 不带目标的 `ever` 打开 Task 创建和管理界面。
@@ -193,18 +193,18 @@ V0.1 支持 BYOK，并记录 Provider 返回的真实 usage。成本优化可以
 
 ### 8.1 原生职责
 
-- Pi Native Runtime：负责完整 Coding Agent 循环、Provider 认证与调用、模型目录、工具执行、Session、compaction、Extension 和 Eval。
+- Ever Native Runtime：负责完整 Coding Agent 循环、Provider 认证与调用、模型目录、工具执行、Session、compaction、Extension 和 Eval。
 - Ever Task Runtime：负责 Task、Attempt、Worker、lease、预算、策略、恢复、Acceptance 和 Verified Change Bundle。
 
-Ever Task Runtime 通过 Pi 原生 awaited lifecycle seam 约束执行，不在 Pi 外围转发或镜像 Agent Loop。多 Provider 自动路由属于 P1，并实现为 Pi Models 与 Provider 上的策略。
+Ever Task Runtime 通过 Ever 原生 awaited lifecycle seam 约束执行，不在 Ever 外围转发或镜像 Agent Loop。多 Provider 自动路由属于 P1，并实现为 Ever Models 与 Provider 上的策略。
 
 ### 8.2 发布顺序
 
-1. V0.1：深化 Pi Native Runtime，打通可靠执行闭环。
+1. V0.1：深化 Ever Native Runtime，打通可靠执行闭环。
 2. 后续：完善 BYOK Provider 路由、成本优化与真实 usage 账本。
 3. 商业阶段：在具备商业协议的 Provider 上推出 Ever Managed Provider。
 
-每个 Attempt 启动后固定 Pi Runtime、路由计划和能力快照。运行中不得更换运行时或越过冻结的 Provider 路径。
+每个 Attempt 启动后固定 Ever Runtime、路由计划和能力快照。运行中不得更换运行时或越过冻结的 Provider 路径。
 
 ## 9. 成本产品与盈利方向
 
@@ -314,7 +314,7 @@ V0.1 只有同时满足以下条件才可对外称为“可放心离开”：
 
 应对：同时保留 `fast`、`balanced` 和 `economy`，用真实任务测试等待时间是否能换来足够成本下降。
 
-### Pi Runtime 缺少可靠性钩子
+### Ever Runtime 缺少可靠性钩子
 
 应对：把 intent 持久化、预算和验收做成 NativeLongTaskAgent 的同步必经路径。无法证明 intent 先于副作用时，不允许无人值守高风险写入。
 

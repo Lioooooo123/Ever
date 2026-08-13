@@ -41,7 +41,7 @@ const UPDATE_CHECK_CONCURRENCY = 4;
 const GIT_UPDATE_CONCURRENCY = 4;
 
 function isOfflineModeEnabled(): boolean {
-	const value = process.env.EVER_OFFLINE ?? process.env.PI_OFFLINE;
+	const value = process.env.EVER_OFFLINE;
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
@@ -2372,21 +2372,6 @@ export class DefaultPackageManager implements PackageManager {
 			prompts: join(projectBaseDir, "prompts"),
 			themes: join(projectBaseDir, "themes"),
 		};
-		const legacyUserBaseDir = join(getHomeDir(), ".pi", "agent");
-		const allowLegacyUserFallback = resolve(globalBaseDir) === resolve(join(getHomeDir(), CONFIG_DIR_NAME, "agent"));
-		const legacyProjectBaseDir = join(this.cwd, ".pi");
-		const legacyUserDirs = {
-			extensions: join(legacyUserBaseDir, "extensions"),
-			skills: join(legacyUserBaseDir, "skills"),
-			prompts: join(legacyUserBaseDir, "prompts"),
-			themes: join(legacyUserBaseDir, "themes"),
-		};
-		const legacyProjectDirs = {
-			extensions: join(legacyProjectBaseDir, "extensions"),
-			skills: join(legacyProjectBaseDir, "skills"),
-			prompts: join(legacyProjectBaseDir, "prompts"),
-			themes: join(legacyProjectBaseDir, "themes"),
-		};
 		const userAgentsSkillsDir = join(getHomeDir(), ".agents", "skills");
 		const projectTrusted = this.settingsManager.isProjectTrusted();
 		const projectAgentsSkillDirs = projectTrusted
@@ -2406,35 +2391,7 @@ export class DefaultPackageManager implements PackageManager {
 				this.addResource(target, path, metadata, enabled);
 			}
 		};
-		const addLegacyFallback = (
-			resourceType: ResourceType,
-			primaryDir: string,
-			legacyDir: string,
-			paths: string[],
-			metadata: PathMetadata,
-			legacyBaseDir: string,
-		) => {
-			if (existsSync(primaryDir) || !existsSync(legacyDir)) return;
-			addResources(resourceType, paths, { ...metadata, baseDir: legacyBaseDir }, [], legacyBaseDir);
-		};
-
 		if (projectTrusted) {
-			addLegacyFallback(
-				"extensions",
-				projectDirs.extensions,
-				legacyProjectDirs.extensions,
-				collectAutoExtensionEntries(legacyProjectDirs.extensions),
-				projectMetadata,
-				legacyProjectBaseDir,
-			);
-			addLegacyFallback(
-				"skills",
-				projectDirs.skills,
-				legacyProjectDirs.skills,
-				collectAutoSkillEntries(legacyProjectDirs.skills, "ever"),
-				projectMetadata,
-				legacyProjectBaseDir,
-			);
 			// Project extensions from .ever/
 			addResources(
 				"extensions",
@@ -2471,22 +2428,6 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		if (projectTrusted) {
-			addLegacyFallback(
-				"prompts",
-				projectDirs.prompts,
-				legacyProjectDirs.prompts,
-				collectAutoPromptEntries(legacyProjectDirs.prompts),
-				projectMetadata,
-				legacyProjectBaseDir,
-			);
-			addLegacyFallback(
-				"themes",
-				projectDirs.themes,
-				legacyProjectDirs.themes,
-				collectAutoThemeEntries(legacyProjectDirs.themes),
-				projectMetadata,
-				legacyProjectBaseDir,
-			);
 			addResources(
 				"prompts",
 				collectAutoPromptEntries(projectDirs.prompts),
@@ -2502,39 +2443,6 @@ export class DefaultPackageManager implements PackageManager {
 				projectBaseDir,
 			);
 		}
-
-		addLegacyFallback(
-			"extensions",
-			userDirs.extensions,
-			legacyUserDirs.extensions,
-			allowLegacyUserFallback ? collectAutoExtensionEntries(legacyUserDirs.extensions) : [],
-			userMetadata,
-			legacyUserBaseDir,
-		);
-		addLegacyFallback(
-			"skills",
-			userDirs.skills,
-			legacyUserDirs.skills,
-			allowLegacyUserFallback ? collectAutoSkillEntries(legacyUserDirs.skills, "ever") : [],
-			userMetadata,
-			legacyUserBaseDir,
-		);
-		addLegacyFallback(
-			"prompts",
-			userDirs.prompts,
-			legacyUserDirs.prompts,
-			allowLegacyUserFallback ? collectAutoPromptEntries(legacyUserDirs.prompts) : [],
-			userMetadata,
-			legacyUserBaseDir,
-		);
-		addLegacyFallback(
-			"themes",
-			userDirs.themes,
-			legacyUserDirs.themes,
-			allowLegacyUserFallback ? collectAutoThemeEntries(legacyUserDirs.themes) : [],
-			userMetadata,
-			legacyUserBaseDir,
-		);
 
 		// User extensions from ~/.ever/agent/
 		addResources(

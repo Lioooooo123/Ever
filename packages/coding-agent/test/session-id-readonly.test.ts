@@ -28,7 +28,7 @@ function createTempDir(): string {
 	// realpath: on macOS tmpdir() is a symlink (/var -> /private/var), but the
 	// spawned CLI sees the physical path via process.cwd(). Session cwd
 	// filtering compares paths textually, so the fixture must use physical paths.
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "pi-session-id-readonly-")));
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "ever-session-id-readonly-")));
 	tempDirs.push(dir);
 	return dir;
 }
@@ -100,20 +100,18 @@ function writeSession(sessionDir: string, cwd: string, id: string): void {
 	);
 }
 
-describe("legacy --session-id commands", () => {
-	it("rejects --session-id for --help without reserving a session", async () => {
+describe("--session-id metadata commands", () => {
+	it("prints --help without reserving a session", async () => {
 		const result = await runCli(["--session-id", "read-only-help", "--help"]);
 
-		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(result.code).toBe(0);
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-help")).toBe(false);
 	});
 
-	it("rejects --no-session with --session-id without reserving a session", async () => {
+	it("prints --help with --no-session and --session-id without reserving a session", async () => {
 		const result = await runCli(["--no-session", "--session-id", "ephemeral-id", "--help"]);
 
-		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(result.code).toBe(0);
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "ephemeral-id")).toBe(false);
 	});
 
@@ -124,7 +122,7 @@ describe("legacy --session-id commands", () => {
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-models")).toBe(false);
 	});
 
-	it("rejects a missing --session-id without creating a new session", async () => {
+	it("reports a missing model after resolving a new --session-id without persisting it", async () => {
 		const result = await runCli((dirs) => [
 			"--session-dir",
 			dirs.sessionDir,
@@ -137,11 +135,12 @@ describe("legacy --session-id commands", () => {
 		]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(result.stderr).toContain("creating a new session with that id");
+		expect(result.stderr).toContain('Model "missing-model" not found');
 		expect(hasSessionWithId(result.agentDir, "missing-session-id")).toBe(false);
 	});
 
-	it("rejects an existing --session-id without modifying the session", async () => {
+	it("opens an existing --session-id without modifying it when model resolution fails", async () => {
 		const result = await runCli(
 			(dirs) => [
 				"--session-dir",
@@ -160,10 +159,10 @@ describe("legacy --session-id commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(result.stderr).toContain('Model "missing-model" not found');
 	});
 
-	it("rejects legacy fork arguments before opening either session", async () => {
+	it("rejects a fork whose requested target Session ID already exists", async () => {
 		const result = await runCli(
 			(dirs) => ["--session-dir", dirs.sessionDir, "--fork", "source-id", "--session-id", "existing-id", "-p", "hi"],
 			(dirs) => {
@@ -174,17 +173,17 @@ describe("legacy --session-id commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Session already exists with id 'existing-id'");
 	});
 });
 
-describe("legacy --session-id validation", () => {
-	it("rejects legacy ids without entering SessionManager", async () => {
+describe("--session-id validation", () => {
+	it("rejects invalid ids without entering SessionManager", async () => {
 		for (const id of ["-bad", "bad id"]) {
 			const result = await runCli(["--session-id", id, "-p", "hi"]);
 
 			expect(result.code).toBe(1);
-			expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+			expect(result.stderr).toContain("Session id must be non-empty");
 			expect(result.stderr).not.toContain("SessionManager.create");
 		}
 	});
