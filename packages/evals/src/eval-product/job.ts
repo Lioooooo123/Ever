@@ -8,7 +8,12 @@ export const EvalJobIndexSchema = Type.Object(
 	{
 		schemaVersion: Type.Literal(1),
 		jobId: Type.String({ pattern: "^[A-Za-z0-9._-]+$" }),
-		profile: Type.Union([Type.Literal("quick"), Type.Literal("benchmark")]),
+		profile: Type.Union([
+			Type.Literal("quick"),
+			Type.Literal("benchmark"),
+			Type.Literal("external"),
+			Type.Literal("long-horizon"),
+		]),
 		createdAt: Type.String({ minLength: 1 }),
 		model: Type.Optional(
 			Type.Object(
@@ -24,8 +29,14 @@ export type EvalJobIndex = Static<typeof EvalJobIndexSchema>;
 
 const validator = Compile(EvalJobIndexSchema);
 
+export function assertEvalJobId(jobId: string): void {
+	if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(jobId) || jobId === "." || jobId === "..")
+		throw new Error(`Invalid Eval job ID: ${jobId}`);
+}
+
 export function assertEvalJobIndex(value: unknown): asserts value is EvalJobIndex {
 	if (validator.Check(value)) {
+		assertEvalJobId(value.jobId);
 		if (!Number.isFinite(Date.parse(value.createdAt))) throw new TypeError("Invalid EvalJobIndex v1 createdAt");
 		return;
 	}

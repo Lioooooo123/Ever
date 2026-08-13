@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "repo-schema-migration",
+  "version": "0.1.0",
+  "family": "repository-migration",
+  "instructionPath": "instruction.md",
+  "environment": {
+    "buildContext": "environment",
+    "workingDirectory": "/app",
+    "network": "none",
+    "platforms": ["linux/amd64", "linux/arm64"],
+    "cpu": 2,
+    "memoryMb": 2048,
+    "pids": 256
+  },
+  "calibration": {
+    "status": "development_proxy",
+    "successfulBaselines": 0,
+    "medianActiveMinutes": 0
+  },
+  "limits": {
+    "trialTimeoutSeconds": 1800,
+    "verifierTimeoutSeconds": 120,
+    "maxTurns": 80,
+    "maxCostUsd": 5
+  },
+  "verification": {
+    "objective": ["migrates v1 records to v2", "supports dry-run and idempotent reruns"],
+    "regression": ["preserves identifiers and legacy readable fields"],
+    "safety": ["does not write outside the requested output"],
+    "integrity": ["does not modify verifier or canary assets"]
+  },
+  "scenarios": [
+    {
+      "id": "daemon-after-settled-checkpoint",
+      "trigger": {
+        "source": "agent_event",
+        "type": "CheckpointSettled",
+        "where": {},
+        "occurrence": 1,
+        "waitTimeoutSeconds": 120
+      },
+      "action": { "type": "kill_daemon", "signal": "SIGKILL" },
+      "expectation": { "kind": "eventual_completion", "maxRecoverySeconds": 120 }
+    }
+  ],
+  "metadata": {
+    "expertise": ["nodejs", "data-migration", "filesystem-safety"],
+    "stages": ["inspect", "design", "implement", "test", "document"],
+    "canary": "TASK-CANARY-MIGRATION-94d3"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "ever-long-horizon",
+  "version": "1.0.0",
+  "canary": "ELHB-V1-CANARY-7f4b5d2e",
+  "taskIds": [
+    "repo-schema-migration",
+    "durable-pipeline-resume",
+    "daemon-protocol-upgrade",
+    "side-effect-reconciliation"
+  ],
+  "suites": {
+    "dev": ["repo-schema-migration", "durable-pipeline-resume", "side-effect-reconciliation"],
+    "full": [
+      "repo-schema-migration",
+      "durable-pipeline-resume",
+      "daemon-protocol-upgrade",
+      "side-effect-reconciliation"
+    ],
+    "smoke": ["repo-schema-migration"]
+  }
+}

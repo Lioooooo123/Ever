@@ -10,8 +10,11 @@ export interface ProcessResult {
 export async function runProcess(
 	command: string,
 	args: readonly string[],
-	options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutSeconds: number; input?: string },
+	options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutSeconds?: number; input?: string },
 ): Promise<ProcessResult> {
+	const timeoutSeconds = options.timeoutSeconds ?? 30;
+	if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)
+		throw new Error("Process timeoutSeconds must be a positive finite number");
 	return await new Promise((resolve, reject) => {
 		const child = spawn(command, args, {
 			cwd: options.cwd,
@@ -36,7 +39,7 @@ export async function runProcess(
 		const timeout = setTimeout(() => {
 			timedOut = true;
 			child.kill("SIGKILL");
-		}, options.timeoutSeconds * 1000);
+		}, timeoutSeconds * 1000);
 		child.on("close", (exitCode) => {
 			clearTimeout(timeout);
 			resolve({ exitCode, stdout, stderr, timedOut });

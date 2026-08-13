@@ -1,7 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import type { ExternalEvalTrialResult } from "../external-evals/schemas.ts";
 import { LongTaskArtifactStore } from "../long-task-evals/artifacts.ts";
-import { type EvalJobIndex, readEvalJobIndex } from "./job.ts";
+import { selectEffectiveLongHorizonResults } from "../long-task-evals/effective-results.ts";
+import { assertEvalJobId, type EvalJobIndex, readEvalJobIndex } from "./job.ts";
 
 export interface EvalOverviewReport {
 	schemaVersion: 1;
@@ -132,12 +134,86 @@ async function loadBenchmarkReport(jobDirectory: string, job: EvalJobIndex): Pro
 	};
 }
 
+async function loadLongHorizonReport(jobDirectory: string, job: EvalJobIndex): Promise<EvalOverviewReport> {
+	const attempts = await new LongTaskArtifactStore(resolve(jobDirectory, "..").toString(), job.jobId).loadResults();
+	const results = selectEffectiveLongHorizonResults(attempts);
+	const valid = results.filter((result) => result.longHorizon?.valid === true);
+	const successfulRuns = valid.filter((result) => {
+		const verdict = result.longHorizon!.verdict;
+		if (verdict.terminalSemanticsPass !== undefined) return verdict.terminalSemanticsPass;
+		if (verdict.continuityPass !== undefined) return verdict.continuityPass && verdict.safetyPass;
+		return verdict.capabilityPass && verdict.safetyPass;
+	}).length;
+	const wallTimes = valid.map((result) => result.usage.wallTimeMs);
+	const tokens = valid.map((result) => result.usage.totalTokens).filter((value) => value !== undefined);
+	const costs = valid.map((result) => result.usage.estimatedCostUsd).filter((value) => value !== undefined);
+	const medianWallTimeMs = median(wallTimes);
+	const detailReport = await optionalText(join(jobDirectory, "long-horizon-report.md"));
+	return {
+		schemaVersion: 1,
+		job,
+		summary: {
+			totalRuns: results.length,
+			successfulRuns,
+			failedRuns: valid.length - successfulRuns,
+			incompleteRuns: results.length - valid.length,
+			...(medianWallTimeMs === undefined ? {} : { medianWallTimeMs }),
+			...(tokens.length === 0 ? {} : { totalTokens: tokens.reduce((total, value) => total + value, 0) }),
+			...(costs.length === 0 ? {} : { totalEstimatedCostUsd: costs.reduce((total, value) => total + value, 0) }),
+		},
+		...(detailReport === undefined ? {} : { detailReport }),
+	};
+}
+
+async function loadExternalReport(jobDirectory: string, job: EvalJobIndex): Promise<EvalOverviewReport> {
+	const value = JSON.parse(await readFile(join(jobDirectory, "external-results.json"), "utf8")) as unknown;
+	if (!Array.isArray(value)) throw new Error("Invalid external-results.json");
+	const results = value as ExternalEvalTrialResult[];
+	const config = JSON.parse(await readFile(join(jobDirectory, "external-config.json"), "utf8")) as {
+		acceptance?: { metrics?: Record<string, number> };
+	};
+	const thresholds = config.acceptance?.metrics ?? {};
+	const successfulRuns = results.filter(
+		(result) =>
+			result.completed &&
+			Object.entries(thresholds).every(
+				([name, threshold]) => (result.metrics[name] ?? Number.NEGATIVE_INFINITY) >= threshold,
+			),
+	).length;
+	const incompleteRuns = results.filter((result) => !result.completed).length;
+	const wallTimes = results.map((result) => result.wallTimeMs).filter((value) => value !== undefined);
+	const tokens = results
+		.map((result) =>
+			result.inputTokens === undefined && result.outputTokens === undefined
+				? undefined
+				: (result.inputTokens ?? 0) + (result.outputTokens ?? 0),
+		)
+		.filter((value) => value !== undefined);
+	const costs = results.map((result) => result.costUsd).filter((value) => value !== undefined);
+	const medianWallTimeMs = median(wallTimes);
+	return {
+		schemaVersion: 1,
+		job,
+		summary: {
+			totalRuns: results.length,
+			successfulRuns,
+			failedRuns: results.length - successfulRuns - incompleteRuns,
+			incompleteRuns,
+			...(medianWallTimeMs === undefined ? {} : { medianWallTimeMs }),
+			...(tokens.length === 0 ? {} : { totalTokens: tokens.reduce((total, value) => total + value, 0) }),
+			...(costs.length === 0 ? {} : { totalEstimatedCostUsd: costs.reduce((total, value) => total + value, 0) }),
+		},
+	};
+}
+
 export async function loadEvalOverview(artifactRoot: string, jobId: string): Promise<EvalOverviewReport> {
+	assertEvalJobId(jobId);
 	const jobDirectory = join(resolve(artifactRoot), jobId);
 	const job = await readEvalJobIndex(jobDirectory);
-	return job.profile === "quick"
-		? await loadQuickReport(jobDirectory, job)
-		: await loadBenchmarkReport(jobDirectory, job);
+	if (job.profile === "quick") return await loadQuickReport(jobDirectory, job);
+	if (job.profile === "external") return await loadExternalReport(jobDirectory, job);
+	if (job.profile === "long-horizon") return await loadLongHorizonReport(jobDirectory, job);
+	return await loadBenchmarkReport(jobDirectory, job);
 }
 
 export function formatEvalOverview(report: EvalOverviewReport): string {
@@ -161,6 +237,7 @@ export function formatEvalOverview(report: EvalOverviewReport): string {
 }
 
 export async function persistEvalOverview(artifactRoot: string, jobId: string): Promise<EvalOverviewReport> {
+	assertEvalJobId(jobId);
 	const report = await loadEvalOverview(artifactRoot, jobId);
 	const jobDirectory = join(resolve(artifactRoot), jobId);
 	await writeFile(join(jobDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });

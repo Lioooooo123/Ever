@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "taskId": "replace-task-id",
+  "taskVersion": "1.0.0",
+  "benchmarkVersion": "1.0.0",
+  "participantId": "replace-with-one-way-participant-sha256",
+  "independent": true,
+  "professional": true,
+  "successful": true,
+  "activeMinutes": 120,
+  "blockedMinutes": 0,
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": "2026-01-01T02:00:00.000Z",
+  "environment": "describe native platform and tools",
+  "evidenceDigest": "replace-with-evidence-sha256",
+  "recordedBy": "human-reviewer"
+}

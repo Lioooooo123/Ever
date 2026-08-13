@@ -17,7 +17,7 @@ import { EverAgentAdapter } from "./ever-agent.ts";
 import { type FaultSpec, ProcessFaultInjector } from "./faults.ts";
 import { exportRedactedJob } from "./redaction.ts";
 import { LongTaskEvalRunner } from "./runner.ts";
-import type { AgentIdentity, EvalCase } from "./schemas.ts";
+import type { AgentIdentity, EvalCase, EvalRunResult } from "./schemas.ts";
 import { selectDeterministicCases } from "./task-selection.ts";
 import { TerminalBench21Adapter } from "./terminal-bench-2-1.ts";
 
@@ -161,7 +161,7 @@ async function report(artifactRoot: string, jobId: string): Promise<void> {
 	process.stdout.write(markdown);
 }
 
-async function assertOracleGate(
+export async function assertOracleGate(
 	artifactRoot: string,
 	jobId: string,
 	benchmarkDigest: string,
@@ -183,6 +183,40 @@ async function assertOracleGate(
 		);
 		if (!passed) throw new Error(`Oracle gate has no passing official result for ${caseId}`);
 	}
+}
+
+export function assertEvalJobPassed(results: readonly EvalRunResult[]): void {
+	if (results.length === 0) throw new Error("Eval job produced no results");
+	const failures = results.filter((result) => {
+		const verdict = result.longHorizon?.verdict;
+		const failClosed = verdict?.terminalSemanticsPass === true;
+		const allowedFailClosedDiagnostic = (error: EvalRunResult["errors"][number]): boolean =>
+			error.source === "ever" && error.code === "unknown_outcome";
+		if (!result.official.valid || verdict?.continuityPass === false || verdict?.terminalSemanticsPass === false) {
+			return true;
+		}
+		if (failClosed) {
+			return (
+				result.outcome !== "unknown_outcome" || result.errors.some((error) => !allowedFailClosedDiagnostic(error))
+			);
+		}
+		return (
+			result.outcome !== "completed" ||
+			(result.official.metrics.reward ?? Number.NEGATIVE_INFINITY) < 1 ||
+			verdict?.capabilityPass === false ||
+			verdict?.safetyPass === false ||
+			result.errors.length > 0
+		);
+	});
+	if (failures.length === 0) return;
+	const examples = failures
+		.slice(0, 3)
+		.map(
+			(result) =>
+				`${result.caseId}/${result.agent.name}: outcome=${result.outcome}, valid=${result.official.valid}, reward=${result.official.metrics.reward ?? "missing"}`,
+		)
+		.join("; ");
+	throw new Error(`Eval job failed: ${failures.length}/${results.length} runs did not pass (${examples})`);
 }
 
 export async function executeLongTaskCommand(args: string[]): Promise<void> {
@@ -336,11 +370,12 @@ export async function executeLongTaskCommand(args: string[]): Promise<void> {
 		);
 	}
 	const runner = new LongTaskEvalRunner(benchmark, new DockerEnvironmentAdapter(), store);
-	await runner.run({
+	const results = await runner.run({
 		manifest: stored.manifest,
 		cases,
 		agents: makeAgents(stored),
 		...(stored.faults === undefined ? {} : { faults: { ...stored.faults, injector: new ProcessFaultInjector() } }),
 	});
-	console.log(`Eval job completed: ${store.jobDirectory}`);
+	assertEvalJobPassed(results);
+	console.log(`Eval job passed: ${store.jobDirectory}`);
 }

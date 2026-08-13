@@ -6,7 +6,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listEvalJobs, writeEvalJobIndex } from "./eval-product/job.ts";
 import { formatEvalOverview, persistEvalOverview } from "./eval-product/report.ts";
+import { ExternalBenchmarkRunner } from "./external-evals/harbor-runner.ts";
 import { executeLongTaskCommand } from "./long-task-evals/cli.ts";
+import { executeLongHorizonCommand } from "./long-task-evals/long-horizon-cli.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const artifactRoot = resolve(packageRoot, ".eval");
@@ -15,12 +17,43 @@ function printHelp(): void {
 	console.log(`Usage:
   npm run eval -- quick --provider <provider> --model <model> [--suite smoke|all]
   npm run eval -- benchmark <benchmark-options>
+  npm run eval -- long-horizon <owned-benchmark-options>
+  npm run eval -- external --config <config.json>
+  npm run eval -- external --resume <job-id>
   npm run eval -- report [job-id]
 
 Profiles:
   quick      Lightweight Ever Agent eval. Defaults to src/smoke.eval.ts and does not use Docker.
   benchmark  Docker-isolated external benchmark with official verifier and Oracle gate.
+  long-horizon  Owned multi-stage benchmark with hidden verifier and Oracle gate.
+  external   Run any Harbor dataset or local Harbor task through the normalized Eval contract.
   report     List Eval jobs or render one unified report.`);
+}
+
+function requiredOption(args: string[], name: string): string | undefined {
+	const index = args.indexOf(name);
+	if (index === -1) return undefined;
+	const value = args[index + 1];
+	if (value === undefined || value.startsWith("-")) throw new Error(`${name} requires a value`);
+	return value;
+}
+
+async function runExternal(args: string[]): Promise<number> {
+	if (args.includes("--help") || args.includes("-h")) {
+		console.log(`Usage:
+  npm run eval -- external --config <config.json>
+  npm run eval -- external --resume <job-id>`);
+		return 0;
+	}
+	const config = requiredOption(args, "--config");
+	const resume = requiredOption(args, "--resume");
+	if (Boolean(config) === Boolean(resume))
+		throw new Error("External Eval requires exactly one of --config or --resume");
+	const runner = new ExternalBenchmarkRunner();
+	const result = config === undefined ? await runner.resume(resume!) : await runner.run(config);
+	console.error(`[eval] profile=external job=${result.jobId}`);
+	console.error(`[eval] trials=${result.results.length}`);
+	return 0;
 }
 
 function quickSelection(args: string[]): {
@@ -140,8 +173,13 @@ export async function runEvalCommand(args: string[]): Promise<number> {
 		await executeLongTaskCommand(args.slice(1));
 		return typeof process.exitCode === "number" ? process.exitCode : 0;
 	}
+	if (command === "long-horizon") {
+		await executeLongHorizonCommand(args.slice(1));
+		return typeof process.exitCode === "number" ? process.exitCode : 0;
+	}
+	if (command === "external") return await runExternal(args.slice(1));
 	if (command === "report") return await runReport(args.slice(1));
-	throw new Error(`Unknown Eval command: ${command}. Expected quick, benchmark, or report.`);
+	throw new Error(`Unknown Eval command: ${command}. Expected quick, benchmark, long-horizon, external, or report.`);
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

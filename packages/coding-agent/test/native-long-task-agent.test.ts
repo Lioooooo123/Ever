@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSessionLifecycle, AgentSessionLifecycleEvent } from "../src/core/agent-session-lifecycle.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
-import { attachLongTaskRuntime } from "../src/core/long-task-runtime.ts";
+import { attachLongTaskRuntime, waitForEvalEffectRelease } from "../src/core/long-task-runtime.ts";
 
 const temporaryPaths: string[] = [];
 
@@ -124,18 +125,18 @@ describe("NativeLongTaskAgent", () => {
 			sessionId: "session-1",
 			operationId: "operation-1",
 			toolCallId: "tool-1",
-			toolName: "read",
-			input: { path: "package.json" },
+			toolName: "write",
+			input: { path: "result.txt" },
 		});
 		await runtimeAdapter.emit({
 			type: "after_tool",
 			sessionId: "session-1",
 			operationId: "operation-1",
 			toolCallId: "tool-1",
-			toolName: "read",
-			input: { path: "package.json" },
+			toolName: "write",
+			input: { path: "result.txt" },
 			isError: false,
-			resultSummary: "read",
+			resultSummary: "written",
 		});
 		await runtimeAdapter.emit({ type: "settled", sessionId: "session-1" });
 		await expect(running.drainAndClose()).resolves.toMatchObject({ kind: "settled", taskId: task.id });
@@ -146,6 +147,59 @@ describe("NativeLongTaskAgent", () => {
 		expect(types.indexOf("ToolFinished")).toBeLessThan(types.indexOf("CheckpointCreated"));
 		expect(inspectionStore.requireTask(task.id).totalTurns).toBe(1);
 		inspectionStore.close();
+	});
+
+	it("authenticates an fd3-style Eval gate and binds it to the selected domain path", async () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-native-gate-"));
+		temporaryPaths.push(root);
+		const gateDirectory = join(root, "gate");
+		const workspaceRoot = join(root, "workspace");
+		const targetPath = join(workspaceRoot, "result.txt");
+		const secret = "b".repeat(64);
+		mkdirSync(workspaceRoot);
+		writeFileSync(targetPath, "durable domain evidence\n");
+		const event: Extract<AgentSessionLifecycleEvent, { type: "after_tool" }> = {
+			type: "after_tool",
+			sessionId: "session-1",
+			operationId: "operation-1",
+			toolCallId: "tool-1",
+			toolName: "write",
+			input: { path: "result.txt" },
+			isError: false,
+			resultSummary: "written",
+		};
+		const waiting = waitForEvalEffectRelease(
+			event,
+			"reconcilable_write",
+			workspaceRoot,
+			new AbortController().signal,
+			{
+				directory: gateDirectory,
+				effect: "reconcilable_write",
+				secret,
+				domainCommitId: "source:result.txt",
+				evidencePath: targetPath,
+				targetPath,
+			},
+		);
+		const gateEvents = join(gateDirectory, "events.jsonl");
+		for (let attempt = 0; attempt < 100 && !existsSync(gateEvents); attempt += 1)
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		const gateEvent = JSON.parse(readFileSync(gateEvents, "utf8")) as Record<string, unknown>;
+		expect(gateEvent).toMatchObject({
+			type: "EffectCommitted",
+			operationId: "operation-1",
+			toolCallId: "tool-1",
+			effect: "reconcilable_write",
+			targetPath,
+			domainCommitId: "source:result.txt",
+			evidencePath: targetPath,
+			evidenceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+		});
+		expect(gateEvent.mac).toMatch(/^[a-f0-9]{64}$/);
+		const releaseDigest = createHmac("sha256", secret).update("operation-1").digest("hex");
+		writeFileSync(join(gateDirectory, `release-${releaseDigest}`), "");
+		await waiting;
 	});
 
 	it("completes through a faux Provider boundary and emits a verified change bundle", async () => {

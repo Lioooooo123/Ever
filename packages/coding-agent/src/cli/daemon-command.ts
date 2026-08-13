@@ -73,6 +73,33 @@ const SOCKET_TIMEOUT_MS = 5_000;
 const MAX_DAEMON_REQUEST_BYTES = 1_048_576;
 const MAX_DAEMON_RESPONSE_BYTES = 4_194_304;
 
+function evalEffectGateCapability(): WorkerStartupEnvelope["evalEffectGate"] {
+	const directory = process.env.EVER_EVAL_EFFECT_GATE_DIR;
+	const effect = process.env.EVER_EVAL_EFFECT_GATE_EFFECT;
+	const secret = process.env.EVER_EVAL_EFFECT_GATE_SECRET;
+	if (directory === undefined && effect === undefined && secret === undefined) return undefined;
+	return {
+		directory: directory ?? "",
+		effect: effect as NonNullable<WorkerStartupEnvelope["evalEffectGate"]>["effect"],
+		secret: secret ?? "",
+		domainCommitId: process.env.EVER_EVAL_EFFECT_GATE_DOMAIN_COMMIT_ID ?? "",
+		evidencePath: process.env.EVER_EVAL_EFFECT_GATE_EVIDENCE_PATH ?? "",
+		...(process.env.EVER_EVAL_EFFECT_GATE_EVIDENCE_INCLUDES
+			? { evidenceIncludes: process.env.EVER_EVAL_EFFECT_GATE_EVIDENCE_INCLUDES }
+			: {}),
+		...(process.env.EVER_EVAL_EFFECT_GATE_EXPECTED_TOOL_ERROR === undefined
+			? {}
+			: { expectedToolError: process.env.EVER_EVAL_EFFECT_GATE_EXPECTED_TOOL_ERROR === "1" }),
+		...(process.env.EVER_EVAL_EFFECT_GATE_TOOL_NAME ? { toolName: process.env.EVER_EVAL_EFFECT_GATE_TOOL_NAME } : {}),
+		...(process.env.EVER_EVAL_EFFECT_GATE_TARGET_PATH
+			? { targetPath: process.env.EVER_EVAL_EFFECT_GATE_TARGET_PATH }
+			: {}),
+		...(process.env.EVER_EVAL_EFFECT_GATE_COMMAND_INCLUDES
+			? { commandIncludes: process.env.EVER_EVAL_EFFECT_GATE_COMMAND_INCLUDES }
+			: {}),
+	};
+}
+
 function paths(agentDir: string) {
 	const runDir = join(agentDir, "run");
 	return {
@@ -428,11 +455,13 @@ async function serve(
 			const tokenChannel = child.stdio[3];
 			if (!(tokenChannel instanceof Writable))
 				throw new Error(`Worker token channel did not open for agent ${agent.id}`);
+			const gateCapability = evalEffectGateCapability();
 			const startupEnvelope: WorkerStartupEnvelope = {
 				schemaVersion: 1,
 				token,
 				provider: selectedModel.provider,
 				credential,
+				...(gateCapability === undefined ? {} : { evalEffectGate: gateCapability }),
 			};
 			tokenChannel.end(`${JSON.stringify(startupEnvelope)}\n`);
 			if (!child.pid) throw new Error(`Worker process did not start for agent ${agent.id}`);
