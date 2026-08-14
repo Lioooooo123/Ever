@@ -9,7 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage } from "@lioooooo123/ever-agent-core";
 import type { AuthEvent, AuthPrompt } from "@lioooooo123/ever-ai";
-import type { AssistantMessage, ImageContent, Message, Model } from "@lioooooo123/ever-ai/compat";
+import type { AssistantMessage, ImageContent, Model } from "@lioooooo123/ever-ai/compat";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -56,15 +56,9 @@ import {
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import type { AgentSession, AgentSessionEvent } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
-import {
-	CACHE_TTL_MS,
-	type CacheMiss,
-	collectCacheMisses,
-	computeCacheWaste,
-	detectCacheMiss,
-} from "../../core/cache-stats.ts";
+import { computeCacheWaste, detectCacheMiss } from "../../core/cache-stats.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -91,7 +85,7 @@ import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
-import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
+import { type SessionEntry, SessionManager } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -111,10 +105,7 @@ import { checkForNewEverVersion, type LatestEverRelease } from "../../utils/vers
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
-import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
-import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
-import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
@@ -133,7 +124,6 @@ import {
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
-import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.ts";
 import {
 	BranchSummaryStatusIndicator,
 	CompactionStatusIndicator,
@@ -147,8 +137,10 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { UserSessionMessageComponent } from "./components/user-session-message.ts";
 import { editInExternalEditor } from "./external-editor.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { SessionPresentation } from "./session-presentation.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -198,12 +190,6 @@ type CompactionQueuedMessage = {
 	text: string;
 	mode: "steer" | "followUp";
 };
-
-type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }>;
-
-function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
-	return "type" in item && item.type === "custom";
-}
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 
@@ -435,6 +421,7 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+	private sessionPresentation: SessionPresentation;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -568,6 +555,22 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.sessionPresentation = new SessionPresentation({
+			container: this.chatContainer,
+			ui: this.ui,
+			pendingTools: this.pendingTools,
+			getSession: () => this.session,
+			getMarkdownTheme: () => this.getMarkdownThemeWithSettings(),
+			getMarkdownTransformers: () => this.getMarkdownTransformers(),
+			getOutputPad: () => this.outputPad,
+			getToolsExpanded: () => this.toolOutputExpanded,
+			getHideThinkingBlock: () => this.hideThinkingBlock,
+			getHiddenThinkingLabel: () => this.hiddenThinkingLabel,
+			getRetryAttempt: () => this.session.retryAttempt,
+			addHistory: (text) => this.editor.addToHistory?.(text),
+			updateFooter: () => this.footer.invalidate(),
+			updateEditorBorder: () => this.updateEditorBorderColor(),
+		});
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
 
@@ -583,6 +586,27 @@ export class InteractiveMode {
 			(message) => this.showError(message),
 			() => this.updateEditorBorderColor(),
 		);
+		this.runtimeHost.setPermissionApprovalHandler(async (request) => {
+			const lifetimeLabels = {
+				once: "Allow once",
+				attempt: "Allow for this Attempt",
+				task: "Allow for this Task",
+				workspace: "Allow in this workspace",
+				project_policy: "Write project policy",
+			} as const;
+			const choices = ["Deny", ...request.availableLifetimes.map((lifetime) => lifetimeLabels[lifetime])];
+			const target = [
+				...(request.intent.command ? [`Command: ${request.intent.command.normalized}`] : []),
+				...(request.intent.paths.length > 0 ? [`Paths: ${request.intent.paths.join(", ")}`] : []),
+			].join("\n");
+			const selected = await this.showExtensionSelector(
+				`Permission required\n${request.reason}${target ? `\n${target}` : ""}`,
+				choices,
+			);
+			if (!selected || selected === "Deny") return { action: "deny" };
+			const lifetime = request.availableLifetimes.find((candidate) => lifetimeLabels[candidate] === selected);
+			return lifetime ? { action: "allow", lifetime } : { action: "deny" };
+		});
 	}
 
 	private getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined {
@@ -1971,6 +1995,7 @@ export class InteractiveMode {
 			mode: "tui",
 			hasUI: true,
 			cwd: this.sessionManager.getCwd(),
+			durableGoal: extensionRunner.createContext().durableGoal,
 			sessionManager: this.sessionManager,
 			modelRegistry: extensionRunner.getModelRegistry(),
 			model: this.session.model,
@@ -3364,16 +3389,6 @@ export class InteractiveMode {
 		}
 	}
 
-	/** Extract text content from a user message */
-	private getUserMessageText(message: Message): string {
-		if (message.role !== "user") return "";
-		const textBlocks =
-			typeof message.content === "string"
-				? [{ type: "text", text: message.content }]
-				: message.content.filter((c: { type: string }) => c.type === "text");
-		return textBlocks.map((c) => (c as { text: string }).text).join("");
-	}
-
 	/**
 	 * Show a status message in the chat.
 	 *
@@ -3401,236 +3416,27 @@ export class InteractiveMode {
 	}
 
 	private addCustomEntryToChat(entry: Extract<SessionEntry, { type: "custom" }>): void {
-		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
-		if (!renderer) {
-			return;
-		}
-		const component = new CustomEntryComponent(entry, renderer);
-		component.setExpanded(this.toolOutputExpanded);
-		if (!component.hasContent()) {
-			return;
-		}
-
+		const rendered = this.sessionPresentation.createCustomEntry(entry);
+		if (!rendered) return;
 		if (this.streamingComponent) {
 			const streamingIndex = this.chatContainer.children.indexOf(this.streamingComponent);
 			if (streamingIndex >= 0) {
-				this.chatContainer.children.splice(streamingIndex, 0, component);
+				this.chatContainer.children.splice(streamingIndex, 0, rendered);
 				return;
 			}
 		}
-
-		this.chatContainer.addChild(component);
+		this.chatContainer.addChild(rendered);
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
-		switch (message.role) {
-			case "bashExecution": {
-				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
-				if (message.output) {
-					component.appendOutput(message.output);
-				}
-				component.setComplete(
-					message.exitCode,
-					message.cancelled,
-					message.truncated ? ({ truncated: true } as TruncationResult) : undefined,
-					message.fullOutputPath,
-				);
-				this.chatContainer.addChild(component);
-				break;
-			}
-			case "custom": {
-				if (message.display) {
-					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
-					const component = new CustomMessageComponent(
-						message,
-						renderer,
-						this.getMarkdownThemeWithSettings(),
-						this.outputPad,
-					);
-					component.setExpanded(this.toolOutputExpanded);
-					this.chatContainer.addChild(component);
-				}
-				break;
-			}
-			case "compactionSummary": {
-				this.chatContainer.addChild(new Spacer(1));
-				const component = new CompactionSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
-				component.setExpanded(this.toolOutputExpanded);
-				this.chatContainer.addChild(component);
-				break;
-			}
-			case "branchSummary": {
-				this.chatContainer.addChild(new Spacer(1));
-				const component = new BranchSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
-				component.setExpanded(this.toolOutputExpanded);
-				this.chatContainer.addChild(component);
-				break;
-			}
-			case "user": {
-				const textContent = this.getUserMessageText(message);
-				if (textContent) {
-					if (this.chatContainer.children.length > 0) {
-						this.chatContainer.addChild(new Spacer(1));
-					}
-					const skillBlock = parseSkillBlock(textContent);
-					if (skillBlock) {
-						// Render skill block (collapsible)
-						const component = new SkillInvocationMessageComponent(
-							skillBlock,
-							this.getMarkdownThemeWithSettings(),
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
-						// Render user message separately if present
-						if (skillBlock.userMessage) {
-							this.chatContainer.addChild(new Spacer(1));
-							const userComponent = new UserMessageComponent(
-								skillBlock.userMessage,
-								this.getMarkdownThemeWithSettings(),
-								this.outputPad,
-								this.getMarkdownTransformers(),
-							);
-							this.chatContainer.addChild(userComponent);
-						}
-					} else {
-						const userComponent = new UserMessageComponent(
-							textContent,
-							this.getMarkdownThemeWithSettings(),
-							this.outputPad,
-							this.getMarkdownTransformers(),
-						);
-						this.chatContainer.addChild(userComponent);
-					}
-					if (options?.populateHistory) {
-						this.editor.addToHistory?.(textContent);
-					}
-				}
-				break;
-			}
-			case "assistant": {
-				const assistantComponent = new AssistantMessageComponent(
-					message,
-					this.hideThinkingBlock,
-					this.getMarkdownThemeWithSettings(),
-					this.hiddenThinkingLabel,
-					this.outputPad,
-					this.getMarkdownTransformers(),
-				);
-				this.chatContainer.addChild(assistantComponent);
-				break;
-			}
-			case "toolResult": {
-				// Tool results are rendered inline with tool calls, handled separately
-				break;
-			}
-			default: {
-				const _exhaustive: never = message;
-			}
-		}
+		this.sessionPresentation.appendMessage(message, options?.populateHistory === true);
 	}
 
-	private renderSessionItems(
-		items: readonly RenderSessionItem[],
-		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
-	): void {
-		this.pendingTools.clear();
-		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
-		// Cache-miss notices are not persisted; re-derive them from the full entry
-		// list and re-inject them after the assistant messages that paid for them.
-		const cacheMisses = this.settingsManager.getShowCacheMissNotices()
-			? collectCacheMisses(this.sessionManager.getEntries(), this.session.modelRuntime)
-			: new Map<AssistantMessage, CacheMiss>();
-
-		if (options.updateFooter) {
-			this.footer.invalidate();
-			this.updateEditorBorderColor();
-		}
-
-		for (const item of items) {
-			if (isCustomSessionEntry(item)) {
-				this.addCustomEntryToChat(item);
-				continue;
-			}
-
-			const message = item;
-			// Assistant messages need special handling for tool calls
-			if (message.role === "assistant") {
-				this.addMessageToChat(message);
-				// Render tool call components
-				for (const content of message.content) {
-					if (content.type === "toolCall") {
-						const component = new ToolExecutionComponent(
-							content.name,
-							content.id,
-							content.arguments,
-							{
-								showImages: this.settingsManager.getShowImages(),
-								imageWidthCells: this.settingsManager.getImageWidthCells(),
-							},
-							this.getRegisteredToolDefinition(content.name),
-							this.ui,
-							this.sessionManager.getCwd(),
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
-
-						if (message.stopReason === "aborted" || message.stopReason === "error") {
-							let errorMessage: string;
-							if (message.stopReason === "aborted") {
-								const retryAttempt = this.session.retryAttempt;
-								errorMessage =
-									retryAttempt > 0
-										? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
-										: "Operation aborted";
-							} else {
-								errorMessage = message.errorMessage || "Error";
-							}
-							component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
-						} else {
-							renderedPendingTools.set(content.id, component);
-						}
-					}
-				}
-				if (message.stopReason !== "aborted" && message.stopReason !== "error") {
-					const miss = cacheMisses.get(message);
-					if (miss) this.addCacheMissNotice(miss);
-				}
-			} else if (message.role === "toolResult") {
-				// Match tool results to pending tool components
-				const component = renderedPendingTools.get(message.toolCallId);
-				if (component) {
-					component.updateResult(message);
-					renderedPendingTools.delete(message.toolCallId);
-				}
-			} else {
-				// All other messages use standard rendering
-				this.addMessageToChat(message, options);
-			}
-		}
-
-		for (const [toolCallId, component] of renderedPendingTools) {
-			this.pendingTools.set(toolCallId, component);
-		}
-		this.ui.requestRender();
-	}
-
-	/**
-	 * Render session entries to chat. Used for initial load and rebuild after compaction.
-	 * @param entries Compaction-aware session entries to render
-	 * @param options.updateFooter Update footer state
-	 * @param options.populateHistory Add user messages to editor history
-	 */
 	private renderSessionEntries(
 		entries: SessionEntry[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
-		const items = entries.flatMap((entry): RenderSessionItem[] => {
-			if (entry.type === "custom") {
-				return [entry];
-			}
-			return sessionEntryToContextMessages(entry);
-		});
-		this.renderSessionItems(items, options);
+		this.sessionPresentation.render(entries, options);
 	}
 
 	/**
@@ -3646,20 +3452,8 @@ export class InteractiveMode {
 		if (miss) this.addCacheMissNotice(miss);
 	}
 
-	private addCacheMissNotice(miss: CacheMiss): void {
-		if (miss.missedTokens < 20_000 && miss.missedCost < 0.1) return;
-
-		const cost = miss.missedCost >= 0.01 ? ` (~$${miss.missedCost.toFixed(2)})` : "";
-		const reBilled = `${formatTokens(miss.missedTokens)} tokens re-billed${cost}`;
-		let label = "Cache miss";
-		if (miss.modelChanged) {
-			label = "Cache miss after model switch";
-		} else if (miss.idleMs >= CACHE_TTL_MS) {
-			label = `Cache miss after ${Math.round(miss.idleMs / 60_000)}m idle`;
-		}
-		const text = theme.fg("warning", `${label}: ${reBilled}`);
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(text, 1, 0));
+	private addCacheMissNotice(miss: NonNullable<ReturnType<typeof detectCacheMiss>>): void {
+		this.sessionPresentation.appendCacheMiss(miss);
 	}
 
 	renderInitialMessages(): void {
@@ -4503,7 +4297,8 @@ export class InteractiveMode {
 								if (
 									child instanceof AssistantMessageComponent ||
 									child instanceof CustomMessageComponent ||
-									child instanceof UserMessageComponent
+									child instanceof UserMessageComponent ||
+									child instanceof UserSessionMessageComponent
 								) {
 									child.setOutputPad(padding);
 								}

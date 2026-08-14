@@ -65,13 +65,15 @@ describe("native Attempt control plane", () => {
 			inputSha256: "input",
 			effect: "reconcilable_write",
 			paths: [process.cwd()],
+			permissionSource: "reviewer",
+			intentSha256: "a".repeat(64),
 		});
-		expect(
-			store
-				.listEvents(task.id)
-				.slice(-3)
-				.map((event) => event.type),
-		).toEqual(["ToolPlanned", "ToolAuthorized", "ToolStarted"]);
+		const toolEvents = store.listEvents(task.id).slice(-3);
+		expect(toolEvents.map((event) => event.type)).toEqual(["ToolPlanned", "ToolAuthorized", "ToolStarted"]);
+		expect(toolEvents[1]?.payload).toMatchObject({
+			permissionSource: "reviewer",
+			intentSha256: "a".repeat(64),
+		});
 		store.close();
 	});
 

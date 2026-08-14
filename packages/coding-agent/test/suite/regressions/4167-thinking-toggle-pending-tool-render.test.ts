@@ -6,7 +6,8 @@ import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import type { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { SessionPresentation } from "../../../src/modes/interactive/session-presentation.ts";
+import { getMarkdownTheme, initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
 
 const TOOL_CALL_ID = "tool-4167";
@@ -44,7 +45,16 @@ type RenderSessionContextThis = {
 		getShowCacheMissNotices(): boolean;
 	};
 	sessionManager: { getCwd(): string; getEntries(): SessionEntry[] };
-	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
+	session: {
+		retryAttempt: number;
+		modelRegistry: { find(provider: string, modelId: string): undefined };
+		settingsManager: RenderSessionContextThis["settingsManager"];
+		sessionManager: RenderSessionContextThis["sessionManager"];
+		modelRuntime: { getModel(provider: string, modelId: string): undefined };
+		extensionRunner: { getEntryRenderer(): undefined; getMessageRenderer(): undefined };
+		getToolDefinition(toolName: string): undefined;
+	};
+	sessionPresentation: SessionPresentation;
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
@@ -63,18 +73,31 @@ type HandleEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) =>
 
 function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	const chatContainer = new Container();
-	return {
-		pendingTools: new Map<string, ToolExecutionComponent>(),
+	const pendingTools = new Map<string, ToolExecutionComponent>();
+	const ui = { requestRender: vi.fn() } as unknown as TUI;
+	const settingsManager = {
+		getShowImages: () => false,
+		getImageWidthCells: () => 60,
+		getShowCacheMissNotices: () => false,
+	};
+	const sessionManager = { getCwd: () => process.cwd(), getEntries: () => [] };
+	const session = {
+		retryAttempt: 0,
+		modelRegistry: { find: () => undefined },
+		settingsManager,
+		sessionManager,
+		modelRuntime: { getModel: () => undefined },
+		extensionRunner: { getEntryRenderer: () => undefined, getMessageRenderer: () => undefined },
+		getToolDefinition: () => undefined,
+	};
+	const fake = {
+		pendingTools,
 		chatContainer,
 		footer: { invalidate: vi.fn() },
-		ui: { requestRender: vi.fn() } as unknown as TUI,
-		settingsManager: {
-			getShowImages: () => false,
-			getImageWidthCells: () => 60,
-			getShowCacheMissNotices: () => false,
-		},
-		sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
-		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
+		ui,
+		settingsManager,
+		sessionManager,
+		session,
 		toolOutputExpanded: false,
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),
@@ -84,6 +107,25 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		addMessageToChat(message: AgentMessage) {
 			chatContainer.addChild(new Text(message.role, 0, 0));
 		},
+	} as Omit<RenderSessionContextThis, "sessionPresentation">;
+	return {
+		...fake,
+		sessionPresentation: new SessionPresentation({
+			container: chatContainer,
+			ui,
+			pendingTools,
+			getSession: () => session as never,
+			getMarkdownTheme,
+			getMarkdownTransformers: () => [],
+			getOutputPad: () => 0,
+			getToolsExpanded: () => false,
+			getHideThinkingBlock: () => false,
+			getHiddenThinkingLabel: () => "Thinking",
+			getRetryAttempt: () => 0,
+			addHistory: () => {},
+			updateFooter: fake.footer.invalidate,
+			updateEditorBorder: fake.updateEditorBorderColor,
+		}),
 	};
 }
 

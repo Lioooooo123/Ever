@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import type { PermissionGrantRecord, TaskRecord } from "@lioooooo123/ever-long-tasks";
 import { workerSocketDirectory } from "./worker-socket.ts";
 
 const PROVIDER_DOMAINS = [
@@ -30,6 +31,33 @@ export interface SandboxedCommand {
 	command: string;
 	sandboxId: string;
 	profileSha256: string;
+}
+
+export interface SandboxProfileExtension {
+	allowedDomains?: readonly string[];
+	writableRoots?: readonly string[];
+}
+
+export function unattendedSandboxAllowedDomains(profile: SandboxProfileExtension = {}): string[] {
+	return [...new Set([...PROVIDER_DOMAINS, ...(profile.allowedDomains ?? [])])];
+}
+
+/** Derives the next Worker profile only from active grants visible to the Task workspace. */
+export function sandboxProfileForTask(
+	task: TaskRecord,
+	grants: readonly PermissionGrantRecord[],
+): SandboxProfileExtension {
+	const applicable = grants.filter(
+		(grant) =>
+			grant.state === "active" &&
+			(grant.taskId === task.id ||
+				(["workspace", "project_policy"].includes(grant.lifetime) &&
+					grant.workspaceFingerprint === task.workspaceFingerprint)),
+	);
+	return {
+		allowedDomains: [...new Set(applicable.flatMap((grant) => grant.scope.networkDomains))],
+		writableRoots: [...new Set(applicable.flatMap((grant) => grant.scope.pathPrefixes))],
+	};
 }
 
 function sandboxBackend(): SandboxCapability["backend"] {
@@ -64,12 +92,12 @@ export class UnattendedSandbox {
 		this.agentDir = agentDir;
 	}
 
-	async initialize(): Promise<SandboxCapability> {
+	async initialize(profile: SandboxProfileExtension = {}): Promise<SandboxCapability> {
 		const capability = probeUnattendedSandbox();
 		if (!capability.available) return capability;
 		const config: SandboxRuntimeConfig = {
 			network: {
-				allowedDomains: PROVIDER_DOMAINS,
+				allowedDomains: unattendedSandboxAllowedDomains(profile),
 				deniedDomains: [],
 				allowUnixSockets: [join(this.agentDir, "run"), workerSocketDirectory(this.agentDir)],
 				allowLocalBinding: false,
@@ -103,10 +131,18 @@ export class UnattendedSandbox {
 		return capability;
 	}
 
-	async wrap(command: string, args: readonly string[], workspaceRoot: string): Promise<SandboxedCommand> {
+	async wrap(
+		command: string,
+		args: readonly string[],
+		workspaceRoot: string,
+		profile: SandboxProfileExtension = {},
+	): Promise<SandboxedCommand> {
 		if (!this.initialized) throw new Error("Unattended sandbox is not initialized");
 		const config: SandboxRuntimeConfig = {
-			network: { allowedDomains: PROVIDER_DOMAINS, deniedDomains: [] },
+			network: {
+				allowedDomains: unattendedSandboxAllowedDomains(profile),
+				deniedDomains: [],
+			},
 			filesystem: {
 				denyRead: [
 					join(this.agentDir, "auth.json"),
@@ -122,7 +158,7 @@ export class UnattendedSandbox {
 					join(homedir(), ".netrc"),
 					join(homedir(), ".npmrc"),
 				],
-				allowWrite: [workspaceRoot, this.agentDir, tmpdir()],
+				allowWrite: [workspaceRoot, this.agentDir, tmpdir(), ...(profile.writableRoots ?? [])],
 				denyWrite: [
 					join(this.agentDir, "auth.json"),
 					join(this.agentDir, "run", "control-token"),
@@ -142,6 +178,11 @@ export class UnattendedSandbox {
 			sandboxId: `${sandboxBackend()}:${randomUUID()}`,
 			profileSha256: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
 		};
+	}
+
+	async reinitialize(profile: SandboxProfileExtension): Promise<SandboxCapability> {
+		await this.close();
+		return this.initialize(profile);
 	}
 
 	async close(): Promise<void> {

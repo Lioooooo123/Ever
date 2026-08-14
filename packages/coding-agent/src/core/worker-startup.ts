@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Credential } from "@lioooooo123/ever-ai";
 import type { ToolEffect } from "@lioooooo123/ever-long-tasks";
+import type { SessionExecutionEnvironment } from "./session-execution-host.ts";
 
 export interface EvalEffectGateCapability {
 	directory: string;
@@ -21,6 +22,7 @@ export interface WorkerStartupEnvelope {
 	token: string;
 	provider: string;
 	credential: Credential;
+	executionEnvironment: SessionExecutionEnvironment;
 	evalEffectGate?: EvalEffectGateCapability;
 }
 
@@ -47,6 +49,30 @@ export function parseWorkerStartupEnvelope(value: unknown): WorkerStartupEnvelop
 			typeof value.credential.expires !== "number")
 	)
 		throw new Error("Worker startup OAuth credential is incomplete");
+	if (!isRecord(value.executionEnvironment)) throw new Error("Worker execution environment is missing");
+	const environment = value.executionEnvironment;
+	if (environment.trust !== "sandboxed" && environment.trust !== "unsafe_host")
+		throw new Error("Worker execution environment has invalid trust");
+	if (!["seatbelt", "bubblewrap", "unsupported"].includes(String(environment.backend)))
+		throw new Error("Worker execution environment has invalid backend");
+	if (typeof environment.workspaceRoot !== "string" || !isAbsolute(environment.workspaceRoot))
+		throw new Error("Worker execution environment workspace must be absolute");
+	if (
+		!Array.isArray(environment.allowedDomains) ||
+		!environment.allowedDomains.every((domain) => typeof domain === "string")
+	)
+		throw new Error("Worker execution environment has invalid allowed domains");
+	if (
+		!Array.isArray(environment.writableRoots) ||
+		!environment.writableRoots.every((root) => typeof root === "string" && isAbsolute(root))
+	)
+		throw new Error("Worker execution environment has invalid writable roots");
+	if (environment.trust === "sandboxed") {
+		if (typeof environment.sandboxId !== "string" || environment.sandboxId === "")
+			throw new Error("Sandboxed Worker execution environment has no sandbox ID");
+		if (typeof environment.profileSha256 !== "string" || !/^[a-f0-9]{64}$/.test(environment.profileSha256))
+			throw new Error("Sandboxed Worker execution environment has invalid profile hash");
+	}
 	if (value.evalEffectGate !== undefined) {
 		if (!isRecord(value.evalEffectGate)) throw new Error("Worker Eval effect gate is invalid");
 		const gate = value.evalEffectGate;

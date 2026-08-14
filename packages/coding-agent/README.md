@@ -23,9 +23,9 @@ ever --continue
 ever --resume
 ```
 
-Goal mode automatically continues after a settled turn until the agent reports verified completion, a configured budget is exhausted, or the same blocker is reported on three consecutive Goal turns. `/goal pause`, `/goal complete`, `/goal blocked`, and `/goal clear` stop an in-flight Goal turn immediately. The Goal remains part of the current Session and survives compaction, resume, and branch navigation.
+`/goal` creates a durable Task and attaches the current Session to its native execution lifecycle. Task Store owns the Goal, budget, progress, checkpoints, evidence, permissions, and recovery state; the extension does not run a second continuation loop. Use `/goal status`, `/goal pause`, `/goal resume`, `/goal blocked <reason>`, and `/goal cancel` to control the attached Task. Completion is accepted only through evidence-backed `task_update` verification.
 
-Detached Worker execution remains available as the advanced `ever task` control plane. It is not the default product path.
+The same Task can be resumed by a resident Worker after the client exits and reopened through `ever task`.
 
 ---
 
@@ -170,9 +170,8 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
-| `/goal [objective]` | Start or inspect an opt-in long-running Goal in this Session |
-| `/goal status\|pause\|resume\|complete\|blocked\|clear` | Control the active Goal lifecycle |
-| `/goal limit turns\|minutes\|tokens <n>` | Bound automatic Goal continuation |
+| `/goal [objective]` | Create a durable Task and attach it to this Session |
+| `/goal status\|pause\|resume\|blocked\|cancel` | Control the attached durable Task |
 | `/trust` | Save project trust decision for future sessions (restart required) |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
@@ -219,7 +218,7 @@ Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUp
 
 ## Sessions
 
-A Session is Ever's normal user-facing unit of work. Use `--continue`, `--resume`, `--session`, `--session-id`, and `--fork` to return to or branch existing work. `/goal` adds long-running state to the active Session without replacing its transcript or navigation model. See [Session details](docs/sessions.md).
+A Session is Ever's execution and conversation record. Use `--continue`, `--resume`, `--session`, `--session-id`, and `--fork` to return to or branch existing work. `/goal` creates a durable Task whose Attempt adopts the settled Session; Task state remains in Task Store rather than being copied into the transcript. See [Session details](docs/sessions.md).
 
 ### Compaction
 
@@ -229,7 +228,7 @@ Long sessions can exhaust context windows. Compaction summarizes older messages 
 
 **Automatic:** Enabled by default. Triggers on context overflow (recovers and retries) or when approaching the limit (proactive). Configure via `/settings` or `settings.json`.
 
-Compaction is lossy. The full history and Goal state remain in the Session record. Customize compaction behavior via [extensions](#extensions). See [docs/compaction.md](docs/compaction.md) for internals.
+Compaction is lossy. Full Session history remains in the Session record, while durable Goal state remains in Task Store. Customize compaction behavior via [extensions](#extensions). See [docs/compaction.md](docs/compaction.md) for internals.
 
 ---
 
@@ -445,9 +444,9 @@ See [docs/rpc.md](docs/rpc.md) for the protocol.
 
 ## Design principles
 
-Ever is Session-native. Ordinary interaction stays conversational and user-driven; `/goal` explicitly promotes one objective into bounded, automatically continuing work within the same Session.
+Ever is Session-native. Ordinary interaction stays conversational and user-driven; `/goal` promotes one objective into a durable Task while retaining the current Session transcript.
 
-The Goal lifecycle is `reasoning -> execute -> observe -> verify -> repair`, repeated until evidence proves completion, a budget pauses execution, or a repeated blocker requires the user. Advanced detached Tasks additionally use checkpoints, leases, and effect records for Worker recovery.
+The native Task lifecycle is `reasoning -> execute -> observe -> verify -> repair`, repeated until acceptance passes, a budget pauses execution, or the Task waits for user or external input. The same lifecycle owns checkpoints, leases, permissions, continuation, and Worker recovery; there is no separate Goal Mode state machine.
 
 Extensions, skills, prompt templates, and packages customize execution without creating a second agent loop. Sandboxing and explicit approval boundaries protect unattended work.
 

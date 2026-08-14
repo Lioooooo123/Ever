@@ -8,6 +8,28 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		hasUI: false,
 		ui: {} as ExtensionContext["ui"],
 		cwd: process.cwd(),
+		durableGoal: {
+			status: () => undefined,
+			start: async () => {
+				throw new Error("not configured");
+			},
+			pause: async () => {
+				throw new Error("not configured");
+			},
+			resume: async () => {
+				throw new Error("not configured");
+			},
+			cancel: async () => {
+				throw new Error("not configured");
+			},
+			update: async () => {
+				throw new Error("not configured");
+			},
+			listPermissionGrants: () => [],
+			revokePermissionGrant: () => {
+				throw new Error("not configured");
+			},
+		},
 		sessionManager: {} as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,

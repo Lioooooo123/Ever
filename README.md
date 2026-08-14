@@ -47,16 +47,9 @@ Inside the TUI, opt into long-running execution with one command:
 /goal status
 /goal pause
 /goal resume
-/goal complete
-/goal clear
-```
-
-Adjust the active Goal budget without leaving the Session:
-
-```bash
-/goal limit turns 20
-/goal limit minutes 45
-/goal limit tokens 100000
+/goal blocked <reason>
+/goal permissions
+/goal cancel
 ```
 
 The durable Worker control plane is an advanced interface for detached automation:
@@ -74,7 +67,7 @@ See the [Ever CLI and SDK documentation](packages/coding-agent/README.md) for Se
 | Concept | Meaning |
 |---|---|
 | **Session** | The normal user-facing conversation, tool transcript, history, and branch tree |
-| **Goal** | Opt-in long-running state scoped to the current Session |
+| **Goal** | The objective of a durable Task attached to the current Session |
 | **Evidence** | Concrete verification required before agent-reported Goal completion |
 | **Task / Attempt / Worker** | Advanced detached control-plane records used by `ever task` |
 

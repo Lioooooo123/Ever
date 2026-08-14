@@ -766,13 +766,21 @@ export async function handlePackageCommand(
 	try {
 		switch (options.command) {
 			case "install":
-				await packageManager.installAndPersist(source!, { local: options.local });
+				await packageManager.apply({
+					action: "install",
+					source: source!,
+					scope: options.local ? "project" : "user",
+				});
 				console.log(chalk.green(`Installed ${source}`));
 				return true;
 
 			case "remove": {
-				const removed = await packageManager.removeAndPersist(source!, { local: options.local });
-				if (!removed) {
+				const result = await packageManager.apply({
+					action: "remove",
+					source: source!,
+					scope: options.local ? "project" : "user",
+				});
+				if (result.action !== "remove" || !result.configuredSourceRemoved) {
 					console.error(chalk.red(`No matching package found for ${source}`));
 					process.exitCode = 1;
 					return true;
@@ -826,7 +834,7 @@ export async function handlePackageCommand(
 				}
 				if (updateTargetIncludesExtensions(target)) {
 					const updateSource = target.type === "extensions" ? target.source : undefined;
-					await packageManager.update(updateSource);
+					await packageManager.apply({ action: "update", source: updateSource });
 					if (updateSource) {
 						console.log(chalk.green(`Updated ${updateSource}`));
 					} else {

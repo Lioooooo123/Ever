@@ -3,15 +3,22 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
-import type { AgentSessionLifecycle, AgentSessionLifecycleRef } from "./agent-session-lifecycle.ts";
+import type {
+	AgentSessionLifecycle,
+	AgentSessionLifecycleDecision,
+	AgentSessionLifecycleEvent,
+	AgentSessionLifecycleRef,
+} from "./agent-session-lifecycle.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
 import type {
+	DurableGoalHost,
 	ProjectTrustContext,
 	ReplacedSessionContext,
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import type { PermissionApproval, PermissionApprovalRequest } from "./permission-kernel.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -100,12 +107,16 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
 	private beforeSessionInvalidate?: () => void;
+	private sessionReplacementGuard?: () => void | Promise<void>;
 	private _session: AgentSession;
 	private _services: AgentSessionServices;
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
 	private readonly lifecycleRef: AgentSessionLifecycleRef;
+	private permissionApprovalHandler?: (request: PermissionApprovalRequest) => Promise<PermissionApproval>;
+	private durableGoalHost?: DurableGoalHost;
+	private readonly pendingPermissionApprovals = new Map<string, Promise<PermissionApproval>>();
 
 	constructor(
 		_session: AgentSession,
@@ -147,6 +158,31 @@ export class AgentSessionRuntime {
 		this.rebindSession = rebindSession;
 	}
 
+	setSessionReplacementGuard(guard?: () => void | Promise<void>): void {
+		this.sessionReplacementGuard = guard;
+	}
+
+	setDurableGoalHost(host?: DurableGoalHost): void {
+		this.durableGoalHost = host;
+		this.session.setDurableGoalHost(host);
+	}
+
+	setPermissionApprovalHandler(handler?: (request: PermissionApprovalRequest) => Promise<PermissionApproval>): void {
+		this.permissionApprovalHandler = handler;
+	}
+
+	requestPermissionApproval(request: PermissionApprovalRequest): Promise<PermissionApproval> | undefined {
+		if (!this.permissionApprovalHandler) return undefined;
+		const pending = this.pendingPermissionApprovals.get(request.intentSha256);
+		if (pending) return pending;
+		const approval = this.permissionApprovalHandler(request).finally(() => {
+			if (this.pendingPermissionApprovals.get(request.intentSha256) === approval)
+				this.pendingPermissionApprovals.delete(request.intentSha256);
+		});
+		this.pendingPermissionApprovals.set(request.intentSha256, approval);
+		return approval;
+	}
+
 	/**
 	 * Set a synchronous callback that runs after `session_shutdown` handlers finish
 	 * but before the current session is invalidated.
@@ -160,11 +196,30 @@ export class AgentSessionRuntime {
 	}
 
 	installLifecycle(lifecycle: AgentSessionLifecycle): () => void {
-		if (this.lifecycleRef.current && this.lifecycleRef.current !== lifecycle)
-			throw new Error("Agent Session lifecycle is already installed");
-		this.lifecycleRef.current = lifecycle;
+		const previous = this.lifecycleRef.current;
+		if (!previous || previous === lifecycle) {
+			this.lifecycleRef.current = lifecycle;
+			return () => {
+				if (this.lifecycleRef.current === lifecycle) this.lifecycleRef.current = previous;
+			};
+		}
+		const composite: AgentSessionLifecycle = {
+			handle: async (event: AgentSessionLifecycleEvent): Promise<AgentSessionLifecycleDecision | undefined> => {
+				const first = await previous.handle(event);
+				if (first?.block) return first;
+				const nextEvent =
+					event.type === "before_turn" && first?.systemPrompt
+						? { ...event, baseSystemPrompt: first.systemPrompt }
+						: event;
+				const second = await lifecycle.handle(nextEvent);
+				if (!first) return second;
+				if (!second) return first;
+				return { ...first, ...second };
+			},
+		};
+		this.lifecycleRef.current = composite;
 		return () => {
-			if (this.lifecycleRef.current === lifecycle) this.lifecycleRef.current = undefined;
+			if (this.lifecycleRef.current === composite) this.lifecycleRef.current = previous;
 		};
 	}
 
@@ -273,6 +328,7 @@ export class AgentSessionRuntime {
 
 	private apply(result: CreateAgentSessionRuntimeResult): void {
 		this._session = result.session;
+		this._session.setDurableGoalHost(this.durableGoalHost);
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;
@@ -295,6 +351,7 @@ export class AgentSessionRuntime {
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		},
 	): Promise<{ cancelled: boolean }> {
+		await this.sessionReplacementGuard?.();
 		const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
 		if (beforeResult.cancelled) {
 			return beforeResult;
@@ -322,6 +379,7 @@ export class AgentSessionRuntime {
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}): Promise<{ cancelled: boolean }> {
+		await this.sessionReplacementGuard?.();
 		const beforeResult = await this.emitBeforeSwitch("new");
 		if (beforeResult.cancelled) {
 			return beforeResult;
@@ -357,6 +415,7 @@ export class AgentSessionRuntime {
 		entryId: string,
 		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	): Promise<{ cancelled: boolean; selectedText?: string }> {
+		await this.sessionReplacementGuard?.();
 		const position = options?.position ?? "before";
 		const beforeResult = await this.emitBeforeFork(entryId, { position });
 		if (beforeResult.cancelled) {
@@ -453,6 +512,7 @@ export class AgentSessionRuntime {
 	 * @throws {MissingSessionCwdError} When the imported session cwd cannot be resolved and no override is provided.
 	 */
 	async importFromJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
+		await this.sessionReplacementGuard?.();
 		const resolvedPath = resolvePath(inputPath);
 		if (!existsSync(resolvedPath)) {
 			throw new SessionImportFileNotFoundError(resolvedPath);

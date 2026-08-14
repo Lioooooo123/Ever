@@ -55,7 +55,8 @@ export async function runResidentWorkerFromEnvironment(
 	initialImages?: ImageContent[],
 	onBeforeStop?: () => Promise<void>,
 ): Promise<void> {
-	const token = getWorkerStartup().token;
+	const startup = getWorkerStartup();
+	const token = startup.token;
 	const startedAt = requiredEnvironment("EVER_WORKER_STARTED_AT");
 	if (!taskRunContext) throw new Error("Resident worker has no claimed Task run context");
 	await runResidentWorkerHost(runtime, {
@@ -82,9 +83,11 @@ export async function runResidentWorkerFromEnvironment(
 			privateSocketPath: requiredEnvironment("EVER_WORKER_SOCKET"),
 			tokenSha256: createHash("sha256").update(token).digest("hex"),
 			workspaceRoot: runtime.cwd,
-			...(process.env.EVER_SANDBOX_ID ? { sandboxId: process.env.EVER_SANDBOX_ID } : {}),
-			...(process.env.EVER_SANDBOX_PROFILE_SHA256
-				? { sandboxProfileSha256: process.env.EVER_SANDBOX_PROFILE_SHA256 }
+			...(startup.executionEnvironment.sandboxId
+				? {
+						sandboxId: startup.executionEnvironment.sandboxId,
+						sandboxProfileSha256: startup.executionEnvironment.profileSha256,
+					}
 				: {}),
 			lifecycle: "resident",
 			state: "starting",

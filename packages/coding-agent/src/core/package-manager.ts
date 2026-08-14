@@ -99,22 +99,25 @@ export interface ConfiguredPackage {
 	installedPath?: string;
 }
 
+export type PackageSourceIntent =
+	| { action: "install"; source: string; scope: "user" | "project" }
+	| { action: "remove"; source: string; scope: "user" | "project" }
+	| { action: "update"; source?: string };
+
+export type PackageSourceIntentResult =
+	| { action: "install" | "update" }
+	| { action: "remove"; configuredSourceRemoved: boolean };
+
+/** Narrow package lifecycle seam used by resource loading and package commands. */
 export interface PackageManager {
 	resolve(onMissing?: (source: string) => Promise<MissingSourceAction>): Promise<ResolvedPaths>;
-	install(source: string, options?: { local?: boolean }): Promise<void>;
-	installAndPersist(source: string, options?: { local?: boolean }): Promise<void>;
-	remove(source: string, options?: { local?: boolean }): Promise<void>;
-	removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean>;
-	update(source?: string): Promise<void>;
-	listConfiguredPackages(): ConfiguredPackage[];
 	resolveExtensionSources(
 		sources: string[],
 		options?: { local?: boolean; temporary?: boolean },
 	): Promise<ResolvedPaths>;
-	addSourceToSettings(source: string, options?: { local?: boolean }): boolean;
-	removeSourceFromSettings(source: string, options?: { local?: boolean }): boolean;
+	apply(intent: PackageSourceIntent): Promise<PackageSourceIntentResult>;
+	listConfiguredPackages(): ConfiguredPackage[];
 	setProgressCallback(callback: ProgressCallback | undefined): void;
-	getInstalledPath(source: string, scope: "user" | "project"): string | undefined;
 }
 
 interface PackageManagerOptions {
@@ -973,6 +976,23 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		return configuredPackages;
+	}
+
+	async apply(intent: PackageSourceIntent): Promise<PackageSourceIntentResult> {
+		if (intent.action === "install") {
+			await this.installAndPersist(intent.source, { local: intent.scope === "project" });
+			return { action: "install" };
+		}
+		if (intent.action === "remove") {
+			return {
+				action: "remove",
+				configuredSourceRemoved: await this.removeAndPersist(intent.source, {
+					local: intent.scope === "project",
+				}),
+			};
+		}
+		await this.update(intent.source);
+		return { action: "update" };
 	}
 
 	async install(source: string, options?: { local?: boolean }): Promise<void> {

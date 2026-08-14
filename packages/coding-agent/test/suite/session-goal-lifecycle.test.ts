@@ -1,9 +1,51 @@
-import { fauxAssistantMessage, fauxToolCall } from "@lioooooo123/ever-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { fauxAssistantMessage } from "@lioooooo123/ever-ai";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DurableGoalHost, DurableGoalSnapshot } from "../../src/core/extensions/index.ts";
 import goalExtension from "../../src/extensions/goal.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";
 
-describe("Session Goal lifecycle", () => {
+function bindGoalHost(harness: Harness): DurableGoalHost {
+	let goal: DurableGoalSnapshot | undefined;
+	const host: DurableGoalHost = {
+		status: () => goal,
+		start: vi.fn(async (objective: string) => {
+			goal = {
+				taskId: "12345678-1234-1234-1234-123456789abc",
+				goal: objective,
+				state: "running",
+				totalTurns: 0,
+				totalCostUsd: 0,
+				maxTurns: 25,
+				maxWallTimeMinutes: 240,
+			};
+			return goal;
+		}),
+		pause: async () => {
+			if (!goal) throw new Error("No Task");
+			goal = { ...goal, state: "paused" };
+			return goal;
+		},
+		resume: async () => {
+			if (!goal) throw new Error("No Task");
+			goal = { ...goal, state: "running" };
+			return goal;
+		},
+		cancel: async () => {
+			if (!goal) throw new Error("No Task");
+			goal = { ...goal, state: "cancelled" };
+			return goal;
+		},
+		update: async () => ({ accepted: true }),
+		listPermissionGrants: () => [],
+		revokePermissionGrant: () => {
+			throw new Error("Grant not found");
+		},
+	};
+	harness.session.setDurableGoalHost(host);
+	return host;
+}
+
+describe("Session durable Goal lifecycle", () => {
 	const harnesses: Harness[] = [];
 
 	afterEach(() => {
@@ -13,6 +55,7 @@ describe("Session Goal lifecycle", () => {
 	it("keeps ordinary Session turns single-shot", async () => {
 		const harness = await createHarness({ extensionFactories: [{ name: "goal", factory: goalExtension }] });
 		harnesses.push(harness);
+		bindGoalHost(harness);
 		harness.setResponses([fauxAssistantMessage("ordinary response")]);
 
 		await harness.session.prompt("ordinary prompt");
@@ -22,20 +65,11 @@ describe("Session Goal lifecycle", () => {
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
-	it("starts and automatically continues a Goal inside the same Session", async () => {
+	it("adapts /goal to a Task and never schedules extension-owned continuation", async () => {
 		const harness = await createHarness({ extensionFactories: [{ name: "goal", factory: goalExtension }] });
 		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage("first step"),
-			fauxAssistantMessage(
-				fauxToolCall("update_goal", {
-					status: "completed",
-					summary: "migration verified",
-					evidence: ["focused tests passed"],
-				}),
-				{ stopReason: "toolUse" },
-			),
-		]);
+		const host = bindGoalHost(harness);
+		harness.setResponses([fauxAssistantMessage("first durable step")]);
 		const settled = new Promise<void>((resolve) => {
 			const unsubscribe = harness.session.subscribe((event) => {
 				if (event.type !== "agent_settled") return;
@@ -47,10 +81,45 @@ describe("Session Goal lifecycle", () => {
 		await harness.session.prompt("/goal finish the migration");
 		await settled;
 
-		const customMessages = harness.session.messages.filter((message) => message.role === "custom");
-		expect(customMessages.map((message) => message.customType)).toContain("session-goal-start");
-		expect(customMessages.map((message) => message.customType)).toContain("session-goal-continue");
+		expect(host.start).toHaveBeenCalledWith("finish the migration");
+		expect(
+			harness.session.messages.filter(
+				(message) => message.role === "custom" && message.customType === "durable-goal-start",
+			),
+		).toHaveLength(1);
 		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
-		expect(harness.session.getActiveToolNames()).not.toContain("update_goal");
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
+	it("leaves retry recovery to AgentSession without creating a second Goal turn", async () => {
+		const harness = await createHarness({
+			extensionFactories: [{ name: "goal", factory: goalExtension }],
+			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } },
+		});
+		harnesses.push(harness);
+		bindGoalHost(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("recovered step"),
+		]);
+		const settled = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type !== "agent_settled") return;
+				unsubscribe();
+				resolve();
+			});
+		});
+
+		await harness.session.prompt("/goal recover before continuing");
+		await settled;
+
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(1);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
+		expect(
+			harness.session.messages.filter(
+				(message) => message.role === "custom" && message.customType === "durable-goal-start",
+			),
+		).toHaveLength(1);
 	});
 });

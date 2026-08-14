@@ -13,6 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import type {
@@ -28,6 +29,7 @@ import { contentText } from "@lioooooo123/ever-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
+	Context,
 	ImageContent,
 	Model,
 	ProviderHeaders,
@@ -51,7 +53,11 @@ import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
-import { type AgentSessionLifecycleRef, withAgentSessionRequestKind } from "./agent-session-lifecycle.ts";
+import {
+	type AgentSessionLifecycleRef,
+	type AgentSessionRequestKind,
+	withAgentSessionRequestKind,
+} from "./agent-session-lifecycle.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
@@ -70,6 +76,7 @@ import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
 	type ContextUsage,
+	type DurableGoalHost,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	type ExtensionMode,
@@ -110,33 +117,6 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
-
-// ============================================================================
-// Skill Block Parsing
-// ============================================================================
-
-/** Parsed skill block from a user message */
-export interface ParsedSkillBlock {
-	name: string;
-	location: string;
-	content: string;
-	userMessage: string | undefined;
-}
-
-/**
- * Parse a skill block from message text.
- * Returns null if the text doesn't contain a skill block.
- */
-export function parseSkillBlock(text: string): ParsedSkillBlock | null {
-	const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
-	if (!match) return null;
-	return {
-		name: match[1],
-		location: match[2],
-		content: match[3],
-		userMessage: match[4]?.trim() || undefined,
-	};
-}
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
@@ -180,7 +160,6 @@ export type AgentSessionEvent =
 			reason: "manual" | "threshold" | "overflow";
 	  }
 	| { type: "summarization_retry_finished" }
-	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
 	| { type: "bash_execution_update"; id?: string; delta: string };
 
 /** Listener function for agent session events */
@@ -360,6 +339,17 @@ export class AgentSession {
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
+	private _durableGoalHost?: DurableGoalHost;
+	private readonly _durableGoalBridge: DurableGoalHost = {
+		status: () => this._durableGoalHost?.status(),
+		start: (goal) => this.requireDurableGoalHost().start(goal),
+		pause: () => this.requireDurableGoalHost().pause(),
+		resume: () => this.requireDurableGoalHost().resume(),
+		cancel: () => this.requireDurableGoalHost().cancel(),
+		update: (toolCallId, update) => this.requireDurableGoalHost().update(toolCallId, update),
+		listPermissionGrants: () => this.requireDurableGoalHost().listPermissionGrants(),
+		revokePermissionGrant: (grantId) => this.requireDurableGoalHost().revokePermissionGrant(grantId),
+	};
 	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
@@ -409,6 +399,58 @@ export class AgentSession {
 
 	get modelRuntime(): ModelRuntime {
 		return this._modelRuntime;
+	}
+
+	/** Run a non-transcript model request through the same provider lifecycle and budget hooks as Agent Turns. */
+	async completeLifecycleRequest(
+		kind: Exclude<AgentSessionRequestKind, "agent">,
+		context: Context,
+		signal?: AbortSignal,
+	): Promise<AssistantMessage> {
+		if (!this.model) throw new Error(formatNoModelSelectedMessage());
+		const { model, apiKey, headers, env } = await this._getRequiredRequestAuth(this.model);
+		const requestId = randomUUID();
+		await this._lifecycleRef?.current?.handle({
+			type: "before_request",
+			sessionId: this.sessionId,
+			requestId,
+			kind,
+			model,
+		});
+		let message: AssistantMessage;
+		try {
+			message = await withAgentSessionRequestKind(kind, () =>
+				this._modelRuntime.completeSimple(model, context, { apiKey, headers, env, signal }),
+			);
+		} catch (error) {
+			message = {
+				role: "assistant",
+				content: [],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "error",
+				errorMessage: error instanceof Error ? error.message : String(error),
+				timestamp: Date.now(),
+			};
+		}
+		await this._lifecycleRef?.current?.handle({
+			type: "after_response",
+			sessionId: this.sessionId,
+			requestId,
+			kind,
+			message,
+			usage: message.usage,
+		});
+		return message;
 	}
 
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
@@ -496,6 +538,7 @@ export class AgentSession {
 					: undefined;
 				if (extensionDecision?.block) return extensionDecision;
 				const operationId = `${this.sessionId}:${assistantMessage.responseId ?? assistantMessage.timestamp}:${toolCall.id}`;
+				const durability = this._toolDefinitions.get(toolCall.name)?.definition.durability;
 				const lifecycleDecision = await this._lifecycleRef?.current?.handle({
 					type: "before_tool",
 					sessionId: this.sessionId,
@@ -503,6 +546,7 @@ export class AgentSession {
 					toolCallId: toolCall.id,
 					toolName: toolCall.name,
 					input,
+					...(durability ? { durability } : {}),
 				});
 				return lifecycleDecision?.block
 					? {
@@ -2305,6 +2349,15 @@ export class AgentSession {
 		return this.settingsManager.getCompactionEnabled();
 	}
 
+	setDurableGoalHost(host?: DurableGoalHost): void {
+		this._durableGoalHost = host;
+	}
+
+	private requireDurableGoalHost(): DurableGoalHost {
+		if (!this._durableGoalHost) throw new Error("Durable Goal host is unavailable");
+		return this._durableGoalHost;
+	}
+
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
 		if (bindings.uiContext !== undefined) {
 			this._extensionUIContext = bindings.uiContext;
@@ -2484,6 +2537,7 @@ export class AgentSession {
 			},
 			{
 				getModel: () => this.model,
+				durableGoal: this._durableGoalBridge,
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),

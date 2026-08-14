@@ -18,9 +18,13 @@ import {
 	type ClaimedAttempt,
 	type ContinuationDecision,
 	type CoordinationResult,
+	type CreatePermissionGrantInput,
 	type CreateTaskInput,
 	type DaemonCommandRecord,
 	type InboxMessage,
+	type PermissionGrantRecord,
+	type PermissionGrantState,
+	type PermissionScope,
 	type ReceiveDaemonCommandInput,
 	type RuntimeSnapshot,
 	type ScheduleClaim,
@@ -54,7 +58,7 @@ try {
 	process.emitWarning = originalEmitWarning;
 }
 
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
 
 const TASK_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
 	draft: ["queued", "cancelled"],
@@ -234,6 +238,22 @@ interface ScheduleRow {
 	updated_at: string;
 }
 
+interface PermissionGrantRow {
+	id: string;
+	source: PermissionGrantRecord["source"];
+	lifetime: PermissionGrantRecord["lifetime"];
+	scope_json: string;
+	task_id: string;
+	attempt_id: string | null;
+	workspace_fingerprint: string;
+	sandbox_profile_sha256: string;
+	state: PermissionGrantState;
+	remaining_uses: number | null;
+	created_at: string;
+	expires_at: string | null;
+	revoked_at: string | null;
+}
+
 function parseObject(text: string, label: string): Record<string, unknown> {
 	let value: unknown;
 	try {
@@ -389,6 +409,44 @@ function scheduleFromRow(row: ScheduleRow): ScheduleRecord {
 	};
 }
 
+function permissionGrantFromRow(row: PermissionGrantRow): PermissionGrantRecord {
+	const scope = parseObject(row.scope_json, "permission grant scope") as unknown as PermissionScope;
+	return {
+		id: row.id,
+		source: row.source,
+		lifetime: row.lifetime,
+		scope,
+		taskId: row.task_id,
+		...(row.attempt_id === null ? {} : { attemptId: row.attempt_id }),
+		workspaceFingerprint: row.workspace_fingerprint,
+		sandboxProfileSha256: row.sandbox_profile_sha256,
+		state: row.state,
+		...(row.remaining_uses === null ? {} : { remainingUses: row.remaining_uses }),
+		createdAt: row.created_at,
+		...(row.expires_at === null ? {} : { expiresAt: row.expires_at }),
+		...(row.revoked_at === null ? {} : { revokedAt: row.revoked_at }),
+	};
+}
+
+function validatePermissionScope(scope: PermissionScope): void {
+	const arrays = [
+		scope.toolNames,
+		scope.effects,
+		scope.pathPrefixes,
+		scope.commandFingerprints,
+		scope.networkDomains,
+		scope.credentialScopes,
+	];
+	if (arrays.some((values) => !Array.isArray(values) || !values.every((value) => typeof value === "string")))
+		throw new TypeError("Invalid permission grant scope");
+	if (scope.toolNames.length === 0 || scope.effects.length === 0)
+		throw new TypeError("Permission grant scope requires a tool and effect");
+	if (scope.pathPrefixes.some((path) => !isAbsolute(path)))
+		throw new TypeError("Permission grant path prefixes must be absolute");
+	if (scope.commandFingerprints.some((value) => !/^[a-f0-9]{64}$/.test(value)))
+		throw new TypeError("Invalid permission grant command fingerprint");
+}
+
 function executeTransaction<T>(database: DatabaseSync, operation: () => T): T {
 	database.exec("BEGIN IMMEDIATE");
 	try {
@@ -413,6 +471,7 @@ function migrationSql(version: number): string {
 		4: "control_plane",
 		5: "verified_completion",
 		6: "task_commands",
+		7: "permissions",
 	} as const;
 	return readFileSync(
 		fileURLToPath(new URL(`./migrations/00${version}_${names[version as keyof typeof names]}.sql`, import.meta.url)),
@@ -475,6 +534,319 @@ export class SqliteTaskStore {
 
 	close(): void {
 		this.database.close();
+	}
+
+	createPermissionGrant(input: CreatePermissionGrantInput): PermissionGrantRecord {
+		const task = this.requireTask(input.taskId);
+		validatePermissionScope(input.scope);
+		if (task.workspaceFingerprint !== input.workspaceFingerprint)
+			throw new Error("Permission grant workspace identity does not match the Task");
+		if (!/^[a-f0-9]{64}$/.test(input.sandboxProfileSha256))
+			throw new TypeError("Invalid permission grant sandbox profile hash");
+		if (input.expiresAt !== undefined && !Number.isFinite(Date.parse(input.expiresAt)))
+			throw new TypeError("Invalid permission grant expiration");
+		if (input.source === "reviewer_once" && input.lifetime !== "once")
+			throw new Error("Risk reviewer grants must be single-use");
+		if (["once", "attempt"].includes(input.lifetime)) {
+			if (!input.attemptId) throw new Error(`${input.lifetime} permission grants require an Attempt`);
+			const attempt = this.getAttempt(input.attemptId);
+			if (!attempt || attempt.taskId !== input.taskId)
+				throw new Error("Permission grant Attempt does not belong to the Task");
+		} else if (input.attemptId !== undefined) {
+			throw new Error(`${input.lifetime} permission grants cannot be bound to an Attempt`);
+		}
+		const id = randomUUID();
+		const now = this.now().toISOString();
+		executeTransaction(this.database, () => {
+			this.database
+				.prepare(
+					`INSERT INTO permission_grants
+					 (id, source, lifetime, scope_json, task_id, attempt_id, workspace_fingerprint,
+					  sandbox_profile_sha256, state, remaining_uses, created_at, expires_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+				)
+				.run(
+					id,
+					input.source,
+					input.lifetime,
+					JSON.stringify(input.scope),
+					input.taskId,
+					input.attemptId ?? null,
+					input.workspaceFingerprint,
+					input.sandboxProfileSha256,
+					input.lifetime === "once" ? 1 : null,
+					now,
+					input.expiresAt ?? null,
+				);
+			this.appendEventInternal(
+				input.taskId,
+				undefined,
+				input.attemptId,
+				"PermissionGrantCreated",
+				{ grantId: id, source: input.source, lifetime: input.lifetime, schemaVersion: 1 },
+				now,
+			);
+		});
+		return this.requirePermissionGrant(id);
+	}
+
+	listPermissionGrants(taskId?: string): PermissionGrantRecord[] {
+		this.expirePermissionGrants();
+		const rows = (taskId
+			? this.database.prepare("SELECT * FROM permission_grants WHERE task_id = ? ORDER BY created_at").all(taskId)
+			: this.database
+					.prepare("SELECT * FROM permission_grants ORDER BY created_at")
+					.all()) as unknown as PermissionGrantRow[];
+		return rows.map(permissionGrantFromRow);
+	}
+
+	listActivePermissionGrants(input: {
+		taskId: string;
+		attemptId: string;
+		workspaceFingerprint: string;
+		sandboxProfileSha256: string;
+	}): PermissionGrantRecord[] {
+		this.expirePermissionGrants();
+		return (
+			this.database
+				.prepare(
+					`SELECT * FROM permission_grants
+					 WHERE state = 'active' AND workspace_fingerprint = ? AND sandbox_profile_sha256 = ?
+					 AND (lifetime IN ('workspace', 'project_policy') OR task_id = ?)
+					 AND (attempt_id IS NULL OR attempt_id = ?)
+					 ORDER BY created_at`,
+				)
+				.all(
+					input.workspaceFingerprint,
+					input.sandboxProfileSha256,
+					input.taskId,
+					input.attemptId,
+				) as unknown as PermissionGrantRow[]
+		).map(permissionGrantFromRow);
+	}
+
+	consumePermissionGrant(input: {
+		grantId: string;
+		taskId: string;
+		attemptId: string;
+		operationId: string;
+		intentSha256: string;
+	}): PermissionGrantRecord {
+		return executeTransaction(this.database, () => {
+			const grant = this.requirePermissionGrant(input.grantId);
+			if (grant.state !== "active") throw new Error(`Permission grant is ${grant.state}`);
+			if (grant.lifetime !== "workspace" && grant.lifetime !== "project_policy" && grant.taskId !== input.taskId)
+				throw new Error("Permission grant does not belong to this Task");
+			if (grant.attemptId !== undefined && grant.attemptId !== input.attemptId)
+				throw new Error("Permission grant does not belong to this Attempt");
+			const now = this.now().toISOString();
+			if (grant.remainingUses !== undefined) {
+				if (grant.remainingUses < 1) throw new Error("Permission grant has no remaining uses");
+				this.database
+					.prepare(
+						`UPDATE permission_grants SET remaining_uses = remaining_uses - 1,
+						 state = CASE WHEN remaining_uses = 1 THEN 'consumed' ELSE state END WHERE id = ? AND state = 'active'`,
+					)
+					.run(grant.id);
+			}
+			this.appendEventInternal(
+				input.taskId,
+				undefined,
+				input.attemptId,
+				"PermissionGrantUsed",
+				{
+					grantId: grant.id,
+					operationId: input.operationId,
+					intentSha256: input.intentSha256,
+					schemaVersion: 1,
+				},
+				now,
+			);
+			return this.requirePermissionGrant(grant.id);
+		});
+	}
+
+	revokePermissionGrant(grantId: string): PermissionGrantRecord {
+		return executeTransaction(this.database, () => {
+			const grant = this.requirePermissionGrant(grantId);
+			if (grant.state === "revoked") return grant;
+			if (grant.state !== "active") throw new Error(`Permission grant cannot be revoked from ${grant.state}`);
+			const now = this.now().toISOString();
+			this.database
+				.prepare("UPDATE permission_grants SET state = 'revoked', revoked_at = ? WHERE id = ?")
+				.run(now, grant.id);
+			this.appendEventInternal(
+				grant.taskId,
+				undefined,
+				grant.attemptId,
+				"PermissionGrantRevoked",
+				{ grantId: grant.id, schemaVersion: 1 },
+				now,
+			);
+			return this.requirePermissionGrant(grant.id);
+		});
+	}
+
+	hasAttemptPermissionDenial(attemptId: string, intentSha256: string): boolean {
+		return Boolean(
+			this.database
+				.prepare(
+					`SELECT id FROM permission_decisions
+					 WHERE attempt_id = ? AND intent_sha256 = ? AND action = 'deny' AND source = 'user' LIMIT 1`,
+				)
+				.get(attemptId, intentSha256),
+		);
+	}
+
+	recordRiskReview(input: {
+		taskId: string;
+		attemptId?: string;
+		intentSha256: string;
+		modelProvider: string;
+		modelId: string;
+		promptSha256: string;
+		inputSha256: string;
+		outputSha256: string;
+		verdict: "allow_once" | "ask" | "deny";
+		risk: "low" | "medium" | "high";
+		confidence: number;
+	}): string {
+		this.requireTask(input.taskId);
+		for (const hash of [input.intentSha256, input.promptSha256, input.inputSha256, input.outputSha256]) {
+			if (!/^[a-f0-9]{64}$/.test(hash)) throw new TypeError("Invalid Risk Review hash");
+		}
+		if (!Number.isFinite(input.confidence) || input.confidence < 0 || input.confidence > 1)
+			throw new TypeError("Invalid Risk Review confidence");
+		const id = randomUUID();
+		const now = this.now().toISOString();
+		executeTransaction(this.database, () => {
+			this.database
+				.prepare(
+					`INSERT INTO risk_reviews
+					 (id, task_id, attempt_id, intent_sha256, model_provider, model_id, prompt_sha256,
+					  input_sha256, output_sha256, verdict, risk, confidence, created_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					id,
+					input.taskId,
+					input.attemptId ?? null,
+					input.intentSha256,
+					input.modelProvider,
+					input.modelId,
+					input.promptSha256,
+					input.inputSha256,
+					input.outputSha256,
+					input.verdict,
+					input.risk,
+					input.confidence,
+					now,
+				);
+			this.appendEventInternal(
+				input.taskId,
+				undefined,
+				input.attemptId,
+				"RiskReviewRecorded",
+				{
+					reviewId: id,
+					intentSha256: input.intentSha256,
+					verdict: input.verdict,
+					risk: input.risk,
+					schemaVersion: 1,
+				},
+				now,
+			);
+		});
+		return id;
+	}
+
+	recordPermissionDecision(input: {
+		taskId: string;
+		attemptId?: string;
+		operationId: string;
+		intentSha256: string;
+		action: "allow" | "ask" | "deny";
+		source: "policy" | "grant" | "reviewer" | "user";
+		grantId?: string;
+		reasonCode?: string;
+	}): string {
+		this.requireTask(input.taskId);
+		const id = randomUUID();
+		const now = this.now().toISOString();
+		executeTransaction(this.database, () => {
+			this.database
+				.prepare(
+					`INSERT INTO permission_decisions
+					 (id, operation_id, task_id, attempt_id, intent_sha256, action, source, grant_id, reason_code, created_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					id,
+					input.operationId,
+					input.taskId,
+					input.attemptId ?? null,
+					input.intentSha256,
+					input.action,
+					input.source,
+					input.grantId ?? null,
+					input.reasonCode ?? null,
+					now,
+				);
+			this.appendEventInternal(
+				input.taskId,
+				undefined,
+				input.attemptId,
+				"PermissionEvaluated",
+				{
+					decisionId: id,
+					operationId: input.operationId,
+					intentSha256: input.intentSha256,
+					action: input.action,
+					source: input.source,
+					...(input.grantId ? { grantId: input.grantId } : {}),
+					...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
+					schemaVersion: 1,
+				},
+				now,
+			);
+		});
+		return id;
+	}
+
+	private getPermissionGrant(grantId: string): PermissionGrantRecord | undefined {
+		const row = this.database.prepare("SELECT * FROM permission_grants WHERE id = ?").get(grantId) as
+			| PermissionGrantRow
+			| undefined;
+		return row ? permissionGrantFromRow(row) : undefined;
+	}
+
+	private requirePermissionGrant(grantId: string): PermissionGrantRecord {
+		const grant = this.getPermissionGrant(grantId);
+		if (!grant) throw new Error(`Permission grant not found: ${grantId}`);
+		return grant;
+	}
+
+	private expirePermissionGrants(): void {
+		const now = this.now().toISOString();
+		const expired = this.database
+			.prepare(
+				"SELECT * FROM permission_grants WHERE state = 'active' AND expires_at IS NOT NULL AND expires_at <= ?",
+			)
+			.all(now) as unknown as PermissionGrantRow[];
+		if (expired.length === 0) return;
+		executeTransaction(this.database, () => {
+			for (const row of expired) {
+				this.database.prepare("UPDATE permission_grants SET state = 'expired' WHERE id = ?").run(row.id);
+				this.appendEventInternal(
+					row.task_id,
+					undefined,
+					row.attempt_id ?? undefined,
+					"PermissionGrantExpired",
+					{ grantId: row.id, schemaVersion: 1 },
+					now,
+				);
+			}
+		});
 	}
 
 	beginTaskCommand(input: BeginTaskCommandInput): { command: TaskCommandRecord; duplicate: boolean } {
@@ -1570,11 +1942,62 @@ export class SqliteTaskStore {
 			inputSha256: string;
 			effect: UnfinishedToolExecution["effect"];
 			paths: string[];
+			permissionSource?: "policy" | "grant" | "reviewer";
+			intentSha256?: string;
+			grantId?: string;
 		},
 	): void {
 		executeTransaction(this.database, () => {
 			this.assertLeaseInternal(lease);
 			const now = this.now().toISOString();
+			if (input.grantId) {
+				const grant = this.requirePermissionGrant(input.grantId);
+				if (grant.state !== "active") throw new Error(`Permission grant is ${grant.state}`);
+				if (grant.lifetime !== "workspace" && grant.lifetime !== "project_policy" && grant.taskId !== lease.taskId)
+					throw new Error("Permission grant does not belong to this Task");
+				if (grant.attemptId !== undefined && grant.attemptId !== attemptId)
+					throw new Error("Permission grant does not belong to this Attempt");
+				if (grant.remainingUses !== undefined) {
+					if (grant.remainingUses < 1) throw new Error("Permission grant has no remaining uses");
+					this.database
+						.prepare(
+							`UPDATE permission_grants SET remaining_uses = remaining_uses - 1,
+							 state = CASE WHEN remaining_uses = 1 THEN 'consumed' ELSE state END WHERE id = ? AND state = 'active'`,
+						)
+						.run(grant.id);
+				}
+				this.appendEventInternal(
+					lease.taskId,
+					lease.agentId,
+					attemptId,
+					"PermissionGrantUsed",
+					{
+						grantId: grant.id,
+						operationId: input.operationId,
+						intentSha256: input.intentSha256,
+						schemaVersion: 1,
+					},
+					now,
+				);
+			}
+			if (input.permissionSource && input.intentSha256) {
+				this.database
+					.prepare(
+						`INSERT INTO permission_decisions
+						 (id, operation_id, task_id, attempt_id, intent_sha256, action, source, grant_id, created_at)
+						 VALUES (?, ?, ?, ?, ?, 'allow', ?, ?, ?)`,
+					)
+					.run(
+						randomUUID(),
+						input.operationId,
+						lease.taskId,
+						attemptId,
+						input.intentSha256,
+						input.permissionSource,
+						input.grantId ?? null,
+						now,
+					);
+			}
 			const base = {
 				operationId: input.operationId,
 				toolCallId: input.toolCallId,
@@ -1582,6 +2005,9 @@ export class SqliteTaskStore {
 				inputSha256: input.inputSha256,
 				effect: input.effect,
 				paths: input.paths,
+				...(input.permissionSource ? { permissionSource: input.permissionSource } : {}),
+				...(input.intentSha256 ? { intentSha256: input.intentSha256 } : {}),
+				...(input.grantId ? { grantId: input.grantId } : {}),
 				executionId: lease.executionId,
 				fencingToken: lease.fencingToken,
 				schemaVersion: 1,

@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Api, AssistantMessage, Model, Usage } from "@lioooooo123/ever-ai/compat";
+import type { ToolDurabilityMetadata } from "./permission-kernel.ts";
 
-export type AgentSessionRequestKind = "agent" | "compaction" | "branch_summary";
+export type AgentSessionRequestKind = "agent" | "compaction" | "branch_summary" | "permission_review";
 
 export type AgentSessionLifecycleEvent =
 	| { type: "before_turn"; sessionId: string; baseSystemPrompt: string }
@@ -27,6 +28,7 @@ export type AgentSessionLifecycleEvent =
 			toolCallId: string;
 			toolName: string;
 			input: Record<string, unknown>;
+			durability?: Omit<ToolDurabilityMetadata, "metadataComplete">;
 	  }
 	| {
 			type: "after_tool";

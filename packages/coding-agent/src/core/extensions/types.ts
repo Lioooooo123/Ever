@@ -55,6 +55,7 @@ import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
+import type { ToolDurabilityMetadata } from "../permission-kernel.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -299,6 +300,77 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+export interface DurableGoalSnapshot {
+	taskId: string;
+	goal: string;
+	state:
+		| "draft"
+		| "queued"
+		| "running"
+		| "waiting_input"
+		| "waiting_external"
+		| "paused"
+		| "unknown_outcome"
+		| "completed"
+		| "failed"
+		| "cancelled";
+	stateReason?: string;
+	totalTurns: number;
+	totalCostUsd: number;
+	maxTurns: number;
+	maxWallTimeMinutes: number;
+}
+
+export type DurableGoalUpdate =
+	| {
+			action: "checkpoint";
+			summary: string;
+			completedItems: string[];
+			currentItem?: string;
+			nextActions: string[];
+			evidence: Array<{
+				id: string;
+				kind: "command" | "file" | "artifact" | "event";
+				ref: string;
+				sha256?: string;
+				summary?: string;
+			}>;
+	  }
+	| { action: "wait"; waitKind: "user" | "time" | "external"; reason: string; resumeAt?: string }
+	| {
+			action: "complete";
+			summary: string;
+			evidence: Array<{
+				id: string;
+				kind: "command" | "file" | "artifact" | "event";
+				ref: string;
+				sha256?: string;
+				summary?: string;
+			}>;
+	  }
+	| { action: "fail"; code: string; reason: string };
+
+export interface DurablePermissionGrantSummary {
+	id: string;
+	lifetime: "once" | "attempt" | "task" | "workspace" | "project_policy";
+	state: "active" | "consumed" | "revoked" | "expired";
+	tools: string[];
+	effects: string[];
+	paths: string[];
+	createdAt: string;
+}
+
+export interface DurableGoalHost {
+	status(): DurableGoalSnapshot | undefined;
+	start(goal: string): Promise<DurableGoalSnapshot>;
+	pause(): Promise<DurableGoalSnapshot>;
+	resume(): Promise<DurableGoalSnapshot>;
+	cancel(): Promise<DurableGoalSnapshot>;
+	update(toolCallId: string, update: DurableGoalUpdate): Promise<unknown>;
+	listPermissionGrants(): DurablePermissionGrantSummary[];
+	revokePermissionGrant(grantId: string): DurablePermissionGrantSummary;
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -313,6 +385,8 @@ export interface ExtensionContext {
 	hasUI: boolean;
 	/** Current working directory */
 	cwd: string;
+	/** Host-owned durable Goal/Task adapter. */
+	durableGoal: DurableGoalHost;
 	/** Session manager (read-only) */
 	sessionManager: ReadonlySessionManager;
 	/** Model registry for API key resolution */
@@ -463,6 +537,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
 	renderShell?: "default" | "self";
+	/** Declares recoverability and sandbox requirements. Missing metadata receives the highest-risk default. */
+	durability?: Omit<ToolDurabilityMetadata, "metadataComplete">;
 
 	/** Optional compatibility shim to prepare raw tool call arguments before schema validation. Must return an object conforming to TParams. */
 	prepareArguments?: (args: unknown) => Static<TParams>;
@@ -1646,6 +1722,7 @@ export interface ExtensionActions {
  */
 export interface ExtensionContextActions {
 	getModel: () => Model<any> | undefined;
+	durableGoal: DurableGoalHost;
 	getScopedModels: () => readonly ScopedModel[];
 	isIdle: () => boolean;
 	isProjectTrusted: () => boolean;

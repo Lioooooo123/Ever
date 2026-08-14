@@ -1,19 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { parseWorkerStartupEnvelope } from "../src/core/worker-startup.ts";
 
+const executionEnvironment = {
+	trust: "sandboxed",
+	backend: "seatbelt",
+	workspaceRoot: "/tmp/workspace",
+	sandboxId: "seatbelt:sandbox-1",
+	profileSha256: "c".repeat(64),
+	allowedDomains: ["api.anthropic.com"],
+	writableRoots: ["/tmp/workspace"],
+} as const;
+
 describe("Resident Worker startup envelope", () => {
-	it("accepts one provider-scoped credential and capability token", () => {
+	it("accepts one provider-scoped credential and explicit execution environment", () => {
 		const envelope = parseWorkerStartupEnvelope({
 			schemaVersion: 1,
 			token: "a".repeat(32),
 			provider: "anthropic",
 			credential: { type: "api_key", key: "secret" },
+			executionEnvironment,
 		});
 		expect(envelope).toEqual({
 			schemaVersion: 1,
 			token: "a".repeat(32),
 			provider: "anthropic",
 			credential: { type: "api_key", key: "secret" },
+			executionEnvironment,
 		});
 	});
 
@@ -24,6 +36,7 @@ describe("Resident Worker startup envelope", () => {
 				token: "a".repeat(32),
 				provider: "anthropic",
 				credential: { type: "api_key" },
+				executionEnvironment,
 			}),
 		).toThrow("has no key");
 		expect(() =>
@@ -32,6 +45,7 @@ describe("Resident Worker startup envelope", () => {
 				token: "a".repeat(32),
 				provider: "anthropic",
 				credential: { type: "oauth", access: "access" },
+				executionEnvironment,
 			}),
 		).toThrow("incomplete");
 	});
@@ -42,6 +56,7 @@ describe("Resident Worker startup envelope", () => {
 			token: "a".repeat(32),
 			provider: "anthropic",
 			credential: { type: "api_key", key: "secret" },
+			executionEnvironment,
 		};
 		expect(
 			parseWorkerStartupEnvelope({

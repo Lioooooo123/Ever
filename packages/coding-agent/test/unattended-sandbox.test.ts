@@ -2,8 +2,9 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Writable } from "node:stream";
+import type { PermissionGrantRecord, TaskRecord } from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
-import { probeUnattendedSandbox, UnattendedSandbox } from "../src/core/unattended-sandbox.ts";
+import { probeUnattendedSandbox, sandboxProfileForTask, UnattendedSandbox } from "../src/core/unattended-sandbox.ts";
 
 const temporaryPaths: string[] = [];
 
@@ -12,6 +13,32 @@ afterEach(() => {
 });
 
 describe("UnattendedSandbox", () => {
+	it("derives a resumed Worker profile from Task-visible active grants", () => {
+		const task = { id: "task-2", workspaceFingerprint: "workspace-1" } as TaskRecord;
+		const grant = {
+			id: "grant-1",
+			source: "user",
+			taskId: "task-1",
+			lifetime: "workspace",
+			workspaceFingerprint: task.workspaceFingerprint,
+			sandboxProfileSha256: "a".repeat(64),
+			state: "active",
+			createdAt: "2026-08-14T00:00:00.000Z",
+			scope: {
+				toolNames: ["bash"],
+				effects: ["process"],
+				pathPrefixes: [process.cwd()],
+				commandFingerprints: [],
+				networkDomains: ["example.test"],
+				credentialScopes: [],
+			},
+		} as PermissionGrantRecord;
+		expect(sandboxProfileForTask(task, [grant])).toEqual({
+			allowedDomains: ["example.test"],
+			writableRoots: [process.cwd()],
+		});
+	});
+
 	it("wraps the full Worker process tree, preserves its private token fd, and denies secret writes", async () => {
 		const root = mkdtempSync(join(process.cwd(), ".ever-sandbox-test-"));
 		temporaryPaths.push(root);

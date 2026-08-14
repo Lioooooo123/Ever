@@ -21,6 +21,7 @@ import type {
 	ContextEvent,
 	ContextEventResult,
 	ContextUsage,
+	DurableGoalHost,
 	EntryRenderer,
 	Extension,
 	ExtensionActions,
@@ -275,6 +276,28 @@ export class ExtensionRunner {
 	private modelRegistry: ModelRegistry;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
+	private durableGoal: DurableGoalHost = {
+		status: () => undefined,
+		start: async () => {
+			throw new Error("Durable Goal host is unavailable");
+		},
+		pause: async () => {
+			throw new Error("Durable Goal host is unavailable");
+		},
+		resume: async () => {
+			throw new Error("Durable Goal host is unavailable");
+		},
+		cancel: async () => {
+			throw new Error("Durable Goal host is unavailable");
+		},
+		update: async () => {
+			throw new Error("Durable Goal host is unavailable");
+		},
+		listPermissionGrants: () => [],
+		revokePermissionGrant: () => {
+			throw new Error("Durable Goal host is unavailable");
+		},
+	};
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -338,6 +361,7 @@ export class ExtensionRunner {
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
+		this.durableGoal = contextActions.durableGoal;
 		this.getScopedModels = contextActions.getScopedModels;
 		this.isIdleFn = contextActions.isIdle;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
@@ -690,6 +714,10 @@ export class ExtensionRunner {
 			get cwd() {
 				runner.assertActive();
 				return runner.cwd;
+			},
+			get durableGoal() {
+				runner.assertActive();
+				return runner.durableGoal;
 			},
 			get sessionManager() {
 				runner.assertActive();

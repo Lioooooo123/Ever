@@ -90,6 +90,28 @@ describe("ExtensionRunner", () => {
 
 	const extensionContextActions: ExtensionContextActions = {
 		getModel: () => undefined,
+		durableGoal: {
+			status: () => undefined,
+			start: async () => {
+				throw new Error("not configured");
+			},
+			pause: async () => {
+				throw new Error("not configured");
+			},
+			resume: async () => {
+				throw new Error("not configured");
+			},
+			cancel: async () => {
+				throw new Error("not configured");
+			},
+			update: async () => {
+				throw new Error("not configured");
+			},
+			listPermissionGrants: () => [],
+			revokePermissionGrant: () => {
+				throw new Error("not configured");
+			},
+		},
 		isIdle: () => true,
 		isProjectTrusted: () => true,
 		getSignal: () => undefined,

@@ -52,6 +52,30 @@ describe("AgentSession native lifecycle", () => {
 		);
 	});
 
+	it("routes permission reviewer requests through Provider lifecycle hooks", async () => {
+		const events: AgentSessionLifecycleEvent[] = [];
+		harness = await createHarness({
+			lifecycleRef: {
+				current: {
+					async handle(event) {
+						events.push(event);
+						return undefined;
+					},
+				},
+			},
+		});
+		harness.setResponses([fauxAssistantMessage('{"verdict":"ask"}')]);
+
+		await harness.session.completeLifecycleRequest("permission_review", {
+			systemPrompt: "review policy",
+			messages: [{ role: "user", content: [{ type: "text", text: "review" }], timestamp: Date.now() }],
+			tools: [],
+		});
+
+		expect(events).toContainEqual(expect.objectContaining({ type: "before_request", kind: "permission_review" }));
+		expect(events).toContainEqual(expect.objectContaining({ type: "after_response", kind: "permission_review" }));
+	});
+
 	it("fails closed when the host blocks a tool", async () => {
 		let executed = false;
 		const tool: AgentTool = {

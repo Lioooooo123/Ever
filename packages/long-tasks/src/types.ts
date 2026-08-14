@@ -344,6 +344,47 @@ export interface ToolPolicy {
 	sandboxRequired: boolean;
 }
 
+export type PermissionGrantSource = "user" | "policy" | "reviewer_once";
+export type PermissionGrantLifetime = "once" | "attempt" | "task" | "workspace" | "project_policy";
+export type PermissionGrantState = "active" | "consumed" | "revoked" | "expired";
+export type PermissionEffect = "read_only" | "reconcilable_write" | "process" | "external_side_effect";
+
+export interface PermissionScope {
+	toolNames: string[];
+	effects: PermissionEffect[];
+	pathPrefixes: string[];
+	commandFingerprints: string[];
+	networkDomains: string[];
+	credentialScopes: string[];
+}
+
+export interface PermissionGrantRecord {
+	id: string;
+	source: PermissionGrantSource;
+	lifetime: PermissionGrantLifetime;
+	scope: PermissionScope;
+	taskId: string;
+	attemptId?: string;
+	workspaceFingerprint: string;
+	sandboxProfileSha256: string;
+	state: PermissionGrantState;
+	remainingUses?: number;
+	createdAt: string;
+	expiresAt?: string;
+	revokedAt?: string;
+}
+
+export interface CreatePermissionGrantInput {
+	source: PermissionGrantSource;
+	lifetime: PermissionGrantLifetime;
+	scope: PermissionScope;
+	taskId: string;
+	attemptId?: string;
+	workspaceFingerprint: string;
+	sandboxProfileSha256: string;
+	expiresAt?: string;
+}
+
 export interface CreateTaskInput {
 	title: string;
 	goal: string;

@@ -35,4 +35,5 @@ export { TreeSelectorComponent } from "./tree-selector.ts";
 export { TrustSelectorComponent } from "./trust-selector.ts";
 export { UserMessageComponent } from "./user-message.ts";
 export { UserMessageSelectorComponent } from "./user-message-selector.ts";
+export { getUserMessageText, UserSessionMessageComponent } from "./user-session-message.ts";
 export { truncateToVisualLines, type VisualTruncateResult } from "./visual-truncate.ts";

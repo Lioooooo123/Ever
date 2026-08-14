@@ -4,7 +4,6 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rm
 import { createConnection, createServer } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { Writable } from "node:stream";
 import type { Credential } from "@lioooooo123/ever-ai";
 import { getEnvApiKey } from "@lioooooo123/ever-ai/compat";
 import {
@@ -17,9 +16,9 @@ import chalk from "chalk";
 import { ENV_AGENT_DIR } from "../config.ts";
 import { AuthStorage } from "../core/auth-storage.ts";
 import { recoverExpiredLongTaskExecutions } from "../core/long-task-runtime.ts";
-import { sanitizeUnattendedEnvironment } from "../core/secret-environment.ts";
+import { SessionExecutionHost } from "../core/session-execution-host.ts";
 import { TaskApplication, type TaskControlCommand } from "../core/task-application.ts";
-import { UnattendedSandbox } from "../core/unattended-sandbox.ts";
+import { sandboxProfileForTask } from "../core/unattended-sandbox.ts";
 import { createDaemonSocketPath, createWorkerSocketPath } from "../core/worker-socket.ts";
 import type { WorkerStartupEnvelope } from "../core/worker-startup.ts";
 import { SequencedEventBuffer } from "../daemon/event-stream.ts";
@@ -170,6 +169,37 @@ function taskModel(task: TaskRecord): { provider: string; id: string } | undefin
 		: undefined;
 }
 
+function rebindPermissionGrantsForSandboxProfile(
+	store: SqliteTaskStore,
+	task: TaskRecord,
+	profileSha256: string | undefined,
+): void {
+	if (!profileSha256) return;
+	const grants = store
+		.listPermissionGrants()
+		.filter(
+			(grant) =>
+				grant.state === "active" &&
+				grant.sandboxProfileSha256 !== profileSha256 &&
+				!["once", "attempt"].includes(grant.lifetime) &&
+				(grant.taskId === task.id ||
+					(["workspace", "project_policy"].includes(grant.lifetime) &&
+						grant.workspaceFingerprint === task.workspaceFingerprint)),
+		);
+	for (const grant of grants) {
+		store.createPermissionGrant({
+			source: grant.source,
+			lifetime: grant.lifetime,
+			scope: grant.scope,
+			taskId: grant.taskId,
+			workspaceFingerprint: grant.workspaceFingerprint,
+			sandboxProfileSha256: profileSha256,
+			...(grant.expiresAt ? { expiresAt: grant.expiresAt } : {}),
+		});
+		store.revokePermissionGrant(grant.id);
+	}
+}
+
 async function resolveWorkerCredential(agentDir: string, provider: string): Promise<Credential> {
 	const stored = await AuthStorage.create(join(agentDir, "auth.json")).read(provider, {
 		signal: AbortSignal.timeout(15_000),
@@ -269,190 +299,190 @@ async function waitForDaemon(agentDir: string, child: ChildProcess, attempts = 1
 	throw daemonStartupFailure(agentDir, lastError ?? new Error("Daemon did not start"));
 }
 
-async function serve(
-	agentDir: string,
-	unsafeNoSandbox: boolean,
-	settings: DaemonRuntimeSettings = {
-		maxConcurrentTasks: 1,
-		workerHeartbeatSeconds: 5,
-		workerLeaseSeconds: 30,
-		eventReplayMaxCount: 10_000,
-		eventReplayMaxBytes: 16_777_216,
-		snapshotChunkBytes: 524_288,
-		commandJournalRetentionDays: 7,
-		continuation: {
-			maxIdenticalProgressTurns: 2,
-			pauseAfterIdenticalProgressTurns: 3,
-			maxRepeatedFailureTurns: 2,
-			pauseAfterRepeatedFailureTurns: 3,
-			maxAutomaticContinuationTurnsPerAttempt: 25,
-		},
+const DEFAULT_DAEMON_RUNTIME_SETTINGS: DaemonRuntimeSettings = {
+	maxConcurrentTasks: 1,
+	workerHeartbeatSeconds: 5,
+	workerLeaseSeconds: 30,
+	eventReplayMaxCount: 10_000,
+	eventReplayMaxBytes: 16_777_216,
+	snapshotChunkBytes: 524_288,
+	commandJournalRetentionDays: 7,
+	continuation: {
+		maxIdenticalProgressTurns: 2,
+		pauseAfterIdenticalProgressTurns: 3,
+		maxRepeatedFailureTurns: 2,
+		pauseAfterRepeatedFailureTurns: 3,
+		maxAutomaticContinuationTurnsPerAttempt: 25,
 	},
-): Promise<void> {
-	const { runDir, socketPath, pidPath } = paths(agentDir);
-	mkdirSync(runDir, { recursive: true, mode: 0o700 });
-	chmodSync(runDir, 0o700);
-	const previousPid = readPid(pidPath);
-	if (previousPid && isProcessAlive(previousPid)) throw new Error(`Daemon already running with PID ${previousPid}`);
-	if (existsSync(pidPath)) rmSync(pidPath);
-	if (existsSync(socketPath)) rmSync(socketPath);
-	const pidFd = openSync(pidPath, "wx", 0o600);
-	writeFileSync(pidFd, `${process.pid}\n`);
-	closeSync(pidFd);
+};
 
-	const store = SqliteTaskStore.open({
-		databasePath: join(agentDir, "long-tasks.sqlite"),
-		artifactsRoot: join(agentDir, "tasks"),
-	});
-	const controlToken = readOrCreateControlToken(agentDir);
-	const notifications = new TaskNotificationDispatcher(store, new DesktopNotificationAdapter());
-	store.markInterruptedDaemonCommandsUncertain();
-	store.pruneDaemonCommands(settings.commandJournalRetentionDays);
-	const workerRegistry = new WorkerRegistry(runDir);
-	const sandbox = unsafeNoSandbox ? undefined : new UnattendedSandbox(agentDir);
-	const sandboxCapability = sandbox
-		? await sandbox.initialize()
-		: { available: false as const, backend: "unsupported" as const, reason: "explicitly disabled" };
-	const supervisorGeneration = randomUUID();
-	const eventBuffer = new SequencedEventBuffer<unknown>(
-		settings.eventReplayMaxCount,
-		supervisorGeneration,
-		() => new Date(),
-		settings.eventReplayMaxBytes,
-	);
-	const workers = new Map<
-		string,
-		{ child?: ReturnType<typeof spawn>; taskId: string; descriptor: WorkerDescriptor; token: string }
-	>();
-	let stopping = false;
-	const cliEntry = process.argv[1];
+class DaemonSupervisor {
+	readonly agentDir: string;
+	readonly unsafeNoSandbox: boolean;
+	readonly settings: DaemonRuntimeSettings;
 
-	for (const adopted of await adoptResidentWorkers({
-		descriptors: workerRegistry.list(),
-		controlToken,
-		supervisorGeneration,
-		isProcessAlive,
-	})) {
-		workers.set(adopted.descriptor.agentId, adopted);
-		eventBuffer.publish("WorkerAdopted", adopted.descriptor);
+	constructor(agentDir: string, unsafeNoSandbox: boolean, settings: DaemonRuntimeSettings) {
+		this.agentDir = agentDir;
+		this.unsafeNoSandbox = unsafeNoSandbox;
+		this.settings = settings;
 	}
 
-	let scheduling = false;
-	const schedule = async (): Promise<void> => {
-		if (scheduling) return;
-		scheduling = true;
-		try {
-			await recoverExpiredLongTaskExecutions(store, workerRegistry);
-			await notifications.dispatchPending();
-			for (const worker of workers.values()) {
-				const taskState = store.requireTask(worker.taskId).state;
-				if (taskState === "queued" || taskState === "running") continue;
-				try {
-					await requestWorker(worker.descriptor.privateSocketPath, {
-						token: worker.token,
-						command: "stop",
-					});
-				} catch {
-					// The process exit and recovery paths reconcile an unreachable Worker.
+	async run(): Promise<void> {
+		const { agentDir, unsafeNoSandbox, settings } = this;
+		const { runDir, socketPath, pidPath } = paths(agentDir);
+		mkdirSync(runDir, { recursive: true, mode: 0o700 });
+		chmodSync(runDir, 0o700);
+		const previousPid = readPid(pidPath);
+		if (previousPid && isProcessAlive(previousPid)) throw new Error(`Daemon already running with PID ${previousPid}`);
+		if (existsSync(pidPath)) rmSync(pidPath);
+		if (existsSync(socketPath)) rmSync(socketPath);
+		const pidFd = openSync(pidPath, "wx", 0o600);
+		writeFileSync(pidFd, `${process.pid}\n`);
+		closeSync(pidFd);
+
+		const store = SqliteTaskStore.open({
+			databasePath: join(agentDir, "long-tasks.sqlite"),
+			artifactsRoot: join(agentDir, "tasks"),
+		});
+		const controlToken = readOrCreateControlToken(agentDir);
+		const notifications = new TaskNotificationDispatcher(store, new DesktopNotificationAdapter());
+		store.markInterruptedDaemonCommandsUncertain();
+		store.pruneDaemonCommands(settings.commandJournalRetentionDays);
+		const workerRegistry = new WorkerRegistry(runDir);
+		const executionHost = new SessionExecutionHost(agentDir, unsafeNoSandbox);
+		const sandboxCapability = await executionHost.initialize();
+		const supervisorGeneration = randomUUID();
+		const eventBuffer = new SequencedEventBuffer<unknown>(
+			settings.eventReplayMaxCount,
+			supervisorGeneration,
+			() => new Date(),
+			settings.eventReplayMaxBytes,
+		);
+		const workers = new Map<
+			string,
+			{ child?: ReturnType<typeof spawn>; taskId: string; descriptor: WorkerDescriptor; token: string }
+		>();
+		let stopping = false;
+		const cliEntry = process.argv[1];
+
+		for (const adopted of await adoptResidentWorkers({
+			descriptors: workerRegistry.list(),
+			controlToken,
+			supervisorGeneration,
+			isProcessAlive,
+		})) {
+			workers.set(adopted.descriptor.agentId, adopted);
+			eventBuffer.publish("WorkerAdopted", adopted.descriptor);
+		}
+
+		let scheduling = false;
+		const schedule = async (): Promise<void> => {
+			if (scheduling) return;
+			scheduling = true;
+			try {
+				await recoverExpiredLongTaskExecutions(store, workerRegistry);
+				await notifications.dispatchPending();
+				for (const worker of workers.values()) {
+					const taskState = store.requireTask(worker.taskId).state;
+					if (taskState === "queued" || taskState === "running") continue;
+					try {
+						await requestWorker(worker.descriptor.privateSocketPath, {
+							token: worker.token,
+							command: "stop",
+						});
+					} catch {
+						// The process exit and recovery paths reconcile an unreachable Worker.
+					}
 				}
-			}
-			for (const worker of workers.values()) {
-				try {
-					const status = await requestWorker(worker.descriptor.privateSocketPath, {
-						token: worker.token,
-						command: "status",
-					});
-					if (status.ok) {
-						const currentDescriptor = status.descriptor;
-						if (
-							currentDescriptor &&
-							typeof currentDescriptor === "object" &&
-							"workerId" in currentDescriptor &&
-							currentDescriptor.workerId === worker.descriptor.workerId
-						) {
-							worker.descriptor = currentDescriptor as WorkerDescriptor;
+				for (const worker of workers.values()) {
+					try {
+						const status = await requestWorker(worker.descriptor.privateSocketPath, {
+							token: worker.token,
+							command: "status",
+						});
+						if (status.ok) {
+							const currentDescriptor = status.descriptor;
+							if (
+								currentDescriptor &&
+								typeof currentDescriptor === "object" &&
+								"workerId" in currentDescriptor &&
+								currentDescriptor.workerId === worker.descriptor.workerId
+							) {
+								worker.descriptor = currentDescriptor as WorkerDescriptor;
+							}
+						}
+					} catch {
+						if (!isProcessAlive(worker.descriptor.pid)) {
+							workers.delete(worker.descriptor.agentId);
+							const exited = {
+								...worker.descriptor,
+								state: "exited" as const,
+								heartbeatAt: new Date().toISOString(),
+							};
+							workerRegistry.write(exited);
+							eventBuffer.publish("WorkerLost", exited);
 						}
 					}
-				} catch {
-					if (!isProcessAlive(worker.descriptor.pid)) {
-						workers.delete(worker.descriptor.agentId);
-						const exited = {
-							...worker.descriptor,
-							state: "exited" as const,
-							heartbeatAt: new Date().toISOString(),
-						};
-						workerRegistry.write(exited);
-						eventBuffer.publish("WorkerLost", exited);
-					}
 				}
-			}
-			if (stopping || !cliEntry) return;
-			const activeTaskIds = new Set([...workers.values()].map((worker) => worker.taskId));
-			const task = store
-				.listRunnableTasks(100)
-				.find((candidate) => !activeTaskIds.has(candidate.id) && activeTaskIds.size < settings.maxConcurrentTasks);
-			if (!task) return;
-			const selectedModel = taskModel(task);
-			if (!selectedModel) {
-				store.transitionTask(task.id, "waiting_input", "model_required");
-				store.appendTaskEvent(task.id, "TaskConfigurationRequired", {
-					reason: "unattended Task requires a pinned provider and model",
-					schemaVersion: 1,
-				});
-				return;
-			}
-			if (!unsafeNoSandbox && !sandboxCapability.available) {
-				if (task.state === "queued") {
-					store.transitionTask(task.id, "paused", "sandbox_required");
-					store.appendTaskEvent(task.id, "SecurityPolicyDenied", {
-						reason: sandboxCapability.reason ?? "background execution requires a sandbox",
+				if (stopping || !cliEntry) return;
+				const activeTaskIds = new Set([...workers.values()].map((worker) => worker.taskId));
+				const task = store
+					.listRunnableTasks(100)
+					.find(
+						(candidate) => !activeTaskIds.has(candidate.id) && activeTaskIds.size < settings.maxConcurrentTasks,
+					);
+				if (!task) return;
+				const selectedModel = taskModel(task);
+				if (!selectedModel) {
+					store.transitionTask(task.id, "waiting_input", "model_required");
+					store.appendTaskEvent(task.id, "TaskConfigurationRequired", {
+						reason: "unattended Task requires a pinned provider and model",
 						schemaVersion: 1,
 					});
+					return;
 				}
-				return;
-			}
-			const agent = store.listRunnableAgents(task.id, 1).find((candidate) => candidate.kind === "main");
-			if (!agent || workers.has(agent.id)) return;
-			const executionContext = resolveAgentExecutionContext(store, task.id, agent.id);
-			const logDir = join(agentDir, "tasks", task.id);
-			mkdirSync(logDir, { recursive: true, mode: 0o700 });
-			const workerArgs = [cliEntry, "task", "run", task.id, "--print"];
-			const workerId = randomUUID();
-			const executionId = randomUUID();
-			const token = deriveWorkerToken(controlToken, workerId, supervisorGeneration);
-			let credential: Credential;
-			try {
-				credential = await resolveWorkerCredential(agentDir, selectedModel.provider);
-			} catch (error) {
-				store.transitionTask(task.id, "waiting_input", "credential_required");
-				store.appendTaskEvent(task.id, "TaskConfigurationRequired", {
-					reason: error instanceof Error ? error.message : String(error),
-					schemaVersion: 1,
-				});
-				return;
-			}
-			const privateSocketPath = createWorkerSocketPath(agentDir, agent.id);
-			const startedAt = new Date().toISOString();
-			const sandboxed = sandbox
-				? await sandbox.wrap(
-						process.execPath,
-						[...process.execArgv, ...workerArgs],
-						executionContext.canonicalWorkspaceRoot,
-					)
-				: undefined;
-			const logFd = openSync(join(logDir, "daemon.log"), "a", 0o600);
-			let child: ReturnType<typeof spawn>;
-			try {
-				child = spawn(
-					sandboxed?.command ?? process.execPath,
-					sandboxed ? [] : [...process.execArgv, ...workerArgs],
-					{
+				if (!unsafeNoSandbox && !sandboxCapability.available) {
+					if (task.state === "queued") {
+						store.transitionTask(task.id, "paused", "sandbox_required");
+						store.appendTaskEvent(task.id, "SecurityPolicyDenied", {
+							reason: sandboxCapability.reason ?? "background execution requires a sandbox",
+							schemaVersion: 1,
+						});
+					}
+					return;
+				}
+				const agent = store.listRunnableAgents(task.id, 1).find((candidate) => candidate.kind === "main");
+				if (!agent || workers.has(agent.id)) return;
+				const executionContext = resolveAgentExecutionContext(store, task.id, agent.id);
+				const logDir = join(agentDir, "tasks", task.id);
+				mkdirSync(logDir, { recursive: true, mode: 0o700 });
+				const workerArgs = [cliEntry, "task", "run", task.id, "--print"];
+				const workerId = randomUUID();
+				const executionId = randomUUID();
+				const token = deriveWorkerToken(controlToken, workerId, supervisorGeneration);
+				let credential: Credential;
+				try {
+					credential = await resolveWorkerCredential(agentDir, selectedModel.provider);
+				} catch (error) {
+					store.transitionTask(task.id, "waiting_input", "credential_required");
+					store.appendTaskEvent(task.id, "TaskConfigurationRequired", {
+						reason: error instanceof Error ? error.message : String(error),
+						schemaVersion: 1,
+					});
+					return;
+				}
+				const privateSocketPath = createWorkerSocketPath(agentDir, agent.id);
+				const startedAt = new Date().toISOString();
+				const logFd = openSync(join(logDir, "daemon.log"), "a", 0o600);
+				let hosted: Awaited<ReturnType<SessionExecutionHost["start"]>>;
+				try {
+					hosted = await executionHost.start({
+						command: process.execPath,
+						args: [...process.execArgv, ...workerArgs],
 						cwd: executionContext.canonicalWorkspaceRoot,
-						detached: true,
-						shell: sandboxed !== undefined,
-						stdio: ["ignore", logFd, logFd, "pipe"],
+						logFd,
+						profile: sandboxProfileForTask(task, store.listPermissionGrants()),
 						env: {
-							...sanitizeUnattendedEnvironment(process.env),
 							EVER_DAEMON_WORKER: "1",
 							EVER_RESIDENT_WORKER: "1",
 							EVER_WORKER_ID: workerId,
@@ -466,322 +496,326 @@ async function serve(
 							EVER_EVENT_REPLAY_MAX_COUNT: String(settings.eventReplayMaxCount),
 							EVER_EVENT_REPLAY_MAX_BYTES: String(settings.eventReplayMaxBytes),
 							EVER_SNAPSHOT_CHUNK_BYTES: String(settings.snapshotChunkBytes),
-							...(sandboxed
-								? {
-										EVER_UNATTENDED_SANDBOX: "1",
-										EVER_SANDBOX_ID: sandboxed.sandboxId,
-										EVER_SANDBOX_PROFILE_SHA256: sandboxed.profileSha256,
-									}
-								: {}),
-							...(unsafeNoSandbox ? { EVER_UNSAFE_NO_SANDBOX: "1" } : {}),
 						},
-					},
-				);
-			} finally {
-				closeSync(logFd);
-			}
-			const tokenChannel = child.stdio[3];
-			if (!(tokenChannel instanceof Writable))
-				throw new Error(`Worker token channel did not open for agent ${agent.id}`);
-			const gateCapability = evalEffectGateCapability();
-			const startupEnvelope: WorkerStartupEnvelope = {
-				schemaVersion: 1,
-				token,
-				provider: selectedModel.provider,
-				credential,
-				...(gateCapability === undefined ? {} : { evalEffectGate: gateCapability }),
-			};
-			tokenChannel.end(`${JSON.stringify(startupEnvelope)}\n`);
-			if (!child.pid) throw new Error(`Worker process did not start for agent ${agent.id}`);
-			const descriptor: WorkerDescriptor = {
-				schemaVersion: 1,
-				workerId,
-				executionId,
-				agentId: agent.id,
-				taskId: task.id,
-				activeSessionId: "",
-				pid: child.pid,
-				processGroupId: child.pid,
-				supervisorGeneration,
-				privateSocketPath,
-				tokenSha256: workerTokenSha256(token),
-				workspaceRoot: executionContext.canonicalWorkspaceRoot,
-				...(sandboxed ? { sandboxId: sandboxed.sandboxId, sandboxProfileSha256: sandboxed.profileSha256 } : {}),
-				lifecycle: "resident",
-				state: "starting",
-				heartbeatAt: startedAt,
-				startedAt,
-			};
-			workerRegistry.write(descriptor);
-			workers.set(agent.id, { child, taskId: task.id, descriptor, token });
-			eventBuffer.publish("WorkerStarted", descriptor);
-			child.once("exit", (code) => {
-				workers.delete(agent.id);
-				const latestDescriptor = workerRegistry
-					.list()
-					.find((candidate) => candidate.workerId === descriptor.workerId);
-				const exitedDescriptor: WorkerDescriptor = {
-					...(latestDescriptor ?? descriptor),
-					state: "exited",
-					heartbeatAt: new Date().toISOString(),
-				};
-				workerRegistry.write(exitedDescriptor);
-				eventBuffer.publish("WorkerExited", { ...exitedDescriptor, exitCode: code });
-				if (code && code !== 0) {
-					const currentTask = store.requireTask(task.id);
-					const currentAgent = store.requireAgent(agent.id);
-					if (["queued", "running"].includes(currentTask.state) && currentAgent.state === "queued") {
-						store.transitionAgent(agent.id, "paused", "worker_failed");
-						store.transitionTask(task.id, "waiting_input", "worker_failed");
-					}
+					});
+				} finally {
+					closeSync(logFd);
 				}
-				runSchedule();
+				const { child, tokenChannel, environment } = hosted;
+				rebindPermissionGrantsForSandboxProfile(store, task, environment.profileSha256);
+				const gateCapability = evalEffectGateCapability();
+				const startupEnvelope: WorkerStartupEnvelope = {
+					schemaVersion: 1,
+					token,
+					provider: selectedModel.provider,
+					credential,
+					executionEnvironment: environment,
+					...(gateCapability === undefined ? {} : { evalEffectGate: gateCapability }),
+				};
+				tokenChannel.end(`${JSON.stringify(startupEnvelope)}\n`);
+				if (!child.pid) throw new Error(`Worker process did not start for agent ${agent.id}`);
+				const descriptor: WorkerDescriptor = {
+					schemaVersion: 1,
+					workerId,
+					executionId,
+					agentId: agent.id,
+					taskId: task.id,
+					activeSessionId: "",
+					pid: child.pid,
+					processGroupId: child.pid,
+					supervisorGeneration,
+					privateSocketPath,
+					tokenSha256: workerTokenSha256(token),
+					workspaceRoot: executionContext.canonicalWorkspaceRoot,
+					...(environment.sandboxId
+						? { sandboxId: environment.sandboxId, sandboxProfileSha256: environment.profileSha256 }
+						: {}),
+					lifecycle: "resident",
+					state: "starting",
+					heartbeatAt: startedAt,
+					startedAt,
+				};
+				workerRegistry.write(descriptor);
+				workers.set(agent.id, { child, taskId: task.id, descriptor, token });
+				eventBuffer.publish("WorkerStarted", descriptor);
+				child.once("exit", (code) => {
+					workers.delete(agent.id);
+					const latestDescriptor = workerRegistry
+						.list()
+						.find((candidate) => candidate.workerId === descriptor.workerId);
+					const exitedDescriptor: WorkerDescriptor = {
+						...(latestDescriptor ?? descriptor),
+						state: "exited",
+						heartbeatAt: new Date().toISOString(),
+					};
+					workerRegistry.write(exitedDescriptor);
+					eventBuffer.publish("WorkerExited", { ...exitedDescriptor, exitCode: code });
+					if (code && code !== 0) {
+						const currentTask = store.requireTask(task.id);
+						const currentAgent = store.requireAgent(agent.id);
+						if (["queued", "running"].includes(currentTask.state) && currentAgent.state === "queued") {
+							store.transitionAgent(agent.id, "paused", "worker_failed");
+							store.transitionTask(task.id, "waiting_input", "worker_failed");
+						}
+					}
+					runSchedule();
+				});
+			} finally {
+				scheduling = false;
+			}
+		};
+		const runSchedule = (): void => {
+			void schedule().catch((error) => {
+				eventBuffer.publish("SchedulerFailed", {
+					message: error instanceof Error ? error.message : String(error),
+				});
 			});
-		} finally {
-			scheduling = false;
-		}
-	};
-	const runSchedule = (): void => {
-		void schedule().catch((error) => {
-			eventBuffer.publish("SchedulerFailed", {
-				message: error instanceof Error ? error.message : String(error),
-			});
-		});
-	};
+		};
 
-	const interval = setInterval(runSchedule, 1000);
-	const server = createServer({ allowHalfOpen: true }, (socket) => {
-		let input = "";
-		let inputBytes = 0;
-		let rejected = false;
-		socket.setEncoding("utf8");
-		socket.setTimeout(SOCKET_TIMEOUT_MS, () => socket.destroy());
-		socket.on("data", (chunk) => {
-			if (rejected) return;
-			inputBytes += Buffer.byteLength(chunk);
-			if (inputBytes > MAX_DAEMON_REQUEST_BYTES) {
-				rejected = true;
-				socket.end(
-					JSON.stringify(
-						daemonResponse("invalid", "rejected", { ok: false, message: "daemon request exceeds byte limit" }),
-					),
-				);
-				return;
-			}
-			input += chunk;
-		});
-		socket.on("end", () => {
-			if (rejected) return;
-			let parsed: unknown;
-			try {
-				parsed = JSON.parse(input.trim());
-			} catch {
-				socket.end(JSON.stringify(daemonResponse("invalid", "rejected", { ok: false, message: "invalid JSON" })));
-				return;
-			}
-			void (async () => {
-				let command: DaemonCommandEnvelope;
-				try {
-					command = parseDaemonCommand(parsed);
-				} catch (error) {
+		const interval = setInterval(runSchedule, 1000);
+		const server = createServer({ allowHalfOpen: true }, (socket) => {
+			let input = "";
+			let inputBytes = 0;
+			let rejected = false;
+			socket.setEncoding("utf8");
+			socket.setTimeout(SOCKET_TIMEOUT_MS, () => socket.destroy());
+			socket.on("data", (chunk) => {
+				if (rejected) return;
+				inputBytes += Buffer.byteLength(chunk);
+				if (inputBytes > MAX_DAEMON_REQUEST_BYTES) {
+					rejected = true;
 					socket.end(
 						JSON.stringify(
-							daemonResponse("invalid", "rejected", {
-								ok: false,
-								message: error instanceof Error ? error.message : String(error),
-							}),
+							daemonResponse("invalid", "rejected", { ok: false, message: "daemon request exceeds byte limit" }),
 						),
 					);
 					return;
 				}
-				let journaled = false;
+				input += chunk;
+			});
+			socket.on("end", () => {
+				if (rejected) return;
+				let parsed: unknown;
 				try {
-					if (!tokensEqual(command.authToken, controlToken)) throw new Error("Daemon authentication failed");
-					if (command.command === "acknowledge") {
-						const targetClientId = command.payload.clientId;
-						const targetCommandId = command.payload.commandId;
-						if (typeof targetClientId !== "string" || typeof targetCommandId !== "string")
-							throw new Error("acknowledge requires clientId and commandId");
-						store.acknowledgeDaemonCommand(targetClientId, targetCommandId);
-						socket.end(JSON.stringify(daemonResponse(command.commandId, "completed", { ok: true })));
-						return;
-					}
-					const received = store.receiveDaemonCommand({
-						clientId: command.clientId,
-						commandId: command.commandId,
-						commandType: command.command,
-						payloadSha256: daemonCommandPayloadSha256(command),
-						payload: command.payload,
-					});
-					if (received.duplicate) {
-						if (received.command.state === "completed" || received.command.state === "acknowledged") {
-							const result = received.command.result;
-							if (!result || typeof result.ok !== "boolean")
-								throw new Error("Stored daemon response is corrupt");
-							socket.end(
-								JSON.stringify(daemonResponse(command.commandId, "completed", { ...result, ok: result.ok })),
-							);
-							return;
-						}
-						if (received.command.state === "uncertain") {
-							socket.end(
-								JSON.stringify(
-									daemonResponse(command.commandId, "uncertain", {
-										ok: false,
-										message: received.command.error ?? "command outcome is uncertain",
-									}),
-								),
-							);
-							return;
-						}
+					parsed = JSON.parse(input.trim());
+				} catch {
+					socket.end(
+						JSON.stringify(daemonResponse("invalid", "rejected", { ok: false, message: "invalid JSON" })),
+					);
+					return;
+				}
+				void (async () => {
+					let command: DaemonCommandEnvelope;
+					try {
+						command = parseDaemonCommand(parsed);
+					} catch (error) {
 						socket.end(
 							JSON.stringify(
-								daemonResponse(command.commandId, "in_progress", {
+								daemonResponse("invalid", "rejected", {
 									ok: false,
-									message: "Daemon command is already in progress",
+									message: error instanceof Error ? error.message : String(error),
 								}),
 							),
 						);
 						return;
 					}
-					journaled = true;
-					store.markDaemonCommandDispatched(command.clientId, command.commandId);
-					const runningTaskIds = [...new Set([...workers.values()].map((worker) => worker.taskId))];
-					let body: DaemonResponse;
-					if (command.command === "hello") {
-						body = {
-							ok: true,
-							pid: process.pid,
-							protocolVersion: 1,
-							supervisorGeneration,
-							capabilities: ["resident-worker", "attach", "prompt", "steer", "command-journal"],
-						};
-					} else if (command.command === "status" || command.command === "wake") {
-						runSchedule();
-						body = {
-							ok: true,
-							pid: process.pid,
-							runningTaskIds,
-							supervisorGeneration,
-							workers: [...workers.values()].map((worker) => worker.descriptor),
-						};
-					} else if (
-						command.command === "attach" ||
-						command.command === "prompt" ||
-						command.command === "steer" ||
-						command.command === "stop-agent" ||
-						command.command === "pause-agent" ||
-						command.command === "cancel-agent"
-					) {
-						const taskId = command.payload.taskId;
-						const agentId = command.payload.agentId;
-						if (typeof taskId !== "string" && typeof agentId !== "string")
-							throw new Error("Worker command requires taskId or agentId");
-						let resolvedMatches = [...workers.values()];
-						if (typeof taskId === "string") {
-							const exactTaskMatches = resolvedMatches.filter((candidate) => candidate.taskId === taskId);
-							resolvedMatches =
-								exactTaskMatches.length > 0
-									? exactTaskMatches
-									: resolvedMatches.filter((candidate) => candidate.taskId.startsWith(taskId));
+					let journaled = false;
+					try {
+						if (!tokensEqual(command.authToken, controlToken)) throw new Error("Daemon authentication failed");
+						if (command.command === "acknowledge") {
+							const targetClientId = command.payload.clientId;
+							const targetCommandId = command.payload.commandId;
+							if (typeof targetClientId !== "string" || typeof targetCommandId !== "string")
+								throw new Error("acknowledge requires clientId and commandId");
+							store.acknowledgeDaemonCommand(targetClientId, targetCommandId);
+							socket.end(JSON.stringify(daemonResponse(command.commandId, "completed", { ok: true })));
+							return;
 						}
-						if (typeof agentId === "string") {
-							const exactAgentMatches = resolvedMatches.filter(
-								(candidate) => candidate.descriptor.agentId === agentId,
+						const received = store.receiveDaemonCommand({
+							clientId: command.clientId,
+							commandId: command.commandId,
+							commandType: command.command,
+							payloadSha256: daemonCommandPayloadSha256(command),
+							payload: command.payload,
+						});
+						if (received.duplicate) {
+							if (received.command.state === "completed" || received.command.state === "acknowledged") {
+								const result = received.command.result;
+								if (!result || typeof result.ok !== "boolean")
+									throw new Error("Stored daemon response is corrupt");
+								socket.end(
+									JSON.stringify(daemonResponse(command.commandId, "completed", { ...result, ok: result.ok })),
+								);
+								return;
+							}
+							if (received.command.state === "uncertain") {
+								socket.end(
+									JSON.stringify(
+										daemonResponse(command.commandId, "uncertain", {
+											ok: false,
+											message: received.command.error ?? "command outcome is uncertain",
+										}),
+									),
+								);
+								return;
+							}
+							socket.end(
+								JSON.stringify(
+									daemonResponse(command.commandId, "in_progress", {
+										ok: false,
+										message: "Daemon command is already in progress",
+									}),
+								),
 							);
-							resolvedMatches =
-								exactAgentMatches.length > 0
-									? exactAgentMatches
-									: resolvedMatches.filter((candidate) => candidate.descriptor.agentId.startsWith(agentId));
+							return;
 						}
-						if (resolvedMatches.length > 1) throw new Error("Worker command target prefix is ambiguous");
-						const worker = resolvedMatches[0];
-						if (!worker) throw new Error("Resident worker not found for command target");
-						if (
-							command.command === "pause-agent" ||
+						journaled = true;
+						store.markDaemonCommandDispatched(command.clientId, command.commandId);
+						const runningTaskIds = [...new Set([...workers.values()].map((worker) => worker.taskId))];
+						let body: DaemonResponse;
+						if (command.command === "hello") {
+							body = {
+								ok: true,
+								pid: process.pid,
+								protocolVersion: 1,
+								supervisorGeneration,
+								capabilities: ["resident-worker", "attach", "prompt", "steer", "command-journal"],
+							};
+						} else if (command.command === "status" || command.command === "wake") {
+							runSchedule();
+							body = {
+								ok: true,
+								pid: process.pid,
+								runningTaskIds,
+								supervisorGeneration,
+								workers: [...workers.values()].map((worker) => worker.descriptor),
+							};
+						} else if (
+							command.command === "attach" ||
+							command.command === "prompt" ||
+							command.command === "steer" ||
 							command.command === "stop-agent" ||
+							command.command === "pause-agent" ||
 							command.command === "cancel-agent"
 						) {
-							const agent = store.requireAgent(worker.descriptor.agentId);
-							const cancelled = command.command === "cancel-agent";
-							if (agent.kind === "main") {
-								store.transitionTask(agent.taskId, cancelled ? "cancelled" : "paused", "user_requested");
-							} else {
-								store.transitionAgent(agent.id, cancelled ? "cancelled" : "paused", "user_requested");
+							const taskId = command.payload.taskId;
+							const agentId = command.payload.agentId;
+							if (typeof taskId !== "string" && typeof agentId !== "string")
+								throw new Error("Worker command requires taskId or agentId");
+							let resolvedMatches = [...workers.values()];
+							if (typeof taskId === "string") {
+								const exactTaskMatches = resolvedMatches.filter((candidate) => candidate.taskId === taskId);
+								resolvedMatches =
+									exactTaskMatches.length > 0
+										? exactTaskMatches
+										: resolvedMatches.filter((candidate) => candidate.taskId.startsWith(taskId));
 							}
-						}
-						const workerCommand =
-							command.command === "pause-agent" ||
-							command.command === "cancel-agent" ||
-							command.command === "stop-agent"
-								? "stop"
-								: command.command;
-						body = await requestWorker(worker.descriptor.privateSocketPath, {
-							token: worker.token,
-							command: workerCommand,
-							payload: command.payload,
-							...(command.resumeCursor ? { resumeCursor: command.resumeCursor } : {}),
-						});
-					} else if (command.command === "detach") {
-						body = { ok: true, message: "detached" };
-					} else if (command.command === "stop") {
-						stopping = true;
-						for (const worker of workers.values()) {
-							await requestWorker(worker.descriptor.privateSocketPath, {
+							if (typeof agentId === "string") {
+								const exactAgentMatches = resolvedMatches.filter(
+									(candidate) => candidate.descriptor.agentId === agentId,
+								);
+								resolvedMatches =
+									exactAgentMatches.length > 0
+										? exactAgentMatches
+										: resolvedMatches.filter((candidate) => candidate.descriptor.agentId.startsWith(agentId));
+							}
+							if (resolvedMatches.length > 1) throw new Error("Worker command target prefix is ambiguous");
+							const worker = resolvedMatches[0];
+							if (!worker) throw new Error("Resident worker not found for command target");
+							if (
+								command.command === "pause-agent" ||
+								command.command === "stop-agent" ||
+								command.command === "cancel-agent"
+							) {
+								const agent = store.requireAgent(worker.descriptor.agentId);
+								const cancelled = command.command === "cancel-agent";
+								if (agent.kind === "main") {
+									store.transitionTask(agent.taskId, cancelled ? "cancelled" : "paused", "user_requested");
+								} else {
+									store.transitionAgent(agent.id, cancelled ? "cancelled" : "paused", "user_requested");
+								}
+							}
+							const workerCommand =
+								command.command === "pause-agent" ||
+								command.command === "cancel-agent" ||
+								command.command === "stop-agent"
+									? "stop"
+									: command.command;
+							body = await requestWorker(worker.descriptor.privateSocketPath, {
 								token: worker.token,
-								command: "stop",
+								command: workerCommand,
+								payload: command.payload,
+								...(command.resumeCursor ? { resumeCursor: command.resumeCursor } : {}),
 							});
+						} else if (command.command === "detach") {
+							body = { ok: true, message: "detached" };
+						} else if (command.command === "stop") {
+							stopping = true;
+							for (const worker of workers.values()) {
+								await requestWorker(worker.descriptor.privateSocketPath, {
+									token: worker.token,
+									command: "stop",
+								});
+							}
+							body = {
+								ok: true,
+								pid: process.pid,
+								message: "stopping",
+							};
+						} else {
+							throw new Error(`Unsupported daemon command: ${command.command}`);
 						}
-						body = {
-							ok: true,
-							pid: process.pid,
-							message: "stopping",
-						};
-					} else {
-						throw new Error(`Unsupported daemon command: ${command.command}`);
+						store.completeDaemonCommand(command.clientId, command.commandId, body);
+						socket.end(JSON.stringify(daemonResponse(command.commandId, "completed", body)));
+						if (command.command === "stop") server.close();
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						if (journaled) {
+							const stored = store.getDaemonCommand(command.clientId, command.commandId);
+							if (stored?.state === "received" || stored?.state === "dispatched")
+								store.markDaemonCommandUncertain(command.clientId, command.commandId, message);
+						}
+						socket.end(JSON.stringify(daemonResponse(command.commandId, "rejected", { ok: false, message })));
 					}
-					store.completeDaemonCommand(command.clientId, command.commandId, body);
-					socket.end(JSON.stringify(daemonResponse(command.commandId, "completed", body)));
-					if (command.command === "stop") server.close();
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					if (journaled) {
-						const stored = store.getDaemonCommand(command.clientId, command.commandId);
-						if (stored?.state === "received" || stored?.state === "dispatched")
-							store.markDaemonCommandUncertain(command.clientId, command.commandId, message);
-					}
-					socket.end(JSON.stringify(daemonResponse(command.commandId, "rejected", { ok: false, message })));
-				}
-			})();
-		});
-	});
-
-	try {
-		await new Promise<void>((resolve, reject) => {
-			server.once("error", reject);
-			server.listen(socketPath, () => {
-				chmodSync(socketPath, 0o600);
-				resolve();
+				})();
 			});
 		});
-		runSchedule();
-		await new Promise<void>((resolve) => server.once("close", resolve));
-		const deadline = Date.now() + 30_000;
-		while (workers.size > 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
-		for (const worker of workers.values()) {
-			try {
-				process.kill(-worker.descriptor.processGroupId, "SIGTERM");
-			} catch {
-				worker.child?.kill("SIGTERM");
+
+		try {
+			await new Promise<void>((resolve, reject) => {
+				server.once("error", reject);
+				server.listen(socketPath, () => {
+					chmodSync(socketPath, 0o600);
+					resolve();
+				});
+			});
+			runSchedule();
+			await new Promise<void>((resolve) => server.once("close", resolve));
+			const deadline = Date.now() + 30_000;
+			while (workers.size > 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+			for (const worker of workers.values()) {
+				try {
+					process.kill(-worker.descriptor.processGroupId, "SIGTERM");
+				} catch {
+					worker.child?.kill("SIGTERM");
+				}
 			}
+		} finally {
+			clearInterval(interval);
+			await executionHost.close();
+			store.close();
+			if (existsSync(socketPath)) rmSync(socketPath);
+			if (existsSync(pidPath)) rmSync(pidPath);
 		}
-	} finally {
-		clearInterval(interval);
-		await sandbox?.close();
-		store.close();
-		if (existsSync(socketPath)) rmSync(socketPath);
-		if (existsSync(pidPath)) rmSync(pidPath);
 	}
+}
+
+function serve(
+	agentDir: string,
+	unsafeNoSandbox: boolean,
+	settings: DaemonRuntimeSettings = DEFAULT_DAEMON_RUNTIME_SETTINGS,
+): Promise<void> {
+	return new DaemonSupervisor(agentDir, unsafeNoSandbox, settings).run();
 }
 
 function serviceDefinition(agentDir: string) {

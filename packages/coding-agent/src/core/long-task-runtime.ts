@@ -11,7 +11,6 @@ import {
 	compareRuntimeSnapshots,
 	defaultToolEffect,
 	type EvidenceRef,
-	ExecutionPolicy,
 	type Progress,
 	RecoveryEngine,
 	type RecoveryResult,
@@ -29,6 +28,8 @@ import type {
 	AgentSessionLifecycleEvent,
 } from "./agent-session-lifecycle.ts";
 import type { AgentSessionRuntime } from "./agent-session-runtime.ts";
+import { normalizeToolIntent, PermissionKernel, permissionIntentSha256 } from "./permission-kernel.ts";
+import { ModelRiskReviewer, RISK_REVIEWER_PROMPT_SHA256 } from "./risk-reviewer.ts";
 import { type EvalEffectGateCapability, getWorkerStartupIfLoaded } from "./worker-startup.ts";
 
 function sha256(value: string): string {
@@ -37,6 +38,7 @@ function sha256(value: string): string {
 
 function runtimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: boolean): RuntimeSnapshot {
 	const model = runtime.session.model;
+	const executionEnvironment = getWorkerStartupIfLoaded()?.executionEnvironment;
 	return {
 		everVersion: VERSION,
 		upstreamCommit: process.env.EVER_UPSTREAM_COMMIT ?? "unknown",
@@ -55,7 +57,8 @@ function runtimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: boolean)
 		})),
 		toolPolicySha256: sha256(JSON.stringify([...runtime.session.getActiveToolNames()].sort())),
 		sandboxPolicySha256:
-			process.env.EVER_SANDBOX_PROFILE_SHA256 ?? sha256(JSON.stringify({ sandboxRequired, backend: "host" })),
+			executionEnvironment?.profileSha256 ??
+			sha256(JSON.stringify({ sandboxRequired, trust: executionEnvironment?.trust ?? "foreground_host" })),
 	};
 }
 
@@ -186,6 +189,7 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 	private readonly onReady?: () => void;
 	private readonly resident: boolean;
 	private readonly artifactsRoot: string;
+	private readonly permissionKernel: PermissionKernel;
 	private claim?: ClaimedAttempt;
 	private lease?: AgentLease;
 	private deadlineAt?: string;
@@ -216,6 +220,25 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		this.onReady = options.onReady;
 		this.resident = options.resident;
 		this.artifactsRoot = options.artifactsRoot;
+		this.permissionKernel = new PermissionKernel({
+			reviewer: new ModelRiskReviewer((reviewContext, signal) =>
+				this.runtime.session.completeLifecycleRequest("permission_review", reviewContext, signal),
+			),
+			grants: {
+				list: (context) =>
+					typeof this.store.listActivePermissionGrants === "function"
+						? this.store.listActivePermissionGrants({
+								taskId: context.agent.taskId,
+								attemptId: context.attemptId,
+								workspaceFingerprint: context.workspaceFingerprint,
+								sandboxProfileSha256: context.sandboxProfileSha256,
+							})
+						: [],
+				wasDenied: (intentSha256, context) =>
+					typeof this.store.hasAttemptPermissionDenial === "function" &&
+					this.store.hasAttemptPermissionDenial(context.attemptId, intentSha256),
+			},
+		});
 	}
 
 	async run(claim: ClaimedAttempt): Promise<AttemptOutcome> {
@@ -340,37 +363,118 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			return undefined;
 		}
 		if (event.type === "before_tool") {
-			const effect = defaultToolEffect(event.toolName);
-			const paths = [event.input.path, event.input.cwd]
-				.filter((value): value is string => typeof value === "string")
-				.map((path) => (isAbsolute(path) ? path : resolve(this.runtime.cwd, path)));
-			const decision = new ExecutionPolicy().authorizeTool(
-				context.agent,
-				{ name: event.toolName, paths, effect },
-				{
-					sandboxAvailable: process.env.EVER_UNATTENDED_SANDBOX === "1",
-					unattended: process.env.EVER_DAEMON_WORKER === "1",
-					unsafeNoSandbox: process.env.EVER_UNSAFE_NO_SANDBOX === "1",
-				},
-			);
-			if (!decision.allowed) {
-				this.store.appendAgentEvent(this.requireLease(), context.attempt.id, "SecurityPolicyDenied", {
-					operationId: event.operationId,
-					toolCallId: event.toolCallId,
-					toolName: event.toolName,
+			const intent = normalizeToolIntent({
+				operationId: event.operationId,
+				taskId: context.task.id,
+				attemptId: context.attempt.id,
+				sessionId: event.sessionId,
+				toolName: event.toolName,
+				input: event.input,
+				workspaceRoot: this.runtime.cwd,
+				...(event.durability ? { metadata: event.durability } : {}),
+			});
+			const executionEnvironment = getWorkerStartupIfLoaded()?.executionEnvironment;
+			const permissionContext = {
+				agent: context.agent,
+				attemptId: context.attempt.id,
+				workspaceFingerprint: context.task.workspaceFingerprint,
+				sandboxProfileSha256: context.attempt.runtimeSnapshot.sandboxPolicySha256,
+				sandboxAvailable: executionEnvironment?.trust === "sandboxed",
+				sandboxAllowedDomains: executionEnvironment?.allowedDomains,
+				unattended: executionEnvironment !== undefined,
+				unsafeNoSandbox: executionEnvironment?.trust === "unsafe_host",
+			};
+			const intentFingerprint = permissionIntentSha256(intent);
+			let decision = await this.permissionKernel.authorize(intent, permissionContext, this.stopSignal);
+			const riskReview = "review" in decision ? decision.review : undefined;
+			if (riskReview) {
+				const model = this.runtime.session.model;
+				if (!model) throw new Error("Risk Review completed without an active model");
+				this.store.recordRiskReview({
+					taskId: context.task.id,
+					attemptId: context.attempt.id,
+					intentSha256: intentFingerprint,
+					modelProvider: model.provider,
+					modelId: model.id,
+					promptSha256: RISK_REVIEWER_PROMPT_SHA256,
+					inputSha256: sha256(JSON.stringify({ intent, goal: context.agent.objective })),
+					outputSha256: sha256(JSON.stringify(riskReview)),
+					verdict: riskReview.verdict,
+					risk: riskReview.risk,
+					confidence: riskReview.confidence,
+				});
+			}
+			if (decision.action === "ask") {
+				const approval = await this.runtime.requestPermissionApproval({
+					intent,
+					intentSha256: intentFingerprint,
 					code: decision.code,
 					reason: decision.reason,
-					schemaVersion: 1,
+					suggestedScope: decision.suggestedScope,
+					availableLifetimes:
+						decision.code === "sandbox_profile_expansion_required"
+							? ["task", "workspace"]
+							: !intent.metadataComplete || intent.effect === "external_side_effect" || intent.destructive
+								? ["once"]
+								: ["once", "attempt", "task", "workspace"],
 				});
+				if (approval?.action === "allow") {
+					if (typeof this.store.createPermissionGrant !== "function")
+						throw new Error("Durable permission store is unavailable");
+					this.store.createPermissionGrant({
+						source: "user",
+						lifetime: approval.lifetime,
+						scope: decision.suggestedScope,
+						taskId: context.task.id,
+						...(["once", "attempt"].includes(approval.lifetime) ? { attemptId: context.attempt.id } : {}),
+						workspaceFingerprint: context.task.workspaceFingerprint,
+						sandboxProfileSha256: context.attempt.runtimeSnapshot.sandboxPolicySha256,
+					});
+					decision = await this.permissionKernel.authorize(intent, permissionContext, this.stopSignal);
+				} else if (approval?.action === "deny") {
+					decision = { action: "deny", code: "user_denied", reason: "User denied this action" };
+				}
+			}
+			if (decision.action !== "allow") {
+				if (typeof this.store.recordPermissionDecision === "function")
+					this.store.recordPermissionDecision({
+						taskId: context.task.id,
+						attemptId: context.attempt.id,
+						operationId: intent.operationId,
+						intentSha256: intentFingerprint,
+						action: decision.action,
+						source: decision.code === "user_denied" ? "user" : riskReview ? "reviewer" : "policy",
+						reasonCode: decision.code,
+					});
+				this.store.appendAgentEvent(
+					this.requireLease(),
+					context.attempt.id,
+					decision.action === "ask" ? "PermissionRequested" : "SecurityPolicyDenied",
+					{
+						operationId: intent.operationId,
+						toolCallId: event.toolCallId,
+						toolName: intent.toolName,
+						intentSha256: intentFingerprint,
+						code: decision.code,
+						reason: decision.reason,
+						schemaVersion: 1,
+					},
+				);
+				if (decision.action === "ask" && context.task.state === "running") {
+					this.store.transitionTask(context.task.id, "waiting_input", "permission_required");
+				}
 				return { block: true, reason: decision.reason, terminate: true };
 			}
 			this.store.startToolExecution(this.requireLease(), context.attempt.id, {
-				operationId: event.operationId,
+				operationId: intent.operationId,
 				toolCallId: event.toolCallId,
-				toolName: event.toolName,
+				toolName: intent.toolName,
 				inputSha256: sha256(JSON.stringify(event.input)),
-				effect,
-				paths,
+				effect: intent.effect,
+				paths: [...intent.paths],
+				permissionSource: decision.source,
+				intentSha256: intentFingerprint,
+				...(decision.source === "grant" && decision.grantId ? { grantId: decision.grantId } : {}),
 			});
 			return undefined;
 		}
@@ -560,7 +664,133 @@ export async function recoverExpiredLongTaskExecutions(
 	}).recoverExpired();
 }
 
-export async function attachLongTaskRuntime(
+class NativeLongTaskExecution {
+	async attach(
+		runtime: AgentSessionRuntime,
+		agentDir: string,
+		taskId: string,
+		agentId: string,
+		acceptRuntimeDrift: boolean,
+		continuationPolicy: ContinuationPolicy,
+	): Promise<LongTaskRuntimeHandle> {
+		const store = SqliteTaskStore.open({
+			databasePath: join(agentDir, "long-tasks.sqlite"),
+			artifactsRoot: join(agentDir, "tasks"),
+		});
+		store.requireTask(taskId);
+		const actor = store.listAgents(taskId).find((agent) => agent.id === agentId);
+		if (!actor) {
+			store.close();
+			throw new Error(`Task ${taskId} has no main Agent`);
+		}
+		if (realpathSync(runtime.cwd) !== realpathSync(actor.workspaceRoot)) {
+			store.close();
+			throw new Error(`Agent workspace mismatch: expected ${actor.workspaceRoot}, got ${runtime.cwd}`);
+		}
+		const runDirectory = process.env.EVER_RUN_DIRECTORY;
+		const blockedRecovery = (
+			await recoverExpiredLongTaskExecutions(store, runDirectory ? new WorkerRegistry(runDirectory) : undefined)
+		).find((result) => result.agentId === actor.id && !result.recovered);
+		if (blockedRecovery) {
+			store.close();
+			throw new Error(
+				`Recovery blocked for Agent ${blockedRecovery.agentId}: ${blockedRecovery.reason ?? "unknown"}`,
+			);
+		}
+		const snapshot = runtimeSnapshot(runtime, actor.toolPolicy.sandboxRequired);
+		const previousAttempt = store.getLatestAttempt(actor.id);
+		if (previousAttempt) {
+			const drift = compareRuntimeSnapshots(previousAttempt.runtimeSnapshot, snapshot);
+			if (!drift.compatible && !acceptRuntimeDrift) {
+				store.appendTaskEvent(taskId, "RuntimeDriftDetected", { ...drift, schemaVersion: 1 });
+				store.transitionTask(taskId, "waiting_input", "runtime_drift");
+				store.close();
+				throw new Error(`Runtime drift requires explicit acceptance: ${drift.changedFields.join(", ")}`);
+			}
+			if (!drift.compatible) {
+				store.appendTaskEvent(taskId, "RuntimeDriftAccepted", { ...drift, schemaVersion: 1 });
+			}
+		}
+		const leaseSeconds = Number(process.env.EVER_WORKER_LEASE_SECONDS ?? 30);
+		const heartbeatSeconds = Number(process.env.EVER_WORKER_HEARTBEAT_SECONDS ?? 5);
+		if (
+			!Number.isFinite(leaseSeconds) ||
+			leaseSeconds <= 0 ||
+			!Number.isFinite(heartbeatSeconds) ||
+			heartbeatSeconds <= 0
+		) {
+			store.close();
+			throw new Error("Invalid long-task Worker lease or heartbeat configuration");
+		}
+		const workerStartup = getWorkerStartupIfLoaded();
+		const residentWorker = workerStartup !== undefined;
+		const workerId = residentWorker ? process.env.EVER_WORKER_ID : `foreground:${process.pid}`;
+		const executionId = residentWorker ? process.env.EVER_EXECUTION_ID : randomUUID();
+		if (!workerId || !executionId) {
+			store.close();
+			throw new Error("Resident Worker execution identity is missing");
+		}
+		const claim = store.claimAttempt({
+			agentId: actor.id,
+			sessionId: runtime.session.sessionId,
+			runtimeSnapshot: snapshot,
+			runtimeSnapshotSha256: runtimeSnapshotHash(snapshot),
+			workerId,
+			executionId,
+			leaseSeconds,
+			pid: process.pid,
+			...(workerStartup?.executionEnvironment.sandboxId
+				? { sandboxId: workerStartup.executionEnvironment.sandboxId }
+				: {}),
+		});
+		const stopController = new AbortController();
+		let markReady: () => void = () => {};
+		const ready = new Promise<void>((resolve) => {
+			markReady = resolve;
+		});
+		const nativeAgent = new NativeLongTaskAgent({
+			runtime,
+			store,
+			continuationPolicy,
+			leaseSeconds,
+			heartbeatSeconds,
+			stopSignal: stopController.signal,
+			onReady: markReady,
+			resident: true,
+			artifactsRoot: join(agentDir, "tasks"),
+		});
+		const running = nativeAgent.run(claim);
+		try {
+			await Promise.race([
+				ready,
+				running.then(() => {
+					throw new Error("NativeLongTaskAgent stopped before becoming ready");
+				}),
+			]);
+		} catch (error) {
+			stopController.abort();
+			try {
+				await running;
+			} finally {
+				store.close();
+			}
+			throw error;
+		}
+		return {
+			async drainAndClose() {
+				stopController.abort();
+				try {
+					return await running;
+				} finally {
+					store.close();
+				}
+			},
+		};
+	}
+}
+
+/** Attach one Session runtime to the durable Attempt execution module. */
+export function attachLongTaskRuntime(
 	runtime: AgentSessionRuntime,
 	agentDir: string,
 	taskId: string,
@@ -568,112 +798,12 @@ export async function attachLongTaskRuntime(
 	acceptRuntimeDrift: boolean,
 	continuationPolicy: ContinuationPolicy,
 ): Promise<LongTaskRuntimeHandle> {
-	const store = SqliteTaskStore.open({
-		databasePath: join(agentDir, "long-tasks.sqlite"),
-		artifactsRoot: join(agentDir, "tasks"),
-	});
-	store.requireTask(taskId);
-	const actor = store.listAgents(taskId).find((agent) => agent.id === agentId);
-	if (!actor) {
-		store.close();
-		throw new Error(`Task ${taskId} has no main Agent`);
-	}
-	if (realpathSync(runtime.cwd) !== realpathSync(actor.workspaceRoot)) {
-		store.close();
-		throw new Error(`Agent workspace mismatch: expected ${actor.workspaceRoot}, got ${runtime.cwd}`);
-	}
-	const runDirectory = process.env.EVER_RUN_DIRECTORY;
-	const blockedRecovery = (
-		await recoverExpiredLongTaskExecutions(store, runDirectory ? new WorkerRegistry(runDirectory) : undefined)
-	).find((result) => result.agentId === actor.id && !result.recovered);
-	if (blockedRecovery) {
-		store.close();
-		throw new Error(`Recovery blocked for Agent ${blockedRecovery.agentId}: ${blockedRecovery.reason ?? "unknown"}`);
-	}
-	const snapshot = runtimeSnapshot(runtime, actor.toolPolicy.sandboxRequired);
-	const previousAttempt = store.getLatestAttempt(actor.id);
-	if (previousAttempt) {
-		const drift = compareRuntimeSnapshots(previousAttempt.runtimeSnapshot, snapshot);
-		if (!drift.compatible && !acceptRuntimeDrift) {
-			store.appendTaskEvent(taskId, "RuntimeDriftDetected", { ...drift, schemaVersion: 1 });
-			store.transitionTask(taskId, "waiting_input", "runtime_drift");
-			store.close();
-			throw new Error(`Runtime drift requires explicit acceptance: ${drift.changedFields.join(", ")}`);
-		}
-		if (!drift.compatible) {
-			store.appendTaskEvent(taskId, "RuntimeDriftAccepted", { ...drift, schemaVersion: 1 });
-		}
-	}
-	const leaseSeconds = Number(process.env.EVER_WORKER_LEASE_SECONDS ?? 30);
-	const heartbeatSeconds = Number(process.env.EVER_WORKER_HEARTBEAT_SECONDS ?? 5);
-	if (
-		!Number.isFinite(leaseSeconds) ||
-		leaseSeconds <= 0 ||
-		!Number.isFinite(heartbeatSeconds) ||
-		heartbeatSeconds <= 0
-	) {
-		store.close();
-		throw new Error("Invalid long-task Worker lease or heartbeat configuration");
-	}
-	const residentWorker = process.env.EVER_DAEMON_WORKER === "1";
-	const workerId = residentWorker ? process.env.EVER_WORKER_ID : `foreground:${process.pid}`;
-	const executionId = residentWorker ? process.env.EVER_EXECUTION_ID : randomUUID();
-	if (!workerId || !executionId) {
-		store.close();
-		throw new Error("Resident Worker execution identity is missing");
-	}
-	const claim = store.claimAttempt({
-		agentId: actor.id,
-		sessionId: runtime.session.sessionId,
-		runtimeSnapshot: snapshot,
-		runtimeSnapshotSha256: runtimeSnapshotHash(snapshot),
-		workerId,
-		executionId,
-		leaseSeconds,
-		pid: process.pid,
-		...(process.env.EVER_SANDBOX_ID ? { sandboxId: process.env.EVER_SANDBOX_ID } : {}),
-	});
-	const stopController = new AbortController();
-	let markReady: () => void = () => {};
-	const ready = new Promise<void>((resolve) => {
-		markReady = resolve;
-	});
-	const nativeAgent = new NativeLongTaskAgent({
+	return new NativeLongTaskExecution().attach(
 		runtime,
-		store,
+		agentDir,
+		taskId,
+		agentId,
+		acceptRuntimeDrift,
 		continuationPolicy,
-		leaseSeconds,
-		heartbeatSeconds,
-		stopSignal: stopController.signal,
-		onReady: markReady,
-		resident: process.env.EVER_RESIDENT_WORKER === "1",
-		artifactsRoot: join(agentDir, "tasks"),
-	});
-	const running = nativeAgent.run(claim);
-	try {
-		await Promise.race([
-			ready,
-			running.then(() => {
-				throw new Error("NativeLongTaskAgent stopped before becoming ready");
-			}),
-		]);
-	} catch (error) {
-		stopController.abort();
-		try {
-			await running;
-		} finally {
-			store.close();
-		}
-		throw error;
-	}
-	return {
-		async drainAndClose() {
-			stopController.abort();
-			try {
-				return await running;
-			} finally {
-				store.close();
-			}
-		},
-	};
+	);
 }

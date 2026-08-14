@@ -46,10 +46,11 @@ import {
 } from "./core/agent-session-services.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
+import { DurableGoalRuntime } from "./core/durable-goal-runtime.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
+import { ForegroundPermissionLifecycle } from "./core/foreground-permission-lifecycle.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
-import { attachLongTaskRuntime } from "./core/long-task-runtime.ts";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { createNativeTaskTool } from "./core/native-task-tool.ts";
@@ -961,20 +962,21 @@ export async function main(args: string[], options?: MainOptions) {
 			.finally(() => clearTimeout(timeout));
 	}
 
-	const taskRuntime = taskRunContext
-		? await attachLongTaskRuntime(
-				runtime,
-				agentDir,
-				taskRunContext.taskId,
-				taskRunContext.agentId,
-				taskRunContext.acceptRuntimeDrift,
-				longTaskSettings.continuation,
-			)
-		: undefined;
+	const durableGoalRuntime = new DurableGoalRuntime(runtime, agentDir, longTaskSettings.continuation);
+	if (taskRunContext) await durableGoalRuntime.adopt(taskRunContext);
+	const terminalTaskStates = new Set(["completed", "failed", "cancelled"]);
+	const uninstallForegroundPermission = runtime.installLifecycle(
+		new ForegroundPermissionLifecycle(runtime, () => {
+			const goal = durableGoalRuntime.status();
+			return goal !== undefined && !terminalTaskStates.has(goal.state);
+		}),
+	);
 	let taskRuntimeClosePromise: Promise<void> | undefined;
 	const closeTaskRuntime = async (): Promise<void> => {
-		if (!taskRuntime) return;
-		taskRuntimeClosePromise ??= taskRuntime.drainAndClose().then(() => undefined);
+		taskRuntimeClosePromise ??= (async () => {
+			uninstallForegroundPermission();
+			await durableGoalRuntime.close();
+		})();
 		await taskRuntimeClosePromise;
 	};
 	try {
