@@ -1,6 +1,6 @@
 {
 	"name": "@lioooooo123/ever-agent-core",
-	"version": "0.84.1",
+	"version": "0.0.1",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -35,8 +35,8 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@lioooooo123/ever-ai": "^0.84.1",
-		"@lioooooo123/ever-telemetry": "^0.84.1",
+		"@lioooooo123/ever-ai": "^0.0.1",
+		"@lioooooo123/ever-telemetry": "^0.0.1",
 		"diff": "8.0.4",
 		"ignore": "7.0.5",
 		"typebox": "1.3.7",

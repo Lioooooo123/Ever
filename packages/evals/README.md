@@ -265,7 +265,7 @@ names are declared with `forwardEnvironment`; their values are read only after D
   {
     "kind": "ever",
     "name": "ever",
-    "version": "0.84.1+a12230ac0",
+    "version": "0.0.1+a12230ac0",
     "executableDigest": "<64-character-sha256>",
     "configurationDigest": "<64-character-sha256>",
     "command": ["/opt/ever/bin/ever"],

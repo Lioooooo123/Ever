@@ -125,7 +125,7 @@ Attribution:
 
 ## Releasing
 
-**Versioning**: `@lioooooo123/ever-cli` has an independent version line starting at `0.0.1`. Published library packages remain lockstep at `0.84.1` until they need a separate library release. CLI `patch` = fixes + additions, `minor` = breaking changes. No major releases.
+**Versioning**: `@lioooooo123/ever-cli` has an independent version line starting at `0.0.1`. Published library packages use Ever's lockstep version line starting at `0.0.1` until they need a separate library release. CLI `patch` = fixes + additions, `minor` = breaking changes. No major releases.
 
 1. **Update CHANGELOGs**: ask the user whether they ran the `/cl` prompt on the latest commit on `main`. If not, they must run `/cl` first to audit and update each package's `[Unreleased]` section before releasing.
 

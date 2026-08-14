@@ -1,6 +1,6 @@
 {
 	"name": "@lioooooo123/ever-telemetry",
-	"version": "0.84.1",
+	"version": "0.0.1",
 	"description": "Vendor-neutral telemetry contracts and typed schema utilities for Ever",
 	"type": "module",
 	"main": "./dist/index.js",

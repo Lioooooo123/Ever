@@ -91,8 +91,12 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 
 ## Installation
 
+This library is currently consumed from the Ever workspace and is not published independently on npm yet. For the public CLI, install `@lioooooo123/ever-cli` instead.
+
 ```bash
-npm install @lioooooo123/ever-ai
+git clone https://github.com/Lioooooo123/Ever.git
+cd Ever
+npm ci --ignore-scripts
 ```
 
 TypeBox exports are re-exported from `@lioooooo123/ever-ai`: `Type`, `Static`, and `TSchema`.
