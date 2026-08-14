@@ -86,7 +86,7 @@ function printTaskLine(task: TaskRecord): void {
 }
 
 function printHelp(): void {
-	console.log(`Ever long-running coding agent
+	console.log(`ever - AI coding assistant with durable Task execution
 
 Usage:
 	  ever                           打开 Task Home
@@ -224,13 +224,13 @@ export async function handleEverCommand(args: string[], agentDir: string, cwd: s
 		return false;
 	}
 	if (args.includes("--version") || args.includes("-v") || args.includes("--list-models")) return false;
+	if (args.includes("--help") || args.includes("-h") || args[0] === "help") {
+		printHelp();
+		return true;
+	}
 	if (args.some((arg) => INTERNAL_SESSION_OPTIONS.has(arg))) {
 		console.error(chalk.red("Error: Ever CLI 只运行持久 Task；Session 是 Task 内部的执行上下文。"));
 		process.exitCode = 1;
-		return true;
-	}
-	if (args.includes("--help") || args.includes("-h") || args[0] === "help") {
-		printHelp();
 		return true;
 	}
 	validateValueOptions(args);
