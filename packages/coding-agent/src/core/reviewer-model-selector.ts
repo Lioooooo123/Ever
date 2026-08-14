@@ -10,22 +10,34 @@ const REVIEWER_CONTEXT_TOKENS = 8_000;
 const REVIEWER_INPUT_TOKENS = 2_000;
 const REVIEWER_OUTPUT_TOKENS = 256;
 
+export function modelWorstCaseCostUsd(
+	model: Pick<Model<Api>, "cost">,
+	inputTokens: number,
+	outputTokens: number,
+): number {
+	let rates = model.cost;
+	let matchedThreshold = -1;
+	for (const tier of model.cost.tiers ?? []) {
+		if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > matchedThreshold) {
+			rates = tier;
+			matchedThreshold = tier.inputTokensAbove;
+		}
+	}
+	if (
+		[rates.input, rates.output, rates.cacheRead, rates.cacheWrite, inputTokens, outputTokens].some(
+			(value) => !Number.isFinite(value) || value < 0,
+		)
+	)
+		throw new Error("Model pricing is incomplete");
+	const inputRate = Math.max(rates.input + rates.cacheWrite, rates.cacheRead);
+	return (inputTokens * inputRate + outputTokens * rates.output) / 1_000_000;
+}
+
 export function reviewerWorstCaseCostUsd(
 	model: Pick<Model<Api>, "contextWindow" | "cost" | "maxTokens">,
 	outputTokens = REVIEWER_OUTPUT_TOKENS,
 ): number {
-	const rates = [model.cost, ...(model.cost.tiers ?? [])];
-	if (
-		rates.some((rate) =>
-			[rate.input, rate.output, rate.cacheRead, rate.cacheWrite].some(
-				(value) => !Number.isFinite(value) || value < 0,
-			),
-		)
-	)
-		throw new Error("Reviewer model pricing is incomplete");
-	const inputRate = Math.max(...rates.map((rate) => Math.max(rate.input + rate.cacheWrite, rate.cacheRead)));
-	const outputRate = Math.max(...rates.map((rate) => rate.output));
-	return (REVIEWER_INPUT_TOKENS * inputRate + outputTokens * outputRate) / 1_000_000;
+	return modelWorstCaseCostUsd(model, REVIEWER_INPUT_TOKENS, outputTokens);
 }
 
 function hasReliablePricing(model: Pick<Model<Api>, "contextWindow" | "cost" | "maxTokens">): boolean {

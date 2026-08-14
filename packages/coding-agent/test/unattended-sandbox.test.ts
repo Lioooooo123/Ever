@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import type { PermissionGrantRecord, TaskRecord } from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
-import { probeUnattendedSandbox, sandboxProfileForTask, UnattendedSandbox } from "../src/core/unattended-sandbox.ts";
+import {
+	probeUnattendedSandbox,
+	sandboxProfileForTask,
+	UnattendedSandbox,
+	unattendedSandboxAllowedDomains,
+} from "../src/core/unattended-sandbox.ts";
+import { createWorkerSocketPath } from "../src/core/worker-socket.ts";
 
 const temporaryPaths: string[] = [];
 
@@ -13,6 +19,10 @@ afterEach(() => {
 });
 
 describe("UnattendedSandbox", () => {
+	it("allows every built-in provider endpoint used by the OpenAI Codex provider", () => {
+		expect(unattendedSandboxAllowedDomains()).toContain("chatgpt.com");
+	});
+
 	it("derives a resumed Worker profile from Task-visible active grants", () => {
 		const task = { id: "task-2", workspaceFingerprint: "workspace-1" } as TaskRecord;
 		const grant = {
@@ -45,8 +55,10 @@ describe("UnattendedSandbox", () => {
 		const agentDir = join(root, "agent");
 		const workspaceRoot = join(root, "workspace");
 		mkdirSync(agentDir);
+		mkdirSync(join(agentDir, "run"));
 		mkdirSync(workspaceRoot);
 		const authPath = join(agentDir, "auth.json");
+		const workerSocketPath = createWorkerSocketPath(agentDir, "test-worker");
 		writeFileSync(authPath, '{"anthropic":{"type":"api_key","key":"secret"}}');
 		const capability = probeUnattendedSandbox();
 		if (process.platform === "darwin") expect(capability).toMatchObject({ available: true, backend: "seatbelt" });
@@ -61,6 +73,8 @@ describe("UnattendedSandbox", () => {
 				"try { fs.writeFileSync('.env', 'secret') } catch { fs.writeFileSync('denied.txt', 'yes') }",
 				`try { fs.readFileSync(${JSON.stringify(authPath)}, 'utf8') } catch { fs.writeFileSync('auth-denied.txt', 'yes') }`,
 				`try { fs.writeFileSync(${JSON.stringify(authPath)}, 'clobbered') } catch { fs.writeFileSync('auth-write-denied.txt', 'yes') }`,
+				"const net = require('node:net')",
+				`const server = net.createServer(); server.listen(${JSON.stringify(workerSocketPath)}, () => { fs.writeFileSync('socket-listened.txt', 'yes'); server.close() })`,
 			].join(";");
 			const wrapped = await sandbox.wrap(process.execPath, ["-e", script], workspaceRoot);
 			await new Promise<void>((resolve, reject) => {
@@ -88,6 +102,7 @@ describe("UnattendedSandbox", () => {
 			expect(readFileSync(join(workspaceRoot, "denied.txt"), "utf8")).toBe("yes");
 			expect(readFileSync(join(workspaceRoot, "auth-denied.txt"), "utf8")).toBe("yes");
 			expect(readFileSync(join(workspaceRoot, "auth-write-denied.txt"), "utf8")).toBe("yes");
+			expect(readFileSync(join(workspaceRoot, "socket-listened.txt"), "utf8")).toBe("yes");
 			expect(readFileSync(authPath, "utf8")).toContain("secret");
 			expect(wrapped.profileSha256).toMatch(/^[a-f0-9]{64}$/);
 		} finally {

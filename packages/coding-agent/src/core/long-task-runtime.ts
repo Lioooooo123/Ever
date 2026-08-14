@@ -40,6 +40,7 @@ import {
 	toolIntentRequiresAuthorizationFacts,
 } from "./permission-kernel.ts";
 import {
+	modelWorstCaseCostUsd,
 	type ReviewerModelIdentity,
 	reviewerWorstCaseCostUsd,
 	selectReviewerModel,
@@ -438,12 +439,9 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		}
 		if (event.type === "before_request") {
 			const reviewerRequest = event.kind === "authorization_compile" || event.kind === "permission_review";
-			const rates = [event.model.cost, ...(event.model.cost.tiers ?? [])];
 			const worstCaseCostUsd = reviewerRequest
 				? reviewerWorstCaseCostUsd(event.model, event.kind === "authorization_compile" ? 256 : 192)
-				: (event.model.contextWindow * Math.max(...rates.map((rate) => rate.input + rate.cacheWrite)) +
-						event.model.maxTokens * Math.max(...rates.map((rate) => rate.output))) /
-					1_000_000;
+				: modelWorstCaseCostUsd(event.model, event.model.contextWindow, event.model.maxTokens);
 			const reservationId = this.store.startProviderRequest(this.requireLease(), context.attempt.id, {
 				providerRequestId: event.requestId,
 				provider: event.model.provider,

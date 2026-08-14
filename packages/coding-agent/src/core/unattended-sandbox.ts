@@ -8,6 +8,7 @@ import { workerSocketDirectory } from "./worker-socket.ts";
 const PROVIDER_DOMAINS = [
 	"api.anthropic.com",
 	"api.openai.com",
+	"chatgpt.com",
 	"api.github.com",
 	"github.com",
 	"*.githubusercontent.com",
@@ -158,7 +159,13 @@ export class UnattendedSandbox {
 					join(homedir(), ".netrc"),
 					join(homedir(), ".npmrc"),
 				],
-				allowWrite: [workspaceRoot, this.agentDir, tmpdir(), ...(profile.writableRoots ?? [])],
+				allowWrite: [
+					workspaceRoot,
+					this.agentDir,
+					workerSocketDirectory(this.agentDir),
+					tmpdir(),
+					...(profile.writableRoots ?? []),
+				],
 				denyWrite: [
 					join(this.agentDir, "auth.json"),
 					join(this.agentDir, "run", "control-token"),

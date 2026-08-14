@@ -7,7 +7,7 @@ import { join } from "node:path";
 export function workerSocketDirectory(agentDir: string): string {
 	const owner = process.getuid?.() ?? "user";
 	const identity = createHash("sha256").update(agentDir).digest("hex").slice(0, 16);
-	const socketRoot = process.platform === "win32" ? tmpdir() : "/tmp";
+	const socketRoot = process.platform === "darwin" ? "/private/tmp" : process.platform === "win32" ? tmpdir() : "/tmp";
 	return join(socketRoot, `ever-${owner}-${identity}`);
 }
 
