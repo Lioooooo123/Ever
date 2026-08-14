@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -91,6 +91,45 @@ describe("VerifiedCompletion", () => {
 		expect(
 			new EvidenceResolver(store).resolve(task.id, [{ id: "command", kind: "command", ref: "artifact" }])[0],
 		).toMatchObject({ verified: false });
+		store.close();
+	});
+
+	it("requires every declared objective requirement to reference verified evidence", () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-objective-audit-"));
+		writeFileSync(join(root, "proof.txt"), "verified\n");
+		const { store, task } = createTask(root, [
+			{
+				id: "objective-audit",
+				kind: "objective_audit",
+				description: "Audit every explicit requirement against verified evidence",
+			},
+		]);
+		const completion = new VerifiedCompletion(store);
+
+		const missingAudit = completion.request({
+			taskId: task.id,
+			requestId: "missing-audit",
+			summary: "done",
+			evidence: [{ id: "proof", kind: "file", ref: "proof.txt" }],
+		});
+		expect(missingAudit).toMatchObject({
+			accepted: false,
+			acceptance: { failed: ["objective-audit"] },
+			requirementAudit: [],
+		});
+
+		const verifiedAudit = completion.request({
+			taskId: task.id,
+			requestId: "verified-audit",
+			summary: "done",
+			evidence: [{ id: "proof", kind: "file", ref: "proof.txt" }],
+			requirements: [{ requirement: "Create proof.txt", evidenceIds: ["proof"] }],
+		});
+		expect(verifiedAudit).toMatchObject({
+			accepted: true,
+			acceptance: { passed: ["objective-audit"] },
+			requirementAudit: [{ requirement: "Create proof.txt", evidenceIds: ["proof"], verified: true }],
+		});
 		store.close();
 	});
 });

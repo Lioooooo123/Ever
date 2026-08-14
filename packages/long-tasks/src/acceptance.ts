@@ -31,7 +31,7 @@ export class AcceptanceRunner {
 				(this.store.hasPassedAcceptance(taskId, criterion.id) ? passed : pendingManual).push(criterion.id);
 				continue;
 			}
-			if (criterion.kind === "agent_evidence") {
+			if (criterion.kind === "agent_evidence" || criterion.kind === "objective_audit") {
 				(this.store.hasPassedAcceptance(taskId, criterion.id) ? passed : pendingManual).push(criterion.id);
 				continue;
 			}

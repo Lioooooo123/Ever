@@ -8,7 +8,7 @@
 
 ## 1. 决策摘要
 
-Ever 只保留一种长程执行模式。Goal 是 Task 的目标，不是独立运行模式。公开 CLI 在 Session 启动前创建或选择 Task；`/goal` 只控制当前已附着 Task，不创建或附着另一套 Task，也不拥有状态机、continuation、预算或完成判定。
+Ever 只保留一种长程执行模式。Goal 是 Task 的目标，不是独立运行模式。`/goal <objective>` 可以在当前 idle Session 中创建并附着一个 Task；它和 Task CLI 都调用同一个 Task Application，也不拥有状态机、continuation、预算或完成判定。
 
 每个公开 Session 在启动时进入长寿命 OS sandbox。一个 resident Worker 持有一个 `AgentSessionRuntime`，同一 sandbox 连续执行多个 Turn，不为每个 Turn 或工具调用重复初始化 sandbox。普通交互、Goal 执行、后台续跑、恢复和 attach 使用同一 Session 执行链。
 
@@ -118,7 +118,7 @@ OS sandbox 只能在进程启动前可靠建立。Session 已经在宿主进程�
 | Grant | 用户或受限自动审批产生的持久授权 |
 | Risk Review | 对确定性规则无法判断的 Tool Intent 进行的结构化 LLM 风险评估 |
 
-不存在独立的“Session Goal”和“Long Task Goal”。公开 CLI 是 Task Application 的创建入口，`/goal` 是当前 Task 的控制入口。
+不存在独立的“Session Goal”和“Long Task Goal”。Task CLI 和 `/goal <objective>` 都是 Task Application 的创建 adapter；其余 `/goal` 子命令控制当前 Task。
 
 ## 6. 核心不变量
 
@@ -185,23 +185,24 @@ ever <goal>
 
 ### 8.1 命令职责
 
-`/goal status|pause|resume|blocked|cancel` 只负责：
+`/goal <objective>|status|pause|resume|blocked|cancel` 只负责：
 
-1. 读取当前进程内的 Task/Agent identity。
-2. 通过 Task Application 查询或控制同一个 durable Task。
-3. 显示 Task ID、Goal、预算、sandbox 和权限摘要。
+1. 在当前 Session idle 且未附着 Task 时，通过 Task Application 创建并附着一个 durable Task。
+2. 读取当前进程内的 Task/Agent identity。
+3. 通过 Task Application 查询或控制同一个 durable Task。
+4. 显示 Task ID、Goal、预算、sandbox 和权限摘要。
 
 `/goal` 不负责：
 
 - 保存独立 Goal state。
 - 统计独立 Turn 或 Token 预算。
-- 直接调用 `sendMessage()` 安排 continuation。
+- 自己调度 continuation；启动后的 follow-up 只用于进入 `NativeLongTaskAgent` 的首个 Turn。
 - 判断完成。
 - 保存 blocker 或 evidence 的第二份副本。
 
 ### 8.2 Session 创建与恢复
 
-所有公开交互 Session 都由 Task bridge 启动或从 settled checkpoint 恢复。不存在先创建公开临时 Session、再由 `/goal` 原地采用的产品路径。
+普通交互可以先创建 standalone Session。用户执行 `/goal <objective>` 时，adapter 通过 Task Application 创建 Task，并让同一个 idle Session 成为该 Task 的执行记录；已有 Task 则从 settled checkpoint 恢复。
 
 Task bridge 启动后：
 
@@ -211,11 +212,11 @@ Task bridge 启动后：
 - 后续 continuation 只由 `NativeLongTaskAgent` 驱动。
 - 客户端退出不终止 Worker。
 
-SDK 调用方仍可显式创建 standalone Session，但它不属于 Ever CLI 的 durable Task 产品路径，也不能通过 `/goal` 原地升级为 Task。系统不得声称单独包装 Bash 等价于完整 Session sandbox。
+SDK 调用方也可显式创建 standalone Session。只有显式调用 durable Goal adapter 后它才进入 Task 产品路径。系统不得声称单独包装 Bash 等价于完整 Session sandbox。
 
 ### 8.3 旧 Goal extension
 
-`extensions/goal.ts` 迁移完成后删除。为兼容已有 Session log，可以保留只读迁移器，将最后一个旧 `session-goal` entry 转换为 Task 创建建议，但不能恢复旧 extension 的自动 continuation。
+`extensions/goal.ts` 只保留 Task Application adapter、展示和命令解析。它不得恢复旧 extension 的状态存储或自动 continuation；已有 `session-goal` entry 只能只读迁移。
 
 ## 9. Session Execution Host
 
@@ -906,10 +907,10 @@ TUI、`task show` 和 `daemon workers` 至少显示：
 
 范围：
 
-- `/goal` 收缩为当前 Task 的控制 adapter。
+- `/goal` 收缩为 Task 创建与控制 adapter。
 - 由 CLI Task bridge 创建 Session 或恢复 settled checkpoint。
 - continuation、budget、progress、evidence 和 completion 全部迁入 `NativeLongTaskAgent`。
-- 删除 `extensions/goal.ts` 状态机。
+- 删除 `extensions/goal.ts` 自有状态机，只保留薄 adapter。
 - 增加旧 Session goal entry 的只读迁移提示。
 
 完成标准：系统中不存在第二套 Goal state 或 continuation。

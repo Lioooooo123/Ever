@@ -10,9 +10,9 @@ Ever is developed directly from a complete in-repository execution stack. It is 
 
 - **Session-native:** ordinary prompts, history, resume, branching, and compaction use the same Session runtime.
 - **Opt-in:** long-running behavior starts only after `/goal`; normal Sessions never auto-continue.
-- **Durable:** Goal state is stored in the Session and follows resume, compaction, and tree navigation.
-- **Verifiable:** the agent must report concrete evidence before it can complete a Goal.
-- **Bounded:** Goal continuation has explicit turn, time, and optional token limits.
+- **Durable:** Goal state is stored as a Task linked to the Session and survives resume, compaction, and process restarts.
+- **Verifiable:** the agent must map every explicit requirement to concrete, host-verified evidence before completion.
+- **Bounded:** Goal continuation has explicit turn, wall-time, and optional cost limits.
 - **Recoverable:** the advanced `ever task` control plane remains available for detached Worker execution.
 
 ## Goal lifecycle

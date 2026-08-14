@@ -23,6 +23,8 @@ afterEach(() => {
 
 function createRuntimeAdapter(workspaceRoot: string, sessionId: string) {
 	let lifecycle: AgentSessionLifecycle | undefined;
+	let idle = true;
+	const prompts: string[] = [];
 	return {
 		cwd: workspaceRoot,
 		session: {
@@ -38,7 +40,16 @@ function createRuntimeAdapter(workspaceRoot: string, sessionId: string) {
 			systemPrompt: "test system prompt",
 			getActiveToolNames: () => ["read"],
 			abort: async () => {},
-			prompt: async () => {},
+			get isIdle() {
+				return idle;
+			},
+			prompt: async (prompt: string) => {
+				prompts.push(prompt);
+			},
+		},
+		prompts,
+		setIdle(value: boolean) {
+			idle = value;
 		},
 		restoreCheckpoint: async () => {},
 		createCheckpoint: async () => ({
@@ -147,6 +158,46 @@ describe("NativeLongTaskAgent", () => {
 		expect(types.indexOf("ToolFinished")).toBeLessThan(types.indexOf("CheckpointCreated"));
 		expect(inspectionStore.requireTask(task.id).totalTurns).toBe(1);
 		inspectionStore.close();
+	});
+
+	it("defers automatic continuation when user work already occupies the Session", async () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-native-agent-user-priority-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspaceRoot = join(root, "workspace");
+		mkdirSync(workspaceRoot);
+		const databasePath = join(agentDir, "long-tasks.sqlite");
+		const store = SqliteTaskStore.open({ databasePath, artifactsRoot: join(agentDir, "tasks") });
+		const controller = new TaskController(store);
+		const task = controller.create({
+			title: "user priority",
+			goal: "continue only while idle",
+			acceptance: [],
+			budget: { maxTurns: 5, maxWallTimeMinutes: 60 },
+			workspaceRoot,
+			workspaceFingerprint: "fingerprint",
+		});
+		controller.submit(task.id);
+		const agent = store.listAgents(task.id)[0]!;
+		store.close();
+		const runtimeAdapter = createRuntimeAdapter(workspaceRoot, "session-user-priority");
+		const running = await attachLongTaskRuntime(
+			runtimeAdapter as unknown as AgentSessionRuntime,
+			agentDir,
+			task.id,
+			agent.id,
+			true,
+			DEFAULT_CONTINUATION_POLICY,
+		);
+		runtimeAdapter.setIdle(false);
+		await runtimeAdapter.emit({ type: "settled", sessionId: "session-user-priority" });
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		expect(runtimeAdapter.prompts).toEqual([]);
+		const inspectionStore = SqliteTaskStore.open({ databasePath });
+		expect(inspectionStore.listEvents(task.id).map((event) => event.type)).toContain("ContinuationPromptDeferred");
+		inspectionStore.close();
+		await running.drainAndClose();
 	});
 
 	it("authenticates an fd3-style Eval gate and binds it to the selected domain path", async () => {

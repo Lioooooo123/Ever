@@ -146,17 +146,22 @@ function setup(
 afterEach(() => vi.restoreAllMocks());
 
 describe("durable Goal adapter", () => {
-	it("rejects Task creation inside an already running Session", async () => {
+	it("creates a durable Task through the current Session adapter", async () => {
 		const runtime = setup();
 		await runtime.emit("session_start");
 		expect(runtime.activeTools()).toEqual(["read"]);
 
-		await expect(runtime.runGoal("ship the unified execution chain")).rejects.toThrow(
-			"Create Tasks from Task Home or ever <goal>",
-		);
+		await runtime.runGoal("ship the unified execution chain");
 
-		expect(runtime.host.start).not.toHaveBeenCalled();
-		expect(runtime.activeTools()).toEqual(["read"]);
+		expect(runtime.host.start).toHaveBeenCalledWith("ship the unified execution chain");
+		expect(runtime.sendMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				customType: "durable-goal-start",
+				content: expect.stringContaining("ship the unified execution chain"),
+			}),
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		expect(runtime.activeTools()).toEqual(["read", "task_update"]);
 		expect(runtime.renderer()).toBeDefined();
 	});
 
@@ -244,9 +249,9 @@ describe("durable Goal adapter", () => {
 		expect(runtime.sendMessage).not.toHaveBeenCalled();
 	});
 
-	it("does not expose a second Goal creation syntax", async () => {
+	it("rejects an empty Goal command when no Task is attached", async () => {
 		const runtime = setup();
-		await expect(runtime.runGoal("new objective")).rejects.toThrow("Usage: /goal status");
+		await expect(runtime.runGoal("")).rejects.toThrow("Usage: /goal <objective>");
 		expect(runtime.host.start).not.toHaveBeenCalled();
 	});
 });
