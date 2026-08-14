@@ -10,6 +10,7 @@
 - Added Task-aware reuse of the native Ever TUI, Task-first JSONL RPC, durable steering, verified completion bundles, resident Worker recovery, and OS-level unattended execution sandbox.
 - Added `/goal` as a durable Task adapter that adopts the current Session and uses native continuation, checkpoints, budgets, permissions, evidence, acceptance, and recovery.
 - Added deterministic tool-intent authorization, bounded LLM risk review, durable scoped permission grants, approval scope selection, revocation support, and permission auditing.
+- Added user-authored Task Authorizations and an independent Small Model Judge with frozen model identity, strict target matching, single-use review decisions, and bounded Reviewer cost.
 
 ### Breaking Changes
 

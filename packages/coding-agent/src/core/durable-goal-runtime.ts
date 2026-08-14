@@ -6,6 +6,7 @@ import type {
 	DurableGoalSnapshot,
 	DurableGoalUpdate,
 	DurablePermissionGrantSummary,
+	DurableTaskAuthorizationSummary,
 } from "./extensions/types.ts";
 import { attachLongTaskRuntime, type LongTaskRuntimeHandle } from "./long-task-runtime.ts";
 import { applyNativeTaskUpdate } from "./native-task-tool.ts";
@@ -14,7 +15,11 @@ import type { TaskRunContext } from "./task-run-context.ts";
 
 const TERMINAL_STATES = new Set<TaskRecord["state"]>(["completed", "failed", "cancelled"]);
 
-function snapshot(task: TaskRecord): DurableGoalSnapshot {
+function snapshot(
+	task: TaskRecord,
+	reviewer?: ReturnType<SqliteTaskStore["getReviewerCostSummary"]>,
+): DurableGoalSnapshot {
+	const reviewerCostUsd = (reviewer?.compilerCostUsd ?? 0) + (reviewer?.judgeCostUsd ?? 0);
 	return {
 		taskId: task.id,
 		goal: task.goal,
@@ -22,6 +27,12 @@ function snapshot(task: TaskRecord): DurableGoalSnapshot {
 		...(task.stateReason ? { stateReason: task.stateReason } : {}),
 		totalTurns: task.totalTurns,
 		totalCostUsd: task.totalCostUsd,
+		mainAgentCostUsd: Math.max(0, task.totalCostUsd - reviewerCostUsd),
+		compilerCostUsd: reviewer?.compilerCostUsd ?? 0,
+		judgeCostUsd: reviewer?.judgeCostUsd ?? 0,
+		reviewerReservedUsd: reviewer?.reviewerReservedUsd ?? 0,
+		compilerRequestCount: reviewer?.compilerRequestCount ?? 0,
+		reviewerRequestCount: reviewer?.reviewerRequestCount ?? 0,
 		maxTurns: task.budget.maxTurns,
 		maxWallTimeMinutes: task.budget.maxWallTimeMinutes,
 	};
@@ -74,7 +85,7 @@ export class DurableGoalRuntime implements DurableGoalHost {
 
 	status(): DurableGoalSnapshot | undefined {
 		if (!this.activeTaskId) return undefined;
-		return snapshot(this.application.resolve(this.activeTaskId));
+		return this.snapshot(this.application.resolve(this.activeTaskId));
 	}
 
 	async start(goal: string): Promise<DurableGoalSnapshot> {
@@ -95,7 +106,7 @@ export class DurableGoalRuntime implements DurableGoalHost {
 		const agent = this.application.snapshot(task.id).agents.find((candidate) => candidate.kind === "main");
 		if (!agent) throw new Error(`Task ${task.id} has no main Agent`);
 		await this.adopt({ taskId: task.id, agentId: agent.id, acceptRuntimeDrift: false });
-		return snapshot(this.application.resolve(task.id));
+		return this.snapshot(this.application.resolve(task.id));
 	}
 
 	async pause(): Promise<DurableGoalSnapshot> {
@@ -106,7 +117,7 @@ export class DurableGoalRuntime implements DurableGoalHost {
 		).task;
 		await this.runtime.session.abort();
 		await this.closeHandle();
-		return snapshot(task);
+		return this.snapshot(task);
 	}
 
 	async resume(): Promise<DurableGoalSnapshot> {
@@ -126,7 +137,7 @@ export class DurableGoalRuntime implements DurableGoalHost {
 			false,
 			this.continuationPolicy,
 		);
-		return snapshot(task);
+		return this.snapshot(task);
 	}
 
 	async cancel(): Promise<DurableGoalSnapshot> {
@@ -137,7 +148,7 @@ export class DurableGoalRuntime implements DurableGoalHost {
 		).task;
 		await this.runtime.session.abort();
 		await this.closeHandle();
-		return snapshot(task);
+		return this.snapshot(task);
 	}
 
 	async update(toolCallId: string, update: DurableGoalUpdate): Promise<unknown> {
@@ -206,6 +217,47 @@ export class DurableGoalRuntime implements DurableGoalHost {
 		}
 	}
 
+	listTaskAuthorizations(): DurableTaskAuthorizationSummary[] {
+		const store = SqliteTaskStore.open({ databasePath: join(this.agentDir, "long-tasks.sqlite") });
+		try {
+			return store.listTaskAuthorizations(this.requireTaskId()).map((authorization) => ({
+				id: authorization.id,
+				action: authorization.action,
+				state: authorization.state,
+				targets: authorization.targets,
+				limits: authorization.limits,
+				usedCount: authorization.usedCount,
+				maxUses: authorization.maxUses,
+				createdAt: authorization.createdAt,
+			}));
+		} finally {
+			store.close();
+		}
+	}
+
+	revokeTaskAuthorization(authorizationId: string): DurableTaskAuthorizationSummary {
+		const store = SqliteTaskStore.open({ databasePath: join(this.agentDir, "long-tasks.sqlite") });
+		try {
+			const candidate = store
+				.listTaskAuthorizations(this.requireTaskId())
+				.find((authorization) => authorization.id === authorizationId);
+			if (!candidate) throw new Error("Task Authorization is outside the current Task or does not exist");
+			const authorization = store.revokeTaskAuthorization(authorizationId);
+			return {
+				id: authorization.id,
+				action: authorization.action,
+				state: authorization.state,
+				targets: authorization.targets,
+				limits: authorization.limits,
+				usedCount: authorization.usedCount,
+				maxUses: authorization.maxUses,
+				createdAt: authorization.createdAt,
+			};
+		} finally {
+			store.close();
+		}
+	}
+
 	async close(): Promise<void> {
 		this.runtime.setDurableGoalHost(undefined);
 		this.runtime.setSessionReplacementGuard(undefined);
@@ -215,6 +267,15 @@ export class DurableGoalRuntime implements DurableGoalHost {
 	private requireTaskId(): string {
 		if (!this.activeTaskId) throw new Error("No durable Goal Task is attached");
 		return this.activeTaskId;
+	}
+
+	private snapshot(task: TaskRecord): DurableGoalSnapshot {
+		const store = SqliteTaskStore.open({ databasePath: join(this.agentDir, "long-tasks.sqlite") });
+		try {
+			return snapshot(task, store.getReviewerCostSummary(task.id));
+		} finally {
+			store.close();
+		}
 	}
 
 	private async closeHandle(): Promise<void> {

@@ -40,6 +40,10 @@ function bindGoalHost(harness: Harness): DurableGoalHost {
 		revokePermissionGrant: () => {
 			throw new Error("Grant not found");
 		},
+		listTaskAuthorizations: () => [],
+		revokeTaskAuthorization: () => {
+			throw new Error("Authorization not found");
+		},
 	};
 	harness.session.setDurableGoalHost(host);
 	return host;

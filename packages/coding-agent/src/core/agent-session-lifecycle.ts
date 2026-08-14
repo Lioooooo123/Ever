@@ -2,7 +2,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { Api, AssistantMessage, Model, Usage } from "@lioooooo123/ever-ai/compat";
 import type { ToolDurabilityMetadata } from "./permission-kernel.ts";
 
-export type AgentSessionRequestKind = "agent" | "compaction" | "branch_summary" | "permission_review";
+export type AgentSessionRequestKind =
+	| "agent"
+	| "compaction"
+	| "branch_summary"
+	| "authorization_compile"
+	| "permission_review";
 
 export type AgentSessionLifecycleEvent =
 	| { type: "before_turn"; sessionId: string; baseSystemPrompt: string }

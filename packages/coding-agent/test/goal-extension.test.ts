@@ -3,6 +3,7 @@ import type {
 	DurableGoalHost,
 	DurableGoalSnapshot,
 	DurablePermissionGrantSummary,
+	DurableTaskAuthorizationSummary,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
@@ -32,6 +33,7 @@ function setup(
 		legacyEntry?: boolean;
 		initialGoal?: DurableGoalSnapshot;
 		permissionGrants?: DurablePermissionGrantSummary[];
+		taskAuthorizations?: DurableTaskAuthorizationSummary[];
 	} = {},
 ) {
 	let activeTools = ["read"];
@@ -75,6 +77,12 @@ function setup(
 			const grant = options.permissionGrants?.find((candidate) => candidate.id === grantId);
 			if (!grant) throw new Error("Grant not found");
 			return { ...grant, state: "revoked" as const };
+		}),
+		listTaskAuthorizations: () => options.taskAuthorizations ?? [],
+		revokeTaskAuthorization: vi.fn((authorizationId: string) => {
+			const authorization = options.taskAuthorizations?.find((candidate) => candidate.id === authorizationId);
+			if (!authorization) throw new Error("Authorization not found");
+			return { ...authorization, state: "revoked" as const };
 		}),
 	};
 	const api = {
@@ -207,6 +215,25 @@ describe("durable Goal adapter", () => {
 		await runtime.runGoal(`permissions revoke ${grant.id}`);
 
 		expect(runtime.host.revokePermissionGrant).toHaveBeenCalledWith(grant.id);
+		expect(runtime.notify).toHaveBeenCalledWith(expect.stringContaining("Revoked permission"), "info");
+	});
+
+	it("lists and revokes compiled Task Authorizations through the Task host", async () => {
+		const authorization: DurableTaskAuthorizationSummary = {
+			id: "authorization-12345678",
+			action: "git_push",
+			state: "active",
+			targets: { remote: "origin", branch: "main" },
+			limits: { force: false },
+			usedCount: 0,
+			maxUses: 1,
+			createdAt: "2026-08-14T00:00:00.000Z",
+		};
+		const runtime = setup({ initialGoal: runningGoal(), taskAuthorizations: [authorization] });
+
+		await runtime.runGoal(`permissions revoke ${authorization.id}`);
+
+		expect(runtime.host.revokeTaskAuthorization).toHaveBeenCalledWith(authorization.id);
 		expect(runtime.notify).toHaveBeenCalledWith(expect.stringContaining("Revoked permission"), "info");
 	});
 
