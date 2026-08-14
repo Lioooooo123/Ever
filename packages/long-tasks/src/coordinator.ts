@@ -117,7 +117,12 @@ export class DurableAgentCoordinator implements AgentCoordinator {
 						}),
 						artifactRefs: command.evidence.map((evidence) => evidence.ref),
 					});
-					const agentState = this.store.recordAgentReport(actor, acceptedStatus, messageId);
+					const agentState = this.store.recordAgentReport(actor, acceptedStatus, messageId, {
+						summary: command.summary,
+						evidence: command.evidence,
+						blockers: command.blockers ?? [],
+						acceptanceResults: command.acceptanceResults ?? [],
+					});
 					return { kind: "report", messageId, agentState, replayed: false };
 				}
 			}

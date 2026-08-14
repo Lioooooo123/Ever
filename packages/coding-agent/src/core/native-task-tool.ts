@@ -49,7 +49,7 @@ export function applyNativeTaskUpdate(
 	}
 }
 
-export function createNativeTaskTool(agentDir: string, taskId: string): ToolDefinition {
+export function createNativeTaskTool(agentDir: string, taskId: string, agentId: string): ToolDefinition {
 	return defineTool({
 		name: "task_update",
 		label: "Task Update",
@@ -85,6 +85,13 @@ export function createNativeTaskTool(agentDir: string, taskId: string): ToolDefi
 			Type.Object({ action: Type.Literal("fail"), code: Type.String(), reason: Type.String() }),
 		]),
 		async execute(toolCallId, params) {
+			const store = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
+			try {
+				if (store.requireAgent(agentId).kind !== "main")
+					throw new Error("Only the main Agent may update the Task lifecycle");
+			} finally {
+				store.close();
+			}
 			return textResult(applyNativeTaskUpdate(agentDir, taskId, toolCallId, params));
 		},
 	});

@@ -26,6 +26,10 @@ The CLI normally creates the durable Task before starting its Session. In an idl
 
 The same Task can be resumed by a resident Worker after the client exits and reopened through `ever task`.
 
+Use `/flow <objective>` when work should be split into a dependency graph. The foreground Session becomes an Orchestrator: it defines the graph with `flow_define`, observes it with `flow_status`, and delegates execution to independent Agent Sessions. Nodes without dependencies run concurrently; a dependent node starts only after every source node reports an accepted Episode. Failed sources skip their downstream nodes.
+
+Coordination is not Flow-specific. `agent_spawn`, `agent_message`, `agent_inbox`, and `agent_report` are available to durable Task Agents. `session_message` and `session_inbox` provide persistent messaging between ordinary Sessions outside a Flow. Receiving is default-deny: use `/sessions open` or `session_address` to create a rotatable capability address, share it only with a trusted Session, and close it after the handoff.
+
 ---
 
 ## Ever runtime
@@ -171,6 +175,9 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/settings` | Thinking level, theme, message delivery, transport |
 | `/goal <objective>` | Start a durable Task in the current idle Session |
 | `/goal status\|pause\|resume\|blocked\|cancel` | Control the current durable Task |
+| `/flow <objective>` | Orchestrate a durable DAG of independent Agent Sessions |
+| `/flow status\|pause\|resume\|cancel` | Inspect or control the current Flow Task |
+| `/sessions open\|close\|status` | Manage the current Session's receive capability |
 | `/trust` | Save project trust decision for future sessions (restart required) |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |

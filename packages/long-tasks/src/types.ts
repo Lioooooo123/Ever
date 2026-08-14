@@ -661,6 +661,65 @@ export interface InboxBatch {
 	messages: InboxMessage[];
 }
 
+export type FlowState = "running" | "completed" | "failed" | "cancelled";
+export type FlowNodeState = "blocked" | "queued" | "running" | "completed" | "failed" | "skipped" | "cancelled";
+
+export interface FlowNodeDefinition {
+	key: string;
+	name: string;
+	role: string;
+	objective: string;
+	dependsOn: string[];
+	acceptance: AcceptanceCriterion[];
+	scope: DelegateCommand["scope"];
+	budget: Budget;
+	required: boolean;
+}
+
+export interface FlowDefinition {
+	objective: string;
+	nodes: FlowNodeDefinition[];
+}
+
+export interface FlowNodeRecord {
+	flowId: string;
+	key: string;
+	agentId: string;
+	activeSessionId?: string;
+	delegationId: string;
+	state: FlowNodeState;
+	dependsOn: string[];
+	createdAt: string;
+	updatedAt: string;
+	completedAt?: string;
+}
+
+export interface FlowRecord {
+	id: string;
+	taskId: string;
+	orchestratorAgentId: string;
+	objective: string;
+	state: FlowState;
+	nodes: FlowNodeRecord[];
+	createdAt: string;
+	updatedAt: string;
+	completedAt?: string;
+}
+
+export interface EpisodeRecord {
+	id: string;
+	taskId: string;
+	agentId: string;
+	flowId?: string;
+	nodeKey?: string;
+	status: ReportCommand["status"] | "skipped";
+	summary: string;
+	evidence: EvidenceRef[];
+	blockers: string[];
+	acceptanceResults: AcceptanceResult[];
+	createdAt: string;
+}
+
 export interface AgentCheckpointCommit {
 	taskId: string;
 	agentId: string;
