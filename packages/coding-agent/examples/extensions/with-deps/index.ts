@@ -5,7 +5,7 @@
  * Requires: npm install in this directory
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import ms from "ms";
 import { Type } from "typebox";
 

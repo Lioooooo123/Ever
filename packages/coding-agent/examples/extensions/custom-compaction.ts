@@ -13,9 +13,9 @@
  *   ever --extension examples/extensions/custom-compaction.ts
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
-import { convertToLlm, serializeConversation } from "@lioooooo123/ever";
 import { uuidv7 } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
+import { convertToLlm, serializeConversation } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.on("session_before_compact", async (event, ctx) => {

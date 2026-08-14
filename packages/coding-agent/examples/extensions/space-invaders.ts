@@ -3,7 +3,7 @@
  * Uses Kitty keyboard protocol for smooth movement (press/release detection)
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { isKeyRelease, Key, matchesKey, visibleWidth } from "@lioooooo123/ever-tui";
 
 const GAME_WIDTH = 60;

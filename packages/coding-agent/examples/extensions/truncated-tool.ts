@@ -15,7 +15,7 @@
  */
 
 import { mkdtemp, writeFile } from "node:fs/promises";
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -23,7 +23,7 @@ import {
 	type TruncationResult,
 	truncateHead,
 	withFileMutationQueue,
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 import { Text } from "@lioooooo123/ever-tui";
 import { execSync } from "child_process";
 import { tmpdir } from "os";

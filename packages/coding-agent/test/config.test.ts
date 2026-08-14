@@ -214,17 +214,17 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed packages from the current install prefix", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand("@lioooooo123/ever", undefined, "@new-scope/ever");
+		const command = getSelfUpdateCommand("@lioooooo123/ever-cli", undefined, "@new-scope/ever");
 
 		expect(command).toEqual({
 			command: "npm",
 			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/ever"],
-			display: `npm --prefix ${prefix} uninstall -g @lioooooo123/ever && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/ever`,
+			display: `npm --prefix ${prefix} uninstall -g @lioooooo123/ever-cli && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/ever`,
 			steps: [
 				{
 					command: "npm",
-					args: ["--prefix", prefix, "uninstall", "-g", "@lioooooo123/ever"],
-					display: `npm --prefix ${prefix} uninstall -g @lioooooo123/ever`,
+					args: ["--prefix", prefix, "uninstall", "-g", "@lioooooo123/ever-cli"],
+					display: `npm --prefix ${prefix} uninstall -g @lioooooo123/ever-cli`,
 				},
 				{
 					command: "npm",
@@ -316,19 +316,19 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed pnpm global installs by removing the old package first", () => {
 		createPnpmGlobalInstall();
 
-		const command = getSelfUpdateCommand("@lioooooo123/ever", undefined, "@new-scope/ever");
+		const command = getSelfUpdateCommand("@lioooooo123/ever-cli", undefined, "@new-scope/ever");
 
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(command).toEqual({
 			command: "pnpm",
 			args: ["install", "-g", "--ignore-scripts", "--config.minimumReleaseAge=0", "@new-scope/ever"],
 			display:
-				"pnpm remove -g @lioooooo123/ever && pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 @new-scope/ever",
+				"pnpm remove -g @lioooooo123/ever-cli && pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 @new-scope/ever",
 			steps: [
 				{
 					command: "pnpm",
-					args: ["remove", "-g", "@lioooooo123/ever"],
-					display: "pnpm remove -g @lioooooo123/ever",
+					args: ["remove", "-g", "@lioooooo123/ever-cli"],
+					display: "pnpm remove -g @lioooooo123/ever-cli",
 				},
 				{
 					command: "pnpm",
@@ -385,18 +385,18 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed yarn global installs by removing the old package first", () => {
 		createYarnGlobalInstall();
 
-		const command = getSelfUpdateCommand("@lioooooo123/ever", undefined, "@new-scope/ever");
+		const command = getSelfUpdateCommand("@lioooooo123/ever-cli", undefined, "@new-scope/ever");
 
 		expect(detectInstallMethod()).toBe("yarn");
 		expect(command).toEqual({
 			command: "yarn",
 			args: ["global", "add", "--ignore-scripts", "@new-scope/ever"],
-			display: "yarn global remove @lioooooo123/ever && yarn global add --ignore-scripts @new-scope/ever",
+			display: "yarn global remove @lioooooo123/ever-cli && yarn global add --ignore-scripts @new-scope/ever",
 			steps: [
 				{
 					command: "yarn",
-					args: ["global", "remove", "@lioooooo123/ever"],
-					display: "yarn global remove @lioooooo123/ever",
+					args: ["global", "remove", "@lioooooo123/ever-cli"],
+					display: "yarn global remove @lioooooo123/ever-cli",
 				},
 				{
 					command: "yarn",
@@ -410,19 +410,19 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed bun global installs by removing the old package first", () => {
 		createBunGlobalInstall();
 
-		const command = getSelfUpdateCommand("@lioooooo123/ever", undefined, "@new-scope/ever");
+		const command = getSelfUpdateCommand("@lioooooo123/ever-cli", undefined, "@new-scope/ever");
 
 		expect(detectInstallMethod()).toBe("bun");
 		expect(command).toEqual({
 			command: "bun",
 			args: ["install", "-g", "--ignore-scripts", "--minimum-release-age=0", "@new-scope/ever"],
 			display:
-				"bun uninstall -g @lioooooo123/ever && bun install -g --ignore-scripts --minimum-release-age=0 @new-scope/ever",
+				"bun uninstall -g @lioooooo123/ever-cli && bun install -g --ignore-scripts --minimum-release-age=0 @new-scope/ever",
 			steps: [
 				{
 					command: "bun",
-					args: ["uninstall", "-g", "@lioooooo123/ever"],
-					display: "bun uninstall -g @lioooooo123/ever",
+					args: ["uninstall", "-g", "@lioooooo123/ever-cli"],
+					display: "bun uninstall -g @lioooooo123/ever-cli",
 				},
 				{
 					command: "bun",

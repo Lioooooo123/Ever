@@ -18,7 +18,7 @@
  *   /thinking-label          Reset to the default label
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever-cli";
 
 const DEFAULT_LABEL = "Pondering...";
 

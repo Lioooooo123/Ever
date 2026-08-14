@@ -4,7 +4,7 @@
  * Escape in editor returns to options, Escape in options cancels
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Editor, type EditorTheme, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@lioooooo123/ever-tui";
 import { Type } from "typebox";
 

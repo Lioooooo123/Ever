@@ -11,7 +11,7 @@
  *   npx tsx examples/sdk/14-simple-agent.ts --read-only --cwd ../../ "Summarize the repository"
  */
 
-import { createAgentSession, defineTool, SessionManager } from "@lioooooo123/ever";
+import { createAgentSession, defineTool, SessionManager } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 
 interface CliOptions {

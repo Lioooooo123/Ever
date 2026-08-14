@@ -21,7 +21,7 @@ Commands:
 
 extract options:
   --version <x.y.z>    Version to extract
-  --tag <vX.Y.Z>       Release tag used for repository links (defaults to v<version>)
+	--tag <cli-vX.Y.Z>   CLI release tag used for repository links (defaults to cli-v<version>)
   --changelog <path>   Changelog path (default: ${DEFAULT_CHANGELOG})
   --out <path>         Output file (default: stdout)
   --repo <owner/repo>  GitHub repository for generated links (default: ${DEFAULT_REPO})
@@ -105,10 +105,11 @@ function normalizeTag(tagOrVersion) {
 	if (!tagOrVersion) {
 		return undefined;
 	}
-	return tagOrVersion.startsWith("v") ? tagOrVersion : `v${tagOrVersion}`;
+	return tagOrVersion.startsWith("cli-v") || tagOrVersion.startsWith("v") ? tagOrVersion : `cli-v${tagOrVersion}`;
 }
 
 function versionFromTag(tag) {
+	if (tag.startsWith("cli-v")) return tag.slice("cli-v".length);
 	return tag.startsWith("v") ? tag.slice(1) : tag;
 }
 

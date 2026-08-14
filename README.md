@@ -28,7 +28,7 @@ Ever reasons about the next step, executes it through the embedded tool loop, ob
 ## Install
 
 ```bash
-npm install -g --ignore-scripts @lioooooo123/ever
+npm install -g --ignore-scripts @lioooooo123/ever-cli
 ever
 ```
 
@@ -77,7 +77,7 @@ Goal mode deepens the existing Session lifecycle instead of introducing a second
 
 | Module | Responsibility |
 |---|---|
-| **[@lioooooo123/ever](packages/coding-agent)** | Public Session CLI, `/goal`, embedded SDK, tools, and terminal interface |
+| **[@lioooooo123/ever-cli](packages/coding-agent)** | Public Session CLI, `/goal`, embedded SDK, tools, and terminal interface |
 | **[@lioooooo123/ever-long-tasks](packages/long-tasks)** | Durable Tasks, Attempts, evidence, recovery, and completion decisions |
 | **[@lioooooo123/ever-agent-core](packages/agent)** | Reasoning loop, state transitions, and tool execution |
 | **[@lioooooo123/ever-ai](packages/ai)** | Multi-provider model API |

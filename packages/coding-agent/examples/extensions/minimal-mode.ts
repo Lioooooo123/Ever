@@ -16,7 +16,7 @@
  * Then use ctrl+o to toggle between minimal (collapsed) and full (expanded) views.
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import {
 	createBashTool,
 	createEditTool,
@@ -25,7 +25,7 @@ import {
 	createLsTool,
 	createReadTool,
 	createWriteTool,
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 import { Text } from "@lioooooo123/ever-tui";
 import { homedir } from "os";
 

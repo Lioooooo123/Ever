@@ -19,24 +19,26 @@ const workspacePackages = findPackageDirectories(packageRoot)
 		return { data: JSON.parse(readFileSync(path, "utf8")), path };
 	});
 const publishedPackages = workspacePackages.filter((pkg) => pkg.data.private !== true);
+const lockstepPackages = publishedPackages.filter((pkg) => pkg.data.everVersionPolicy !== "independent");
+const independentPackages = publishedPackages.filter((pkg) => pkg.data.everVersionPolicy === "independent");
 const versionMap = new Map(workspacePackages.map((pkg) => [pkg.data.name, pkg.data.version]));
 
 console.log("Current versions:");
 for (const pkg of [...publishedPackages].sort((a, b) => a.data.name.localeCompare(b.data.name))) {
-	console.log(`  ${pkg.data.name}: ${pkg.data.version}`);
+	const policy = pkg.data.everVersionPolicy === "independent" ? " (independent)" : "";
+	console.log(`  ${pkg.data.name}: ${pkg.data.version}${policy}`);
 }
 
-const versions = new Set(publishedPackages.map((pkg) => pkg.data.version));
+const versions = new Set(lockstepPackages.map((pkg) => pkg.data.version));
 if (versions.size > 1) {
-	console.error("\nERROR: Not all non-private packages have the same version.");
-	console.error("Expected lockstep versioning. Run one of:");
-	console.error("  npm run version:patch");
-	console.error("  npm run version:minor");
-	console.error("  npm run version:major");
+	console.error("\nERROR: Published packages without an independent version policy are not in lockstep.");
 	process.exit(1);
 }
 
-console.log("\nAll non-private packages are at the same version (lockstep).");
+console.log("\nPublished library packages are lockstep versioned.");
+if (independentPackages.length > 0) {
+	console.log(`Independent packages: ${independentPackages.map((pkg) => pkg.data.name).join(", ")}.`);
+}
 
 let totalUpdates = 0;
 const updatedPackages = new Set();

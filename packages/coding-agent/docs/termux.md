@@ -17,7 +17,7 @@ pkg update && pkg upgrade
 pkg install nodejs termux-api git
 
 # Install Ever
-npm install -g --ignore-scripts @lioooooo123/ever
+npm install -g --ignore-scripts @lioooooo123/ever-cli
 
 # Create config directory
 mkdir -p ~/.ever/agent

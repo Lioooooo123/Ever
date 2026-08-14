@@ -1,6 +1,6 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@lioooooo123/ever";
-import { DynamicBorder, getMarkdownTheme } from "@lioooooo123/ever";
 import { uuidv7 } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI, ExtensionCommandContext } from "@lioooooo123/ever-cli";
+import { DynamicBorder, getMarkdownTheme } from "@lioooooo123/ever-cli";
 import { Container, Markdown, matchesKey, Text } from "@lioooooo123/ever-tui";
 
 type ContentBlock = {

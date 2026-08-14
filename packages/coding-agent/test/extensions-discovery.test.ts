@@ -55,7 +55,7 @@ describe("extensions discovery", () => {
 		fs.writeFileSync(
 			path.join(extensionsDir, "coding-agent-import.ts"),
 			`
-				import { getAgentDir } from "@lioooooo123/ever";
+				import { getAgentDir } from "@lioooooo123/ever-cli";
 				void getAgentDir;
 				export default function(ever) {
 					ever.registerCommand("test", { handler: async () => {} });

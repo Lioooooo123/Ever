@@ -25,8 +25,8 @@
  *   ever -e ./built-in-tool-renderer.ts
  */
 
-import type { BashToolDetails, EditToolDetails, ExtensionAPI, ReadToolDetails } from "@lioooooo123/ever";
-import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@lioooooo123/ever";
+import type { BashToolDetails, EditToolDetails, ExtensionAPI, ReadToolDetails } from "@lioooooo123/ever-cli";
+import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@lioooooo123/ever-cli";
 import { Text } from "@lioooooo123/ever-tui";
 
 export default function (ever: ExtensionAPI) {

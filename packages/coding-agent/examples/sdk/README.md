@@ -41,7 +41,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 
 const modelRuntime = await ModelRuntime.create();
 

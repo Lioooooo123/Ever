@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { contentText } from "@lioooooo123/ever-ai";
 import {
 	type AgentSession,
 	type CreateAgentSessionOptions,
@@ -11,8 +12,7 @@ import {
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
-} from "@lioooooo123/ever";
-import { contentText } from "@lioooooo123/ever-ai";
+} from "@lioooooo123/ever-cli";
 import {
 	createHarness,
 	type Harness,

@@ -32,16 +32,21 @@ test("synchronizes private dependencies without touching registry aliases, gener
 			name: "@lioooooo123/ever-ai",
 			version: "2.0.0",
 		});
-		await writeManifest(root, "packages/coding-agent", {
-			name: "@lioooooo123/ever",
+		await writeManifest(root, "packages/agent", {
+			name: "@lioooooo123/ever-agent-core",
 			version: "2.0.0",
+		});
+		await writeManifest(root, "packages/coding-agent", {
+			name: "@lioooooo123/ever-cli",
+			version: "0.0.1",
+			everVersionPolicy: "independent",
 		});
 		await writeManifest(root, "packages/evals", {
 			name: "@lioooooo123/ever-evals",
 			version: "9.9.9",
 			private: true,
 			dependencies: {
-				"@lioooooo123/ever": "^1.0.0",
+				"@lioooooo123/ever-cli": "^1.0.0",
 				"@example/ai-compat": "npm:@lioooooo123/ever-ai@1.0.0",
 			},
 		});
@@ -50,7 +55,7 @@ test("synchronizes private dependencies without touching registry aliases, gener
 			version: "0.0.0",
 			private: true,
 			dependencies: {
-				"@lioooooo123/ever": "^1.0.0",
+				"@lioooooo123/ever-cli": "^1.0.0",
 			},
 		});
 
@@ -58,10 +63,10 @@ test("synchronizes private dependencies without touching registry aliases, gener
 		assert.equal(result.status, 0, result.stderr);
 
 		const evalsManifest = await readManifest(root, "packages/evals");
-		assert.equal(evalsManifest.dependencies["@lioooooo123/ever"], "^2.0.0");
+		assert.equal(evalsManifest.dependencies["@lioooooo123/ever-cli"], "^0.0.1");
 		assert.equal(evalsManifest.dependencies["@example/ai-compat"], "npm:@lioooooo123/ever-ai@1.0.0");
 		const generatedManifest = await readManifest(root, "packages/coding-agent/install-lock");
-		assert.equal(generatedManifest.dependencies["@lioooooo123/ever"], "^1.0.0");
+		assert.equal(generatedManifest.dependencies["@lioooooo123/ever-cli"], "^1.0.0");
 
 		await writeManifest(root, "packages/ai", {
 			name: "@lioooooo123/ever-ai",

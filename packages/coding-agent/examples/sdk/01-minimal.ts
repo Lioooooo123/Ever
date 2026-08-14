@@ -5,7 +5,7 @@
  * from cwd and ~/.ever/agent. Model chosen from settings or first available.
  */
 
-import { createAgentSession } from "@lioooooo123/ever";
+import { createAgentSession } from "@lioooooo123/ever-cli";
 
 const { session } = await createAgentSession();
 

@@ -4,7 +4,7 @@
  * Configure provider auth through ModelRuntime.
  */
 
-import { createAgentSession, ModelRuntime, SessionManager } from "@lioooooo123/ever";
+import { createAgentSession, ModelRuntime, SessionManager } from "@lioooooo123/ever-cli";
 
 const modelRuntime = await ModelRuntime.create();
 const { session: defaultAuthSession } = await createAgentSession({

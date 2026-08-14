@@ -40,9 +40,9 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever";
-import { CONFIG_DIR_NAME, DynamicBorder, getAgentDir } from "@lioooooo123/ever";
 import type { Api, Model } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever-cli";
+import { CONFIG_DIR_NAME, DynamicBorder, getAgentDir } from "@lioooooo123/ever-cli";
 import { Container, Key, type SelectItem, SelectList, Text } from "@lioooooo123/ever-tui";
 
 // Preset configuration

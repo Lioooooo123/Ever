@@ -17,8 +17,8 @@
  * separate variables. Only the agent cursor is ever exposed to the agent.
  */
 
-import type { ExtensionAPI, ExtensionContext, Theme, ToolExecutionMode } from "@lioooooo123/ever";
 import { StringEnum } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI, ExtensionContext, Theme, ToolExecutionMode } from "@lioooooo123/ever-cli";
 import { type Component, matchesKey, Text, truncateToWidth, visibleWidth } from "@lioooooo123/ever-tui";
 import { Type } from "typebox";
 

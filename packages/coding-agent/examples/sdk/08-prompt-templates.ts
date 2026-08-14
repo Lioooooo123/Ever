@@ -11,7 +11,7 @@ import {
 	getAgentDir,
 	type PromptTemplate,
 	SessionManager,
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 
 // Define custom templates
 const deployTemplate: PromptTemplate = {

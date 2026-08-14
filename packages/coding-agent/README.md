@@ -65,7 +65,7 @@ Ever runs in four modes: interactive, print or JSON, RPC for process integration
 ## Quick Start
 
 ```bash
-npm install -g --ignore-scripts @lioooooo123/ever
+npm install -g --ignore-scripts @lioooooo123/ever-cli
 ```
 
 `--ignore-scripts` disables dependency lifecycle scripts during install. Ever does not require install scripts for normal npm installs.
@@ -261,7 +261,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 Ever has two separate startup features:
 
-- **Update check:** reads the latest `@lioooooo123/ever` metadata from the npm registry. Disable it with `EVER_SKIP_VERSION_CHECK=1`.
+- **Update check:** reads the latest `@lioooooo123/ever-cli` metadata from the npm registry. Disable it with `EVER_SKIP_VERSION_CHECK=1`.
 - **Provider attribution:** `EVER_TELEMETRY=0` disables optional attribution headers for OpenRouter, Cloudflare, and direct NVIDIA NIM requests. Ever does not send install or update pings.
 
 Use `--offline` or `EVER_OFFLINE=1` to disable startup network operations, including version checks, package update checks, and provider model refreshes.
@@ -413,7 +413,7 @@ See [docs/packages.md](docs/packages.md).
 ### SDK
 
 ```typescript
-import { createAgentSession, ModelRuntime, SessionManager } from "@lioooooo123/ever";
+import { createAgentSession, ModelRuntime, SessionManager } from "@lioooooo123/ever-cli";
 
 const modelRuntime = await ModelRuntime.create();
 const { session } = await createAgentSession({

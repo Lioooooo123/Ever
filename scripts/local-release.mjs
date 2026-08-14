@@ -13,8 +13,9 @@ const packages = [
 	{ directory: "packages/protocol", name: "@lioooooo123/ever-protocol" },
 	{ directory: "packages/client", name: "@lioooooo123/ever-client" },
 	{ directory: "packages/session-backends/sqlite-node", name: "@lioooooo123/ever-session-backend-sqlite-node" },
+	{ directory: "packages/long-tasks", name: "@lioooooo123/ever-long-tasks" },
 	{ directory: "packages/server", name: "@lioooooo123/ever-server" },
-	{ directory: "packages/coding-agent", name: "@lioooooo123/ever" },
+	{ directory: "packages/coding-agent", name: "@lioooooo123/ever-cli" },
 ];
 
 function printUsage() {
@@ -233,7 +234,7 @@ if (!options.skipTest) {
 	run("./scripts/test.sh", [], { cwd: repoRoot });
 }
 
-const everPackage = packages.find((pkg) => pkg.name === "@lioooooo123/ever");
+const everPackage = packages.find((pkg) => pkg.name === "@lioooooo123/ever-cli");
 if (!everPackage) throw new Error("Ever package is missing from the local release build list.");
 const tarballs = new Map([[everPackage.name, packPackage(everPackage, tarballDirectory)]]);
 

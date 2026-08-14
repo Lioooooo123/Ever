@@ -77,7 +77,7 @@ These variables are read by Ever itself:
 | `EVER_CODING_AGENT_SESSION_DIR` | Override session storage; overridden by `--session-dir` |
 | `EVER_PACKAGE_DIR` | Override the package directory, useful for Nix/Guix store paths |
 | `EVER_OFFLINE` | Disable startup network operations, including version checks, package updates, and provider model refreshes |
-| `EVER_SKIP_VERSION_CHECK` | Disable the npm registry latest-version request for `@lioooooo123/ever` |
+| `EVER_SKIP_VERSION_CHECK` | Disable the npm registry latest-version request for `@lioooooo123/ever-cli` |
 | `EVER_TELEMETRY` | Control optional provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
 | `EVER_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
 | `EVER_SHARE_VIEWER_URL` | Optional custom viewer base URL used by `/share`; otherwise Ever opens the private gist directly |

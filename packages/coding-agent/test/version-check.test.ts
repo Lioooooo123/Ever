@@ -113,14 +113,14 @@ describe("version checks", () => {
 	it("reads the package name from npm metadata", async () => {
 		const fetchMock = vi.fn(async () =>
 			Response.json({
-				name: "@lioooooo123/ever",
+				name: "@lioooooo123/ever-cli",
 				version: "1.2.4",
 			}),
 		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestEverRelease("1.2.3")).resolves.toEqual({
-			packageName: "@lioooooo123/ever",
+			packageName: "@lioooooo123/ever-cli",
 			version: "1.2.4",
 		});
 	});

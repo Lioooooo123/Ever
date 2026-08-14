@@ -4,7 +4,7 @@
  * Override settings using SettingsManager.
  */
 
-import { createAgentSession, SessionManager, SettingsManager } from "@lioooooo123/ever";
+import { createAgentSession, SessionManager, SettingsManager } from "@lioooooo123/ever-cli";
 
 const cwd = process.cwd();
 

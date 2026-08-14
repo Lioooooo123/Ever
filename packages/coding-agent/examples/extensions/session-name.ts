@@ -7,7 +7,7 @@
  * Usage: /session-name [name] - set or show session name
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.registerCommand("session-name", {

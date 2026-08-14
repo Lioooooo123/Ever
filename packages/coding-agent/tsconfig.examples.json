@@ -3,8 +3,8 @@
 	"compilerOptions": {
 		"noEmit": true,
 		"paths": {
-			"@lioooooo123/ever": ["./src/index.ts"],
-			"@lioooooo123/ever/hooks": ["./src/core/hooks/index.ts"],
+			"@lioooooo123/ever-cli": ["./src/index.ts"],
+			"@lioooooo123/ever-cli/hooks": ["./src/core/hooks/index.ts"],
 			"@lioooooo123/ever-long-tasks": ["../long-tasks/src/index.ts"],
 			"@lioooooo123/ever-tui": ["../tui/src/index.ts"],
 			"@lioooooo123/ever-ai": ["../ai/src/index.ts"],

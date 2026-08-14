@@ -7,7 +7,7 @@
  * Usage: /emit [event-name] [data] - emit an event on the bus
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	// Store ctx for use in event handler

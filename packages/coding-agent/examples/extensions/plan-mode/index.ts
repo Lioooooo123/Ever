@@ -12,9 +12,9 @@
  * - Progress tracking widget during execution
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever";
 import type { AgentMessage } from "@lioooooo123/ever-agent-core";
 import type { AssistantMessage, TextContent } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever-cli";
 import { Key } from "@lioooooo123/ever-tui";
 import { extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
 

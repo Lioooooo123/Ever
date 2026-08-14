@@ -4,7 +4,7 @@
  * Shows how to select a specific model and thinking level.
  */
 
-import { createAgentSession, ModelRuntime } from "@lioooooo123/ever";
+import { createAgentSession, ModelRuntime } from "@lioooooo123/ever-cli";
 
 const modelRuntime = await ModelRuntime.create();
 

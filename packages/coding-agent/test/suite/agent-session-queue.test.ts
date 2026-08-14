@@ -1,6 +1,6 @@
-import type { ExtensionAPI } from "@lioooooo123/ever";
 import type { AgentTool } from "@lioooooo123/ever-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";

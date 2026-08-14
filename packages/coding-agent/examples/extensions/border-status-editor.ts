@@ -1,4 +1,4 @@
-import { CustomEditor, type ExtensionAPI, type ExtensionContext, type KeybindingsManager } from "@lioooooo123/ever";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext, type KeybindingsManager } from "@lioooooo123/ever-cli";
 import type { Component, EditorTheme, TUI } from "@lioooooo123/ever-tui";
 import { truncateToWidth, visibleWidth } from "@lioooooo123/ever-tui";
 

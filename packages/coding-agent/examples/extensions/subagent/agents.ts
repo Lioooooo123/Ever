@@ -4,7 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@lioooooo123/ever";
+import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@lioooooo123/ever-cli";
 
 export type AgentScope = "user" | "project" | "both";
 

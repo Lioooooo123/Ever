@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever-cli";
 
 const COMPACT_THRESHOLD_TOKENS = 100_000;
 

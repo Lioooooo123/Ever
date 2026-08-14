@@ -8,7 +8,7 @@
  * Usage: /status-card [message]
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Box, Text } from "@lioooooo123/ever-tui";
 
 interface StatusCardData {

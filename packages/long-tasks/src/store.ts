@@ -52,8 +52,11 @@ try {
 	// deliberately owns and tests this dependency. Suppress only its synchronous
 	// module-load notice so the public TUI starts with product state, not runtime noise.
 	process.emitWarning = (() => {}) as typeof process.emitWarning;
-	DatabaseSync = (createRequire(import.meta.url)("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType })
-		.DatabaseSync;
+	const sqliteModule = createRequire(import.meta.url)(process.versions.bun ? "bun:sqlite" : "node:sqlite") as {
+		Database?: typeof DatabaseSyncType;
+		DatabaseSync?: typeof DatabaseSyncType;
+	};
+	DatabaseSync = process.versions.bun ? sqliteModule.Database! : sqliteModule.DatabaseSync!;
 } finally {
 	process.emitWarning = originalEmitWarning;
 }
@@ -473,10 +476,11 @@ function migrationSql(version: number): string {
 		6: "task_commands",
 		7: "permissions",
 	} as const;
-	return readFileSync(
-		fileURLToPath(new URL(`./migrations/00${version}_${names[version as keyof typeof names]}.sql`, import.meta.url)),
-		"utf8",
-	);
+	const filename = `00${version}_${names[version as keyof typeof names]}.sql`;
+	const migrationPath = import.meta.url.includes("$bunfs")
+		? resolve(dirname(process.execPath), "migrations", filename)
+		: fileURLToPath(new URL(`./migrations/${filename}`, import.meta.url));
+	return readFileSync(migrationPath, "utf8");
 }
 
 export interface OpenTaskStoreOptions {

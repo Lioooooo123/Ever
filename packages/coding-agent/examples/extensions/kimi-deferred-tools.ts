@@ -5,7 +5,7 @@
  *    example prompt: Use the available tools to calculate 100 + 500. Do not calculate it yourself.
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 
 function calculate(_expr: string): string {

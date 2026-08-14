@@ -7,9 +7,9 @@
  * 3. Loads the result into the editor for user to fill in answers
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
-import { BorderedLoader } from "@lioooooo123/ever";
 import type { UserMessage } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
+import { BorderedLoader } from "@lioooooo123/ever-cli";
 
 const SYSTEM_PROMPT = `You are a question extractor. Given text from a conversation, extract any questions that need answering and format them for the user to fill in.
 

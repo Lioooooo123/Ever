@@ -61,8 +61,8 @@ const ExtensionAuthoringJudge = createJudge<EverCodingAgentInput, ExtensionAutho
 				output.extensionSource.matchAll(/\b(?:from|import)\s+["']([^"']+)["']/g),
 				(match) => match[1],
 			);
-			if (!imports.includes("@lioooooo123/ever")) {
-				failures.push("extension does not import the canonical @lioooooo123/ever package");
+			if (!imports.includes("@lioooooo123/ever-cli")) {
+				failures.push("extension does not import the canonical @lioooooo123/ever-cli package");
 			}
 			if (imports.some((specifier) => specifier.startsWith("@mariozechner/"))) {
 				failures.push("extension imports a legacy @mariozechner package");

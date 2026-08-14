@@ -5,7 +5,7 @@
  * Uses the last assistant message to generate a commit message.
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.on("session_shutdown", async (_event, ctx) => {

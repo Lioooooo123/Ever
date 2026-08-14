@@ -5,7 +5,7 @@
  * Useful for preventing accidental modifications to sensitive files.
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	const protectedPaths = [".env", ".git/", "node_modules/"];

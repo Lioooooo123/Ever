@@ -5,7 +5,7 @@
  * Useful to ensure work is committed before switching context.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever-cli";
 
 async function checkDirtyRepo(
 	ever: ExtensionAPI,

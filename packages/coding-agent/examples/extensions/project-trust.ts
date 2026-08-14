@@ -13,7 +13,7 @@
  * Try it in a project containing .ever, AGENTS.md/CLAUDE.md, or .agents/skills.
  */
 
-import type { ExtensionAPI, ProjectTrustEventResult } from "@lioooooo123/ever";
+import type { ExtensionAPI, ProjectTrustEventResult } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	let loadCount = 0;

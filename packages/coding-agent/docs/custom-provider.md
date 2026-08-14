@@ -34,7 +34,7 @@ Extensions can register either a complete ever-ai `Provider` or use the legacy p
 
 ```typescript
 import { createProvider, openAICompletionsApi } from "@lioooooo123/ever-ai";
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
   ever.registerProvider(createProvider({
@@ -125,7 +125,7 @@ To add a completely new provider, specify `models` along with the required confi
 If the model list comes from a remote endpoint, use an async extension factory:
 
 ```typescript
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default async function (ever: ExtensionAPI) {
   const response = await fetch("http://localhost:1234/v1/models");

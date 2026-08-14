@@ -58,7 +58,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 Create `~/.ever/agent/extensions/my-extension.ts`:
 
 ```typescript
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 
 export default function (ever: ExtensionAPI) {
@@ -140,7 +140,7 @@ To share extensions via npm or git as Ever packages, see [packages.md](packages.
 
 | Package | Purpose |
 |---------|---------|
-| `@lioooooo123/ever` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
+| `@lioooooo123/ever-cli` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
 | `typebox` | Schema definitions for tool parameters |
 | `@lioooooo123/ever-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
 | `@lioooooo123/ever-tui` | TUI components for custom rendering |
@@ -156,7 +156,7 @@ Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 An extension exports a default factory function that receives `ExtensionAPI`. The factory can be synchronous or asynchronous:
 
 ```typescript
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
   // Subscribe to events
@@ -185,7 +185,7 @@ If the factory returns a `Promise`, ever awaits it before continuing startup. Th
 Use an async factory for one-time startup work such as fetching remote configuration or dynamically discovering available models.
 
 ```typescript
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default async function (ever: ExtensionAPI) {
   const response = await fetch("http://localhost:1234/v1/models");
@@ -766,7 +766,7 @@ Behavior guarantees:
 - `terminate` only applies to a blocked call; the agent stops early only when every finalized result in the batch is terminating
 
 ```typescript
-import { isToolCallEventType } from "@lioooooo123/ever";
+import { isToolCallEventType } from "@lioooooo123/ever-cli";
 
 ever.on("tool_call", async (event, ctx) => {
   // event.toolName - "bash", "read", "write", "edit", etc.
@@ -802,7 +802,7 @@ export type MyToolInput = Static<typeof myToolSchema>;
 Use `isToolCallEventType` with explicit type parameters:
 
 ```typescript
-import { isToolCallEventType } from "@lioooooo123/ever";
+import { isToolCallEventType } from "@lioooooo123/ever-cli";
 import type { MyToolInput } from "my-extension";
 
 ever.on("tool_call", (event) => {
@@ -826,7 +826,7 @@ In parallel tool mode, `tool_result` and `tool_execution_end` may interleave in 
 Use `ctx.signal` for nested async work inside the handler. This lets Esc cancel model calls, `fetch()`, and other abort-aware operations started by the extension.
 
 ```typescript
-import { isBashToolResult } from "@lioooooo123/ever";
+import { isBashToolResult } from "@lioooooo123/ever-cli";
 
 ever.on("tool_result", async (event, ctx) => {
   // event.toolName, event.toolCallId, event.input
@@ -854,7 +854,7 @@ ever.on("tool_result", async (event, ctx) => {
 Fired when user executes `!` or `!!` commands. **Can intercept.**
 
 ```typescript
-import { createLocalBashOperations } from "@lioooooo123/ever";
+import { createLocalBashOperations } from "@lioooooo123/ever-cli";
 
 ever.on("user_bash", (event, ctx) => {
   // event.command - the bash command
@@ -953,7 +953,7 @@ Current working directory.
 Use `CONFIG_DIR_NAME` instead of hardcoding `.ever` when constructing project-local config paths. Rebranded distributions can use a different config directory name.
 
 ```typescript
-import { CONFIG_DIR_NAME, type ExtensionAPI } from "@lioooooo123/ever";
+import { CONFIG_DIR_NAME, type ExtensionAPI } from "@lioooooo123/ever-cli";
 import { join } from "node:path";
 
 export default function (ever: ExtensionAPI) {
@@ -1208,7 +1208,7 @@ Options:
 To discover available sessions, use the static `SessionManager.list()` or `SessionManager.listAll()` methods:
 
 ```typescript
-import { SessionManager } from "@lioooooo123/ever";
+import { SessionManager } from "@lioooooo123/ever-cli";
 
 ever.registerCommand("switch", {
   description: "Switch to another session",
@@ -1302,7 +1302,7 @@ Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. 
 Example tool the LLM can call to trigger reload:
 
 ```typescript
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 
 export default function (ever: ExtensionAPI) {
@@ -1898,7 +1898,7 @@ Pass the real target file path to `withFileMutationQueue()`, not the raw user ar
 Queue the entire mutation window on that target path. That includes read-modify-write logic, not just the final write.
 
 ```typescript
-import { withFileMutationQueue } from "@lioooooo123/ever";
+import { withFileMutationQueue } from "@lioooooo123/ever-cli";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -2081,7 +2081,7 @@ Built-in tool implementations:
 Built-in tools support pluggable operations for delegating to remote systems (SSH, containers, etc.):
 
 ```typescript
-import { createReadTool, createBashTool, type ReadOperations } from "@lioooooo123/ever";
+import { createReadTool, createBashTool, type ReadOperations } from "@lioooooo123/ever-cli";
 
 // Create tool with custom operations
 const remoteRead = createReadTool(cwd, {
@@ -2112,7 +2112,7 @@ For `user_bash`, extensions can reuse ever's local shell backend via `createLoca
 The bash tool also supports a spawn hook to adjust the command, cwd, or env before execution:
 
 ```typescript
-import { createBashTool } from "@lioooooo123/ever";
+import { createBashTool } from "@lioooooo123/ever-cli";
 
 const bashTool = createBashTool(cwd, {
   spawnHook: ({ command, cwd, env }) => ({
@@ -2150,7 +2150,7 @@ import {
   formatSize,        // Human-readable size (e.g., "50KB", "1.5MB")
   DEFAULT_MAX_BYTES, // 50KB
   DEFAULT_MAX_LINES, // 2000
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 
 async execute(toolCallId, params, signal, onUpdate, ctx) {
   const output = await runCommand();
@@ -2286,7 +2286,7 @@ If a slot intentionally has no visible content, return an empty `Component` such
 Use `keyHint()` to display keybinding hints that respect the active keybinding configuration:
 
 ```typescript
-import { keyHint } from "@lioooooo123/ever";
+import { keyHint } from "@lioooooo123/ever-cli";
 
 renderResult(result, { expanded }, theme, context) {
   let text = theme.fg("success", "✓ Done");
@@ -2368,7 +2368,7 @@ For the best cache behavior, keep the loader tool active for the whole session a
 The following extension registers two searchable tools, removes them from the initial active set, and keeps only `search_tools` as their loader. The example uses simple keyword matching, but the search implementation could use BM25, embeddings, a remote catalog, or project-specific routing.
 
 ```typescript
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 
 const SEARCHABLE_TOOL_NAMES = new Set(["lookup_weather", "search_issues"]);
@@ -2764,7 +2764,7 @@ See [tui.md](tui.md) for the full `OverlayOptions` and `OverlayHandle` API and [
 Replace the main input editor with a custom implementation (vim mode, emacs mode, etc.):
 
 ```typescript
-import { CustomEditor, type ExtensionAPI } from "@lioooooo123/ever";
+import { CustomEditor, type ExtensionAPI } from "@lioooooo123/ever-cli";
 import { matchesKey } from "@lioooooo123/ever-tui";
 
 class VimEditor extends CustomEditor {
@@ -2874,7 +2874,7 @@ theme.strikethrough(text)
 For syntax highlighting in custom tool renderers:
 
 ```typescript
-import { highlightCode, getLanguageFromPath } from "@lioooooo123/ever";
+import { highlightCode, getLanguageFromPath } from "@lioooooo123/ever-cli";
 
 // Highlight code with explicit language
 const highlighted = highlightCode("const x = 1;", "typescript", theme);

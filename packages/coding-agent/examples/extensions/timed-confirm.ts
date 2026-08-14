@@ -7,7 +7,7 @@
  * - /timed-signal - Shows confirm using AbortSignal (manual approach)
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	// Simple approach: use timeout option (recommended)

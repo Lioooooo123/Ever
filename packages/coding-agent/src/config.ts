@@ -485,7 +485,7 @@ try {
 }
 
 const everConfig = pkg.everConfig;
-export const PACKAGE_NAME: string = pkg.name || "@lioooooo123/ever";
+export const PACKAGE_NAME: string = pkg.name || "@lioooooo123/ever-cli";
 export const APP_NAME: string = everConfig?.name || "ever";
 export const APP_TITLE: string = "Ever";
 export const CONFIG_DIR_NAME: string = everConfig?.configDir || ".ever";

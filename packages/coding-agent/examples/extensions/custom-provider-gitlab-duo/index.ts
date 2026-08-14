@@ -9,7 +9,6 @@
  *   # Then /login gitlab-duo, or set GITLAB_TOKEN=glpat-...
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
 import {
 	type Api,
 	type AssistantMessageEventStream,
@@ -23,6 +22,7 @@ import {
 	type SimpleStreamOptions,
 	type ThinkingLevelMap,
 } from "@lioooooo123/ever-ai/compat";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 // =============================================================================
 // Constants

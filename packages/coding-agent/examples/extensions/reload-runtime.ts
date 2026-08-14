@@ -5,7 +5,7 @@
  * tool that queues a follow-up command to trigger reload.
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 
 export default function (ever: ExtensionAPI) {

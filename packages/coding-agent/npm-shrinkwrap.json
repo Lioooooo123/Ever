@@ -1,12 +1,12 @@
 {
-	"name": "@lioooooo123/ever",
-	"version": "0.84.1",
+	"name": "@lioooooo123/ever-cli",
+	"version": "0.0.1",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
-			"name": "@lioooooo123/ever",
-			"version": "0.84.1",
+			"name": "@lioooooo123/ever-cli",
+			"version": "0.0.1",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sandbox-runtime": "0.0.26",

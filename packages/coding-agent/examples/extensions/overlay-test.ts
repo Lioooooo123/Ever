@@ -8,7 +8,7 @@
  * - Edge case tests (wide chars, styled text, emoji)
  */
 
-import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@lioooooo123/ever-cli";
 import { CURSOR_MARKER, type Focusable, matchesKey, visibleWidth } from "@lioooooo123/ever-tui";
 
 export default function (ever: ExtensionAPI) {

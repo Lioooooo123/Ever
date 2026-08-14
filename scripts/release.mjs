@@ -3,7 +3,7 @@
  * Release script for Ever
  *
  * Usage:
- *   node scripts/release.mjs <major|minor|patch>
+ *   node scripts/release.mjs <minor|patch>
  *   node scripts/release.mjs <x.y.z>
  *
  * Steps:
@@ -15,21 +15,20 @@
  * 6. Commit and tag the release
  * 7. Add new [Unreleased] section to changelogs
  * 8. Commit next-cycle changelog updates
- * 9. Push main and the tag to trigger Ever npm and GitHub publication
+ * 9. Push main and the cli-v tag to trigger Ever CLI npm and GitHub publication
  */
 
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { findPackageDirectories } from "./package-workspaces.mjs";
-import { getLockstepWorkspacePackages } from "./release-packages.mjs";
+import { getReleasePackages, getWorkspacePackages } from "./release-packages.mjs";
 
 const RELEASE_TARGET = process.argv[2];
-const BUMP_TYPES = new Set(["major", "minor", "patch"]);
+const BUMP_TYPES = new Set(["minor", "patch"]);
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
 if (!RELEASE_TARGET || (!BUMP_TYPES.has(RELEASE_TARGET) && !SEMVER_RE.test(RELEASE_TARGET))) {
-	console.error("Usage: node scripts/release.mjs <major|minor|patch|x.y.z>");
+	console.error("Usage: node scripts/release.mjs <minor|patch|x.y.z>");
 	process.exit(1);
 }
 
@@ -70,9 +69,7 @@ function shellQuote(value) {
 }
 
 function removeStaleWorkspaceLockEntries() {
-	const workspaceVersions = new Map(
-		getLockstepWorkspacePackages().map((pkg) => [pkg.name, pkg.version]),
-	);
+	const workspaceVersions = new Map(getWorkspacePackages().map((pkg) => [pkg.name, pkg.version]));
 	const lockPath = "package-lock.json";
 	const lock = JSON.parse(readFileSync(lockPath, "utf8"));
 	let removed = 0;
@@ -113,13 +110,17 @@ function bumpOrSetVersion(target) {
 		console.log(`Bumping version (${target})...`);
 		run(`npm run version:${target}`);
 	} else {
-		if (compareVersions(target, currentVersion) <= 0) {
-			console.error(`Error: explicit version ${target} must be greater than current version ${currentVersion}.`);
+		const comparison = compareVersions(target, currentVersion);
+		if (comparison < 0) {
+			console.error(`Error: explicit version ${target} must not be lower than current version ${currentVersion}.`);
 			process.exit(1);
 		}
-
-		console.log(`Setting explicit version (${target})...`);
-		run(`npm version ${target} --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts`);
+		if (comparison === 0) {
+			console.log(`Using current version (${target}) for the initial publication...`);
+		} else {
+			console.log(`Setting explicit version (${target})...`);
+			run(`npm version ${target} --workspace=@lioooooo123/ever-cli --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts`);
+		}
 	}
 
 	// npm version can temporarily install the previous workspace versions before
@@ -132,8 +133,8 @@ function bumpOrSetVersion(target) {
 }
 
 function getChangelogs() {
-	return findPackageDirectories()
-		.map((directory) => join(directory, "CHANGELOG.md"))
+	return getReleasePackages()
+		.map(({ directory }) => join(directory, "CHANGELOG.md"))
 		.filter((path) => existsSync(path));
 }
 
@@ -221,8 +222,8 @@ console.log();
 // 7. Commit and tag
 console.log("Committing and tagging...");
 stageChangedFiles();
-run(`git commit -m "Release v${version}"`);
-run(`git tag v${version}`);
+run(`git commit -m "Release CLI v${version}"`);
+run(`git tag cli-v${version}`);
 console.log();
 
 // 8. Add new [Unreleased] sections
@@ -239,7 +240,7 @@ console.log();
 // 10. Push
 console.log("Pushing to remote...");
 run("git push origin main");
-run(`git push origin v${version}`);
+run(`git push origin cli-v${version}`);
 console.log();
 
-console.log(`=== Prepared Ever v${version}; npm and GitHub publication start after the tag push ===`);
+console.log(`=== Prepared @lioooooo123/ever-cli v${version}; npm and GitHub publication start after the cli-v tag push ===`);

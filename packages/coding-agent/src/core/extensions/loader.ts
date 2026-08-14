@@ -23,7 +23,7 @@ import * as _bundledTypeboxCompile from "typebox/compile";
 import * as _bundledTypeboxValue from "typebox/value";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
-// avoiding a circular dependency. Extensions can import from @lioooooo123/ever.
+// avoiding a circular dependency. Extensions can import from @lioooooo123/ever-cli.
 import * as _bundledEverCodingAgent from "../../index.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
@@ -63,7 +63,7 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@lioooooo123/ever-ai/compat": _bundledEverAiCompat,
 	"@lioooooo123/ever-ai/oauth": _bundledEverAiOauth,
 	"@lioooooo123/ever-ai/providers/all": _bundledEverAiProviders,
-	"@lioooooo123/ever": _bundledEverCodingAgent,
+	"@lioooooo123/ever-cli": _bundledEverCodingAgent,
 };
 
 const require = createRequire(import.meta.url);
@@ -109,7 +109,7 @@ function getAliases(): Record<string, string> {
 	);
 
 	_aliases = {
-		"@lioooooo123/ever": everCodingAgentEntry,
+		"@lioooooo123/ever-cli": everCodingAgentEntry,
 		"@lioooooo123/ever-agent-core": everAgentCoreEntry,
 		"@lioooooo123/ever-tui": everTuiEntry,
 		"@lioooooo123/ever-ai/providers/all": everAiProvidersEntry,

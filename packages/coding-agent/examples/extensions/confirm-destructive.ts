@@ -5,7 +5,7 @@
  * Demonstrates how to cancel session events using the before_* events.
  */
 
-import type { ExtensionAPI, SessionBeforeSwitchEvent, SessionMessageEntry } from "@lioooooo123/ever";
+import type { ExtensionAPI, SessionBeforeSwitchEvent, SessionMessageEntry } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.on("session_before_switch", async (event: SessionBeforeSwitchEvent, ctx) => {

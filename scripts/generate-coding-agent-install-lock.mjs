@@ -12,7 +12,7 @@ const rootLockfilePath = join(repoRoot, "package-lock.json");
 const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
 const internalPackagePrefix = "@lioooooo123/ever-";
-const additionalInternalPackages = new Set(["@lioooooo123/ever"]);
+const additionalInternalPackages = new Set(["@lioooooo123/ever-cli"]);
 const installPackageName = "@lioooooo123/ever-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
@@ -121,8 +121,8 @@ function isInternalPackage(name) {
 	return name.startsWith(internalPackagePrefix) || additionalInternalPackages.has(name);
 }
 
-function requiresReleaseVersion(_name) {
-	return true;
+function requiresReleaseVersion(name, releasePackageName) {
+	return name === releasePackageName;
 }
 
 function packageNameFromLockPath(lockPath) {
@@ -313,7 +313,7 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalNames
 		if (
 			packageName &&
 			isInternalPackage(packageName) &&
-			requiresReleaseVersion(packageName) &&
+			requiresReleaseVersion(packageName, Object.keys(installerPackageJson.dependencies)[0]) &&
 			entry.version !== installerPackageJson.version
 		) {
 			errors.push(`${lockPath} internal package version ${entry.version} does not match ${installerPackageJson.version}`);

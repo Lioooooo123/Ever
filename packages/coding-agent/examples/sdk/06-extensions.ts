@@ -13,7 +13,7 @@
  *   export default function (ever: ExtensionAPI) { ... }
  */
 
-import { createAgentSession, DefaultResourceLoader, getAgentDir, SessionManager } from "@lioooooo123/ever";
+import { createAgentSession, DefaultResourceLoader, getAgentDir, SessionManager } from "@lioooooo123/ever-cli";
 
 // Extensions are discovered automatically from standard locations.
 // You can also add paths via settings.json or DefaultResourceLoader options.
@@ -52,7 +52,7 @@ try {
 
 // Example extension file (./my-logging-extension.ts):
 /*
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.on("agent_start", async () => {

@@ -19,7 +19,7 @@
  *   /overlay-streaming  - Multiple input panels with simulated streaming (Tab to cycle focus)
  */
 
-import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@lioooooo123/ever-cli";
 import type { Component, OverlayAnchor, OverlayHandle, OverlayOptions, TUI } from "@lioooooo123/ever-tui";
 import { Input, matchesKey, truncateToWidth, visibleWidth } from "@lioooooo123/ever-tui";
 import { spawn } from "child_process";

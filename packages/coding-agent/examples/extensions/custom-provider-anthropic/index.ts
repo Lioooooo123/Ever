@@ -23,7 +23,6 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { ContentBlockParam, MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages.js";
-import type { ExtensionAPI } from "@lioooooo123/ever";
 import {
 	type Api,
 	type AssistantMessage,
@@ -44,6 +43,7 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 // =============================================================================
 // OAuth implementation adapted for the legacy extension compatibility interface.

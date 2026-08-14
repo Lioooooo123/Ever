@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_DIR_NAME, type ExtensionAPI } from "@lioooooo123/ever";
+import { CONFIG_DIR_NAME, type ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.on("before_provider_request", (event, ctx) => {

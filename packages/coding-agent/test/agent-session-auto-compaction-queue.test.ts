@@ -132,6 +132,47 @@ describe("AgentSession auto-compaction queue resume", () => {
 		expect(continueSpy).not.toHaveBeenCalled();
 	});
 
+	it("should compact an over-threshold retryable failure before continuing the retry", async () => {
+		const model = session.model!;
+		const errorAssistant: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "error",
+			errorMessage: "fetch failed",
+			timestamp: Date.now(),
+		};
+		const sessionInternals = session as unknown as {
+			_lastAssistantMessage: AssistantMessage | undefined;
+			_handlePostAgentRun: () => Promise<boolean>;
+			_prepareRetry: (message: AssistantMessage) => Promise<boolean>;
+			_checkCompaction: (
+				message: AssistantMessage,
+				skipAbortedCheck?: boolean,
+				willRetryAfterCompaction?: boolean,
+			) => Promise<boolean>;
+		};
+		sessionInternals._lastAssistantMessage = errorAssistant;
+		const prepareRetrySpy = vi.spyOn(sessionInternals, "_prepareRetry").mockResolvedValue(true);
+		const checkCompactionSpy = vi.spyOn(sessionInternals, "_checkCompaction").mockResolvedValue(true);
+
+		await expect(sessionInternals._handlePostAgentRun()).resolves.toBe(true);
+
+		expect(prepareRetrySpy).toHaveBeenCalledWith(errorAssistant);
+		expect(checkCompactionSpy).toHaveBeenCalledWith(errorAssistant, true, true);
+		expect(prepareRetrySpy.mock.invocationCallOrder[0]).toBeLessThan(checkCompactionSpy.mock.invocationCallOrder[0]!);
+	});
+
 	it("should not compact repeatedly after overflow recovery already attempted", async () => {
 		const model = session.model!;
 		const overflowMessage: AssistantMessage = {

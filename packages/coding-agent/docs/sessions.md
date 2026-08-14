@@ -20,7 +20,7 @@ For the JSONL schema, see [Session Format](session-format.md).
 Applications embedding the runtime can create in-memory or persistent Sessions through `SessionManager`:
 
 ```typescript
-import { createAgentSession, SessionManager } from "@lioooooo123/ever";
+import { createAgentSession, SessionManager } from "@lioooooo123/ever-cli";
 
 const { session } = await createAgentSession({
   sessionManager: SessionManager.inMemory(),

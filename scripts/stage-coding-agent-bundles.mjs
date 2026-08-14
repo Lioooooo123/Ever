@@ -54,7 +54,7 @@ for (const packageName of bundledDependencies) {
 	cpSync(join(sourceDir, "dist"), join(targetDir, "dist"), { recursive: true });
 }
 
-console.log(
+console.error(
 	cleanOnly
 		? `Cleaned ${bundledDependencies.length} coding-agent bundled workspace package(s).`
 		: `Staged ${bundledDependencies.length} coding-agent bundled workspace package(s).`,

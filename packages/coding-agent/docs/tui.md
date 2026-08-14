@@ -449,7 +449,7 @@ renderResult(result, options, theme, context) {
 **For Markdown**, use `getMarkdownTheme()`:
 
 ```typescript
-import { getMarkdownTheme } from "@lioooooo123/ever";
+import { getMarkdownTheme } from "@lioooooo123/ever-cli";
 import { Markdown } from "@lioooooo123/ever-tui";
 
 renderResult(result, options, theme, context) {
@@ -614,8 +614,8 @@ These patterns cover the most common UI needs in extensions. **Copy these patter
 For letting users pick from a list of options. Use `SelectList` from `@lioooooo123/ever-tui` with `DynamicBorder` for framing.
 
 ```typescript
-import type { ExtensionAPI } from "@lioooooo123/ever";
-import { DynamicBorder } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
+import { DynamicBorder } from "@lioooooo123/ever-cli";
 import { Container, type SelectItem, SelectList, Text } from "@lioooooo123/ever-tui";
 
 ever.registerCommand("pick", {
@@ -674,7 +674,7 @@ ever.registerCommand("pick", {
 For operations that take time and should be cancellable. `BorderedLoader` shows a spinner and handles escape to cancel.
 
 ```typescript
-import { BorderedLoader } from "@lioooooo123/ever";
+import { BorderedLoader } from "@lioooooo123/ever-cli";
 
 ever.registerCommand("fetch", {
   handler: async (_args, ctx) => {
@@ -706,7 +706,7 @@ ever.registerCommand("fetch", {
 For toggling multiple settings. Use `SettingsList` from `@lioooooo123/ever-tui` with `getSettingsListTheme()`.
 
 ```typescript
-import { getSettingsListTheme } from "@lioooooo123/ever";
+import { getSettingsListTheme } from "@lioooooo123/ever-cli";
 import { Container, type SettingItem, SettingsList, Text } from "@lioooooo123/ever-tui";
 
 ever.registerCommand("settings", {
@@ -846,7 +846,7 @@ Token stats available via `ctx.sessionManager.getBranch()` and `ctx.model`.
 Replace the main input editor with a custom implementation. Useful for modal editing (vim), different keybindings (emacs), or specialized input handling.
 
 ```typescript
-import { CustomEditor, type ExtensionAPI } from "@lioooooo123/ever";
+import { CustomEditor, type ExtensionAPI } from "@lioooooo123/ever-cli";
 import { matchesKey, truncateToWidth } from "@lioooooo123/ever-tui";
 
 type Mode = "normal" | "insert";

@@ -14,7 +14,7 @@
  */
 
 import { spawn } from "node:child_process";
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import {
 	type BashOperations,
 	createBashTool,
@@ -24,7 +24,7 @@ import {
 	type EditOperations,
 	type ReadOperations,
 	type WriteOperations,
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 
 function sshExec(remote: string, command: string): Promise<Buffer> {
 	return new Promise((resolve, reject) => {

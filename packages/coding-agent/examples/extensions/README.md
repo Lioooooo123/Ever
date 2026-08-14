@@ -142,7 +142,7 @@ cp permission-gate.ts ~/.ever/agent/extensions/
 See [docs/extensions.md](../../docs/extensions.md) for full documentation.
 
 ```typescript
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 
 export default function (ever: ExtensionAPI) {

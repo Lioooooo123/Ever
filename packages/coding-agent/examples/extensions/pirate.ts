@@ -10,7 +10,7 @@
  * 3. When enabled, the agent will respond like a pirate
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function pirateExtension(ever: ExtensionAPI) {
 	let pirateMode = false;

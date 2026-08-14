@@ -15,7 +15,7 @@ import {
 	createAgentSessionServices,
 	getAgentDir,
 	SessionManager,
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
 	const services = await createAgentSessionServices({ cwd });

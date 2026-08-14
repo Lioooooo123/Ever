@@ -34,7 +34,7 @@ Source on GitHub ([Ever](https://github.com/Lioooooo123/Ever)):
 - [`packages/ai/src/types.ts`](https://github.com/Lioooooo123/Ever/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
 - [`packages/agent/src/types.ts`](https://github.com/Lioooooo123/Ever/blob/main/packages/agent/src/types.ts) - AgentMessage union type
 
-For TypeScript definitions in your project, inspect `node_modules/@lioooooo123/ever/dist/` and `node_modules/@lioooooo123/ever-ai/dist/`.
+For TypeScript definitions in your project, inspect `node_modules/@lioooooo123/ever-cli/dist/` and `node_modules/@lioooooo123/ever-ai/dist/`.
 
 ## Message Types
 

@@ -10,7 +10,7 @@
 	},
 	"devDependencies": {
 		"@lioooooo123/ever-ai": "^0.84.1",
-		"@lioooooo123/ever": "^0.84.1",
+		"@lioooooo123/ever-cli": "^0.0.1",
 		"@types/node": "24.12.4",
 		"shx": "0.4.0",
 		"tsx": "4.22.1",

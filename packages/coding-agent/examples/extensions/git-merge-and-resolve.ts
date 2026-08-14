@@ -14,7 +14,7 @@
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 interface ConflictBlock {
 	file: string;

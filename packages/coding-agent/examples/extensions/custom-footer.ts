@@ -8,8 +8,8 @@
  * Token stats come from ctx.sessionManager/ctx.model (already accessible).
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
 import type { AssistantMessage } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { truncateToWidth, visibleWidth } from "@lioooooo123/ever-tui";
 
 export default function (ever: ExtensionAPI) {

@@ -7,7 +7,7 @@
  * Usage: ever -e ./model-status.ts
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.on("model_select", async (event, ctx) => {

@@ -10,8 +10,8 @@
  * correct for that point in history.
  */
 
-import type { ExtensionAPI, ExtensionContext, Theme } from "@lioooooo123/ever";
 import { StringEnum } from "@lioooooo123/ever-ai";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@lioooooo123/ever-cli";
 import { matchesKey, Text, truncateToWidth } from "@lioooooo123/ever-tui";
 import { Type } from "typebox";
 

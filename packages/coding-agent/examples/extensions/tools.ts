@@ -9,8 +9,8 @@
  * 2. Use /tools to open the tool selector
  */
 
-import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@lioooooo123/ever";
-import { getSettingsListTheme } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@lioooooo123/ever-cli";
+import { getSettingsListTheme } from "@lioooooo123/ever-cli";
 import { Container, type SettingItem, SettingsList } from "@lioooooo123/ever-tui";
 
 // State persisted to session

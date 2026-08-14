@@ -10,7 +10,7 @@
  * 3. Use /commands extensions to filter by source
  */
 
-import type { ExtensionAPI, SlashCommandInfo } from "@lioooooo123/ever";
+import type { ExtensionAPI, SlashCommandInfo } from "@lioooooo123/ever-cli";
 
 export default function commandsExtension(ever: ExtensionAPI) {
 	ever.registerCommand("commands", {

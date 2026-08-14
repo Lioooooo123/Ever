@@ -7,7 +7,7 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 const execAsync = promisify(exec);
 

@@ -11,7 +11,7 @@
  * Start ever with this extension:
  *   ever -e ./examples/extensions/input-transform-streaming.ts
  */
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 const TRIGGER = /\b(changes?|diff|modified)\b/i;
 

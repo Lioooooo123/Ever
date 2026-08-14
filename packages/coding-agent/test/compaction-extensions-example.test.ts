@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, SessionBeforeCompactEvent, SessionCompactEvent } from "../src/core/extensions/index.ts";
 
-vi.mock("@lioooooo123/ever", () => ({
+vi.mock("@lioooooo123/ever-cli", () => ({
 	convertToLlm: (messages: unknown) => messages,
 	serializeConversation: () => "conversation",
 }));

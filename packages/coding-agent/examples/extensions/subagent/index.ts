@@ -16,16 +16,16 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { AgentToolResult } from "@lioooooo123/ever-agent-core";
+import type { Message } from "@lioooooo123/ever-ai";
+import { StringEnum } from "@lioooooo123/ever-ai";
 import {
 	CONFIG_DIR_NAME,
 	type ExtensionAPI,
 	getAgentDir,
 	getMarkdownTheme,
 	withFileMutationQueue,
-} from "@lioooooo123/ever";
-import type { AgentToolResult } from "@lioooooo123/ever-agent-core";
-import type { Message } from "@lioooooo123/ever-ai";
-import { StringEnum } from "@lioooooo123/ever-ai";
+} from "@lioooooo123/ever-cli";
 import { Container, Markdown, Spacer, Text } from "@lioooooo123/ever-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";

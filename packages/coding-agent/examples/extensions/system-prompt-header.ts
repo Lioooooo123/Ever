@@ -3,7 +3,7 @@
  *
  * Demonstrates ctx.getSystemPrompt() for accessing the effective system prompt.
  */
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.on("agent_start", (_event, ctx) => {

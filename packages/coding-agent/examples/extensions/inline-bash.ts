@@ -14,7 +14,7 @@
  *
  * Note: Regular !command syntax (whole-line bash) is preserved and works as before.
  */
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	const PATTERN = /!\{([^}]+)\}/g;

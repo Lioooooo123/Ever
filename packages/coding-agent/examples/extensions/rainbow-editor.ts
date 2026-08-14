@@ -4,7 +4,7 @@
  * Usage: ever --extension ./examples/extensions/rainbow-editor.ts
  */
 
-import { CustomEditor, type ExtensionAPI } from "@lioooooo123/ever";
+import { CustomEditor, type ExtensionAPI } from "@lioooooo123/ever-cli";
 
 // Base colors (coral → yellow → green → teal → blue → purple → pink)
 const COLORS: [number, number, number][] = [

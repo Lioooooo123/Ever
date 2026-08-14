@@ -2,7 +2,7 @@
  * Snake game extension - play snake with /snake command
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { matchesKey, visibleWidth } from "@lioooooo123/ever-tui";
 
 const GAME_WIDTH = 40;

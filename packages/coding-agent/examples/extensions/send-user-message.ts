@@ -11,7 +11,7 @@
  *   /followup And then?   - Sends while streaming with followUp delivery
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	// Simple command that sends a user message

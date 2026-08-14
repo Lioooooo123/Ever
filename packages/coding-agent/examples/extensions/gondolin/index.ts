@@ -21,7 +21,7 @@
 
 import path from "node:path";
 import { RealFSProvider, VM } from "@earendil-works/gondolin";
-import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionContext } from "@lioooooo123/ever-cli";
 import {
 	type BashOperations,
 	createBashTool,
@@ -42,7 +42,7 @@ import {
 	truncateHead,
 	truncateLine,
 	type WriteOperations,
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 
 const GUEST_WORKSPACE = "/workspace";
 const DEFAULT_GREP_LIMIT = 100;

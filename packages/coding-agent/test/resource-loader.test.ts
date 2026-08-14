@@ -853,7 +853,7 @@ Content`,
 			writeFileSync(
 				join(ext1Dir, "index.ts"),
 				`
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 export default function(ever: ExtensionAPI) {
   ever.registerTool({
@@ -868,7 +868,7 @@ export default function(ever: ExtensionAPI) {
 			writeFileSync(
 				join(ext2Dir, "index.ts"),
 				`
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 export default function(ever: ExtensionAPI) {
   ever.registerTool({
@@ -895,7 +895,7 @@ export default function(ever: ExtensionAPI) {
 			writeFileSync(
 				join(globalExtDir, "global.ts"),
 				`
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 export default function(ever: ExtensionAPI) {
   ever.registerTool({
@@ -914,7 +914,7 @@ export default function(ever: ExtensionAPI) {
 			writeFileSync(
 				explicitExtPath,
 				`
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 export default function(ever: ExtensionAPI) {
   ever.registerTool({

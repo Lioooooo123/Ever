@@ -5,8 +5,8 @@
  * (logo + keybinding hints) with a custom component showing the ever mascot.
  */
 
-import type { ExtensionAPI, Theme } from "@lioooooo123/ever";
-import { VERSION } from "@lioooooo123/ever";
+import type { ExtensionAPI, Theme } from "@lioooooo123/ever-cli";
+import { VERSION } from "@lioooooo123/ever-cli";
 
 // --- EVER MASCOT ---
 function getEverMascot(theme: Theme): string[] {

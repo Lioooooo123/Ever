@@ -10,7 +10,7 @@
  * extensions system using ever.registerTool().
  */
 
-import { createAgentSession, SessionManager } from "@lioooooo123/ever";
+import { createAgentSession, SessionManager } from "@lioooooo123/ever-cli";
 
 // Read-only mode (no edit/write)
 const { session: readOnlySession } = await createAgentSession({

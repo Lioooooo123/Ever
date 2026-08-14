@@ -5,7 +5,7 @@
  * When forking, offers to restore code to that point in history.
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	const checkpoints = new Map<string, string>();

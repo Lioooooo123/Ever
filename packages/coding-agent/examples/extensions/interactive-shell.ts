@@ -21,7 +21,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 // Default interactive commands - editors, pagers, git ops, TUIs
 const DEFAULT_INTERACTIVE_COMMANDS = [

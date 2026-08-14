@@ -9,7 +9,7 @@ LLMs have limited context windows. When conversations grow too long, Ever uses c
 - [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/Lioooooo123/Ever/blob/main/packages/coding-agent/src/core/session-manager.ts) - Entry types (`CompactionEntry`, `BranchSummaryEntry`)
 - [`packages/coding-agent/src/core/extensions/types.ts`](https://github.com/Lioooooo123/Ever/blob/main/packages/coding-agent/src/core/extensions/types.ts) - Extension event types
 
-For TypeScript definitions in your project, inspect `node_modules/@lioooooo123/ever/dist/`.
+For TypeScript definitions in your project, inspect `node_modules/@lioooooo123/ever-cli/dist/`.
 
 ## Overview
 
@@ -314,7 +314,7 @@ ever.on("session_before_compact", async (event, ctx) => {
 To generate a summary with your own model, convert messages to text using `serializeConversation`:
 
 ```typescript
-import { convertToLlm, serializeConversation } from "@lioooooo123/ever";
+import { convertToLlm, serializeConversation } from "@lioooooo123/ever-cli";
 
 ever.on("session_before_compact", async (event, ctx) => {
   const { preparation } = event;

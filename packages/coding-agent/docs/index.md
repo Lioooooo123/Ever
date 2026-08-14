@@ -5,7 +5,7 @@ Ever is a durable coding agent for long-running development Tasks. Its embedded 
 ## Quick start
 
 ```bash
-npm install -g --ignore-scripts @lioooooo123/ever
+npm install -g --ignore-scripts @lioooooo123/ever-cli
 ever "inspect this repository and run its focused checks" --yes
 ```
 

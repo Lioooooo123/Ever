@@ -12,7 +12,7 @@ import {
 	getAgentDir,
 	SessionManager,
 	type Skill,
-} from "@lioooooo123/ever";
+} from "@lioooooo123/ever-cli";
 
 // Or define custom skills inline
 const customSkill: Skill = {

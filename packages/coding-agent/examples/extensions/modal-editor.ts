@@ -9,7 +9,7 @@
  * - ctrl+c, ctrl+d, etc. work in both modes
  */
 
-import { CustomEditor, type ExtensionAPI } from "@lioooooo123/ever";
+import { CustomEditor, type ExtensionAPI } from "@lioooooo123/ever-cli";
 import { matchesKey, truncateToWidth, visibleWidth } from "@lioooooo123/ever-tui";
 
 // Normal mode key mappings: key -> escape sequence (or null for mode switch)

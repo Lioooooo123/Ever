@@ -13,11 +13,12 @@
 
 ### Breaking Changes
 
+- Renamed the npm CLI distribution from `@lioooooo123/ever` to `@lioooooo123/ever-cli` and started its independent version line at `0.0.1`; reinstall the new package while continuing to invoke the `ever` command.
 - Removed all pre-Ever configuration directories, environment variables, package manifests, module aliases, and resource-discovery fallbacks. Existing state must be placed under `.ever` or `~/.ever/agent` and configured with `EVER_*` variables.
 
 ### Changed
 
-- Changed the directly developed coding-agent distribution to publish as `@lioooooo123/ever` with `ever-*` release artifacts, with the in-repository Ever agent, AI, and TUI source modules as its execution kernel.
+- Changed the directly developed coding-agent distribution to publish independently as `@lioooooo123/ever-cli` with `ever-*` release artifacts, with the in-repository Ever agent, AI, and TUI source modules as its execution kernel.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 - Changed `/goal` to use the same Task Application and `NativeLongTaskAgent` execution chain as resident Workers instead of maintaining an extension-owned Goal state machine.
 - Centralized Task submission and control behind an idempotent Task Application boundary and made completion verification execute exactly once.

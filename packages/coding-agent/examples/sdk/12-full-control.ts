@@ -4,6 +4,7 @@
  * Replace everything - no discovery, explicit configuration.
  */
 
+import { getModel } from "@lioooooo123/ever-ai/compat";
 import {
 	createAgentSession,
 	createExtensionRuntime,
@@ -11,8 +12,7 @@ import {
 	type ResourceLoader,
 	SessionManager,
 	SettingsManager,
-} from "@lioooooo123/ever";
-import { getModel } from "@lioooooo123/ever-ai/compat";
+} from "@lioooooo123/ever-cli";
 
 const modelRuntime = await ModelRuntime.create({
 	authPath: "/tmp/my-agent/auth.json",

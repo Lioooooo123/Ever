@@ -7,8 +7,8 @@
  *   ever -e ./bash-spawn-hook.ts
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
-import { createBashTool } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
+import { createBashTool } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	const cwd = process.cwd();

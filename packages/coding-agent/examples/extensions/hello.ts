@@ -2,8 +2,8 @@
  * Hello Tool - Minimal custom tool example
  */
 
-import { defineTool, type ExtensionAPI } from "@lioooooo123/ever";
 import { Type } from "@lioooooo123/ever-ai";
+import { defineTool, type ExtensionAPI } from "@lioooooo123/ever-cli";
 
 const helloTool = defineTool({
 	name: "hello",

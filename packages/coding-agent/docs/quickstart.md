@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-npm install -g --ignore-scripts @lioooooo123/ever
+npm install -g --ignore-scripts @lioooooo123/ever-cli
 ```
 
 `--ignore-scripts` disables dependency lifecycle scripts. Ever does not require install scripts for normal npm installs.
@@ -57,7 +57,7 @@ See [SDK](sdk.md), [Sessions](sessions.md), and [RPC](rpc.md) for the internal r
 ## Uninstall
 
 ```bash
-npm uninstall -g @lioooooo123/ever
+npm uninstall -g @lioooooo123/ever-cli
 ```
 
 Uninstalling the package does not delete local configuration, credentials, Tasks, or Session records.

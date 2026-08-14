@@ -9,7 +9,7 @@
  *   ping                        → "pong" (instant, no LLM)
  *   time                        → current time (instant, no LLM)
  */
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	ever.on("input", async (event, ctx) => {

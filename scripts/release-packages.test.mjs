@@ -14,7 +14,12 @@ test("selects only packages explicitly marked for Ever publication", () => {
 		mkdirSync(internalDirectory);
 		writeFileSync(
 			join(everDirectory, "package.json"),
-			JSON.stringify({ name: "@lioooooo123/ever", version: "1.2.3", everRelease: true }),
+			JSON.stringify({
+				name: "@lioooooo123/ever-cli",
+				version: "0.0.1",
+				everRelease: true,
+				everVersionPolicy: "independent",
+			}),
 		);
 		writeFileSync(
 			join(internalDirectory, "package.json"),
@@ -22,10 +27,9 @@ test("selects only packages explicitly marked for Ever publication", () => {
 		);
 
 		assert.deepEqual(getReleasePackages(root), [
-			{ directory: everDirectory, name: "@lioooooo123/ever", version: "1.2.3" },
+			{ directory: everDirectory, name: "@lioooooo123/ever-cli", version: "0.0.1" },
 		]);
 		assert.deepEqual(getLockstepWorkspacePackages(root), [
-			{ directory: everDirectory, name: "@lioooooo123/ever", version: "1.2.3" },
 			{ directory: internalDirectory, name: "@lioooooo123/ever-agent-core", version: "1.2.3" },
 		]);
 	} finally {

@@ -23,7 +23,7 @@ import {
 	type Theme,
 } from "../modes/interactive/theme/theme.ts";
 
-const OFFICIAL_PACKAGE_NAME = "@lioooooo123/ever";
+const OFFICIAL_PACKAGE_NAME = "@lioooooo123/ever-cli";
 const OFFICIAL_APP_NAME = "ever";
 const OFFICIAL_CONFIG_DIR_NAME = ".ever";
 

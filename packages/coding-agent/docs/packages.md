@@ -168,7 +168,7 @@ If no `ever` manifest is present, ever auto-discovers resources from these direc
 
 Third party runtime dependencies belong in `dependencies` in `package.json`. Dependencies that do not register extensions, skills, prompt templates, or themes also belong in `dependencies`. When ever installs a package from npm or git, it runs `npm install`, so those dependencies are installed automatically.
 
-Ever bundles core packages for extensions and skills. If you import any of these, list them in `peerDependencies` with a `"*"` range and do not bundle them: `@lioooooo123/ever-ai`, `@lioooooo123/ever-agent-core`, `@lioooooo123/ever`, `@lioooooo123/ever-tui`, `typebox`.
+Ever bundles core packages for extensions and skills. If you import any of these, list them in `peerDependencies` with a `"*"` range and do not bundle them: `@lioooooo123/ever-ai`, `@lioooooo123/ever-agent-core`, `@lioooooo123/ever-cli`, `@lioooooo123/ever-tui`, `typebox`.
 
 Other Ever packages must be bundled in your tarball. Add them to `dependencies` and `bundledDependencies`, then reference their resources through `node_modules/` paths. Ever loads packages with separate module roots, so separate installs do not collide or share modules.
 

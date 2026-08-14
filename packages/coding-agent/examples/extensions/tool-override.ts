@@ -20,8 +20,8 @@
  *   ever -e ./tool-override.ts
  */
 
-import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@lioooooo123/ever";
 import type { TextContent } from "@lioooooo123/ever-ai";
+import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@lioooooo123/ever-cli";
 import { constants, readFileSync } from "fs";
 import { access, appendFile, readFile } from "fs/promises";
 import { join, resolve } from "path";

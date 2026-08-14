@@ -17,7 +17,7 @@
  * - setEditorText() - via /rpc-prefill command
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function (ever: ExtensionAPI) {
 	let turnCount = 0;

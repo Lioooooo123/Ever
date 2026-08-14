@@ -1164,6 +1164,7 @@ export class AgentSession {
 		}
 
 		if (this._isRetryableError(msg) && (await this._prepareRetry(msg))) {
+			await this._checkCompaction(msg, true, true);
 			return true;
 		}
 
@@ -2063,7 +2064,11 @@ export class AgentSession {
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
 	 */
-	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
+	private async _checkCompaction(
+		assistantMessage: AssistantMessage,
+		skipAbortedCheck = true,
+		willRetryAfterCompaction = false,
+	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled) return false;
 
@@ -2151,7 +2156,7 @@ export class AgentSession {
 			contextTokens = directContextTokens;
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
-			return await this._runAutoCompaction("threshold", false);
+			return await this._runAutoCompaction("threshold", willRetryAfterCompaction);
 		}
 		return false;
 	}

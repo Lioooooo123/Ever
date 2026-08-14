@@ -16,7 +16,7 @@
  *   /working-indicator reset     Restore ever's default spinner
  */
 
-import type { ExtensionAPI, ExtensionContext, WorkingIndicatorOptions } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionContext, WorkingIndicatorOptions } from "@lioooooo123/ever-cli";
 
 type WorkingIndicatorMode = "dot" | "none" | "pulse" | "spinner" | "default";
 

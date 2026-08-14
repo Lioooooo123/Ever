@@ -5,7 +5,7 @@
  * Demonstrates how extensions can use ctx.shutdown() to exit ever cleanly.
  */
 
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 import { Type } from "typebox";
 
 export default function (ever: ExtensionAPI) {

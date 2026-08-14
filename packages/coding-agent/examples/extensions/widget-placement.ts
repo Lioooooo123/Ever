@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 export default function widgetPlacementExtension(ever: ExtensionAPI) {
 	ever.on("session_start", (_event, ctx) => {
