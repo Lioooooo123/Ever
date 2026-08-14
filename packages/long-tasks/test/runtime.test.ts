@@ -52,6 +52,7 @@ describe("task controller", () => {
 		expect(main.kind).toBe("main");
 		expect(store.listEvents(task.id).map((event) => event.type)).toEqual([
 			"AuthorizationCompileRequested",
+			"AgentDispatchCreated",
 			"TaskCreated",
 			"AgentCreated",
 		]);
@@ -91,6 +92,85 @@ describe("task notifications", () => {
 });
 
 describe("durable coordination", () => {
+	it("does not report deadlock while a live-delivery message is in flight", () => {
+		const { store, controller, task, main } = createTask();
+		controller.submit(task.id);
+		store.transitionTask(task.id, "running");
+		const child = store.requireAgent(
+			store.createDelegation({
+				actor: main,
+				operationKey: "deadlock-child",
+				name: "deadlock-child",
+				role: "worker",
+				objective: "wait for direction",
+				acceptance: [],
+				paths: ["."],
+				allowedTools: [],
+				workspaceMode: "read_only_shared",
+				budget: { maxTurns: 2, maxWallTimeMinutes: 10 },
+				required: false,
+			}).agentId,
+		);
+		store.transitionAgent(main.id, "running");
+		store.transitionAgent(main.id, "waiting_message");
+		store.transitionAgent(child.id, "running");
+		store.transitionAgent(child.id, "waiting_message");
+		const messageId = store.queueMessage({
+			actor: main,
+			recipient: child,
+			dedupeKey: "deadlock-steer",
+			type: "steering",
+			priority: "high",
+			body: "resume",
+			artifactRefs: [],
+		});
+		expect(store.claimAgentMessageForLiveDelivery(messageId, child.id)).toBe(true);
+
+		expect(store.detectCoordinationDeadlock(task.id)).toBe(false);
+		expect(store.requireTask(task.id).state).toBe("running");
+		store.close();
+	});
+
+	it("scopes idempotency to one Task actor and rejects changed payloads", async () => {
+		const { store, controller, task, main } = createTask();
+		const coordinator = new DurableAgentCoordinator(store);
+		const command = {
+			type: "delegate" as const,
+			operationKey: "shared-key",
+			name: "reviewer-a",
+			role: "review",
+			objective: "review a",
+			acceptance: [],
+			scope: { paths: ["."], allowedTools: [], workspaceMode: "read_only_shared" as const },
+			budget: { maxTurns: 2, maxWallTimeMinutes: 10 },
+			required: true,
+		};
+		await coordinator.coordinate({ taskId: task.id, agentId: main.id, kind: "main" }, command);
+		await expect(
+			coordinator.coordinate(
+				{ taskId: task.id, agentId: main.id, kind: "main" },
+				{ ...command, objective: "changed input" },
+			),
+		).rejects.toThrow("reused with different input");
+
+		const otherTask = controller.create({
+			title: "other",
+			goal: "other",
+			acceptance: [],
+			budget: { maxTurns: 10, maxWallTimeMinutes: 30 },
+			workspaceRoot: "/repo",
+			workspaceFingerprint: "other",
+		});
+		const otherMain = store.listAgents(otherTask.id)[0]!;
+		await expect(
+			coordinator.coordinate(
+				{ taskId: otherTask.id, agentId: otherMain.id, kind: "main" },
+				{ ...command, name: "reviewer-b" },
+			),
+		).resolves.toMatchObject({ kind: "delegated", replayed: false });
+		store.close();
+	});
+
 	it("deduplicates delegation and messages and acknowledges inbox only with a checkpoint", async () => {
 		const { store, task, main } = createTask();
 		const coordinator = new DurableAgentCoordinator(store);
@@ -164,9 +244,11 @@ describe("durable coordination", () => {
 		expect((await coordinator.claimInbox(first.agentId, lease, 20)).messages).toEqual([]);
 		expect(store.requireAgent(first.agentId).toolPolicy.allowedPaths).toEqual(["/repo"]);
 		const childIdentity = { taskId: task.id, agentId: first.agentId, kind: "subagent" as const };
+		const dispatchId = store.getRunnableAgentDispatch(first.agentId)!.id;
 		const rejectedCompletion = await coordinator.coordinate(childIdentity, {
 			type: "report",
 			operationKey: "report-incomplete",
+			dispatchId,
 			status: "completed",
 			summary: "done",
 			evidence: [{ id: "report", kind: "event", ref: "event:1" }],
@@ -176,6 +258,7 @@ describe("durable coordination", () => {
 		const acceptedCompletion = await coordinator.coordinate(childIdentity, {
 			type: "report",
 			operationKey: "report-complete",
+			dispatchId,
 			status: "completed",
 			summary: "done",
 			evidence: [{ id: "report", kind: "event", ref: "event:2" }],

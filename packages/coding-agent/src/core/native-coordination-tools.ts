@@ -1,17 +1,12 @@
-import { join } from "node:path";
 import { Type } from "@lioooooo123/ever-ai";
 import {
 	AcceptanceCriterionSchema,
 	BudgetSchema,
-	DurableAgentCoordinator,
-	DurableFlowCoordinator,
 	EvidenceRefSchema,
 	type FlowDefinition,
-	SqliteTaskStore,
-	WorkspaceAllocator,
 } from "@lioooooo123/ever-long-tasks";
-import { requestDaemon, startDaemon } from "../cli/daemon-command.ts";
-import { defineTool, type ToolDefinition } from "./extensions/types.ts";
+import { type CoordinationActor, DurableCoordination } from "./durable-coordination.ts";
+import { defineTool, type ExtensionContext, type ToolDefinition } from "./extensions/types.ts";
 
 const MessageTypeSchema = Type.Union([
 	Type.Literal("directive"),
@@ -49,58 +44,22 @@ function textResult(value: unknown) {
 	return { content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value };
 }
 
-function openStore(agentDir: string): SqliteTaskStore {
-	return SqliteTaskStore.open({
-		databasePath: join(agentDir, "long-tasks.sqlite"),
-		artifactsRoot: join(agentDir, "tasks"),
+export async function defineFlowForTask(agentDir: string, taskId: string, agentId: string, definition: FlowDefinition) {
+	return new DurableCoordination(agentDir, { taskId, agentId }).submit({
+		type: "flow",
+		operationKey: `flow:${taskId}`,
+		definition,
 	});
 }
 
-function workspaceAllocator(agentDir: string): WorkspaceAllocator {
-	return new WorkspaceAllocator({
-		worktreesRoot: join(agentDir, "worktrees"),
-		artifactsRoot: join(agentDir, "tasks"),
-	});
-}
-
-export function defineFlowForTask(agentDir: string, taskId: string, agentId: string, definition: FlowDefinition) {
-	const store = openStore(agentDir);
-	try {
-		const actor = store.requireAgent(agentId);
-		return new DurableFlowCoordinator(store, {
-			workspaceAllocator: workspaceAllocator(agentDir),
-		}).define({ taskId, agentId, kind: actor.kind }, definition);
-	} finally {
-		store.close();
-	}
-}
-
-export function getFlowStatus(agentDir: string, taskId: string) {
-	const store = openStore(agentDir);
-	try {
-		const flow = store.getLatestFlow(taskId);
-		return flow ? { flow, episodes: store.listEpisodes({ taskId, flowId: flow.id }) } : { flow: undefined };
-	} finally {
-		store.close();
-	}
-}
-
-function resolveRecipient(store: SqliteTaskStore, taskId: string, reference: string) {
-	const agents = store.listAgents(taskId);
-	const exact = agents.find((agent) => agent.id === reference || agent.activeSessionId === reference);
-	if (exact) return exact;
-	const named = agents.filter((agent) => agent.name === reference);
-	if (named.length === 1) return named[0]!;
-	if (named.length > 1) throw new Error(`Recipient is missing or ambiguous: ${reference}`);
-	const matches = agents.filter(
-		(agent) => agent.id.startsWith(reference) || agent.activeSessionId?.startsWith(reference),
-	);
-	if (matches.length !== 1) throw new Error(`Recipient is missing or ambiguous: ${reference}`);
-	return matches[0]!;
+export function getFlowStatus(agentDir: string, taskId: string, agentId: string) {
+	const snapshot = new DurableCoordination(agentDir, { taskId, agentId }).snapshot();
+	return snapshot.flow ? { flow: snapshot.flow, episodes: snapshot.episodes ?? [] } : { flow: undefined };
 }
 
 export const NATIVE_COORDINATION_TOOL_NAMES = [
 	"agent_spawn",
+	"agent_dispatch",
 	"agent_message",
 	"agent_inbox",
 	"agent_report",
@@ -108,7 +67,16 @@ export const NATIVE_COORDINATION_TOOL_NAMES = [
 	"flow_status",
 ] as const;
 
-export function createNativeCoordinationTools(agentDir: string, taskId: string, agentId: string): ToolDefinition[] {
+export type CoordinationToolIntent = "spawn" | "existing";
+export type CoordinationActorResolver = (
+	intent: CoordinationToolIntent,
+	ctx: ExtensionContext,
+) => CoordinationActor | Promise<CoordinationActor>;
+
+export function createDurableCoordinationTools(
+	agentDir: string,
+	resolveActor: CoordinationActorResolver,
+): ToolDefinition[] {
 	return [
 		defineTool({
 			name: "agent_spawn",
@@ -127,37 +95,46 @@ export function createNativeCoordinationTools(agentDir: string, taskId: string, 
 				budget: BudgetSchema,
 				required: Type.Boolean(),
 			}),
-			async execute(toolCallId, params) {
-				const store = openStore(agentDir);
-				try {
-					const actor = store.requireAgent(agentId);
-					const result = await new DurableAgentCoordinator(store, {
-						workspaceAllocator: workspaceAllocator(agentDir),
-					}).coordinate(
-						{ taskId, agentId, kind: actor.kind },
-						{
-							type: "delegate",
-							operationKey: toolCallId,
-							name: params.name,
-							role: params.role,
-							objective: params.objective,
-							acceptance: params.acceptance,
-							scope: {
-								paths: params.paths,
-								allowedTools: params.allowedTools,
-								workspaceMode: params.workspaceMode,
-							},
-							budget: params.budget,
-							required: params.required,
-						},
-					);
-					await startDaemon(agentDir);
-					const wake = await requestDaemon(agentDir, { command: "wake", taskId });
-					if (!wake.ok) throw new Error(wake.message ?? "Daemon rejected Agent dispatch");
-					return textResult(result);
-				} finally {
-					store.close();
-				}
+			async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+				const actor = await resolveActor("spawn", ctx);
+				return textResult(
+					await new DurableCoordination(agentDir, actor).submit({
+						type: "spawn",
+						operationKey: toolCallId,
+						name: params.name,
+						role: params.role,
+						action: params.objective,
+						acceptance: params.acceptance,
+						paths: params.paths,
+						allowedTools: params.allowedTools,
+						workspaceMode: params.workspaceMode,
+						budget: params.budget,
+						required: params.required,
+					}),
+				);
+			},
+		}),
+		defineTool({
+			name: "agent_dispatch",
+			label: "Dispatch Agent",
+			description: "Dispatch fresh work to an existing named Agent using retained Episodes, not its old transcript.",
+			promptSnippet: "agent_dispatch: send a fresh action to an existing named Agent",
+			parameters: Type.Object({
+				agent: Type.String({ minLength: 1 }),
+				action: Type.String({ minLength: 1, maxLength: 8000 }),
+				sourceAgents: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 32 })),
+			}),
+			async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+				const actor = await resolveActor("existing", ctx);
+				return textResult(
+					await new DurableCoordination(agentDir, actor).submit({
+						type: "dispatch",
+						operationKey: toolCallId,
+						agent: params.agent,
+						action: params.action,
+						sourceAgents: params.sourceAgents ?? [],
+					}),
+				);
 			},
 		}),
 		defineTool({
@@ -173,31 +150,18 @@ export function createNativeCoordinationTools(agentDir: string, taskId: string, 
 				artifactRefs: Type.Optional(Type.Array(Type.String())),
 				priority: Type.Optional(Type.Union([Type.Literal("normal"), Type.Literal("high")])),
 			}),
-			async execute(toolCallId, params) {
-				const store = openStore(agentDir);
-				try {
-					const actor = store.requireAgent(agentId);
-					const recipient = resolveRecipient(store, taskId, params.recipient);
-					const result = await new DurableAgentCoordinator(store).coordinate(
-						{ taskId, agentId, kind: actor.kind },
-						{
-							type: "message",
-							operationKey: toolCallId,
-							recipientAgentId: recipient.id,
-							messageType: params.messageType,
-							body: params.body,
-							artifactRefs: params.artifactRefs ?? [],
-							priority: params.priority ?? "normal",
-						},
-					);
-					return textResult({
-						...result,
-						recipientAgentId: recipient.id,
-						recipientSessionId: recipient.activeSessionId,
-					});
-				} finally {
-					store.close();
-				}
+			async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+				const actor = await resolveActor("existing", ctx);
+				return textResult(
+					await new DurableCoordination(agentDir, actor).send({
+						dedupeKey: toolCallId,
+						recipient: params.recipient,
+						messageType: params.messageType,
+						body: params.body,
+						artifactRefs: params.artifactRefs ?? [],
+						priority: params.priority ?? "normal",
+					}),
+				);
 			},
 		}),
 		defineTool({
@@ -210,19 +174,14 @@ export function createNativeCoordinationTools(agentDir: string, taskId: string, 
 				limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
 				messageIds: Type.Optional(Type.Array(Type.String(), { maxItems: 200 })),
 			}),
-			async execute(_toolCallId, params) {
-				const store = openStore(agentDir);
-				try {
-					if (params.action === "acknowledge") {
-						if (!params.messageIds?.length)
-							throw new Error("messageIds are required to acknowledge Agent messages");
-						store.acknowledgeAgentInbox(agentId, params.messageIds);
-						return textResult({ acknowledged: params.messageIds });
-					}
-					return textResult(store.readAgentInbox(agentId, params.limit ?? 50));
-				} finally {
-					store.close();
+			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				const actor = await resolveActor("existing", ctx);
+				const coordination = new DurableCoordination(agentDir, actor);
+				if (params.action === "acknowledge") {
+					if (!params.messageIds?.length) throw new Error("messageIds are required to acknowledge Agent messages");
+					return textResult(coordination.inbox({ action: "acknowledge", messageIds: params.messageIds }));
 				}
+				return textResult(coordination.inbox({ action: "read", limit: params.limit ?? 50 }));
 			},
 		}),
 		defineTool({
@@ -245,26 +204,16 @@ export function createNativeCoordinationTools(agentDir: string, taskId: string, 
 					),
 				),
 			}),
-			async execute(toolCallId, params) {
-				const store = openStore(agentDir);
-				try {
-					const actor = store.requireAgent(agentId);
-					const result = await new DurableAgentCoordinator(store).coordinate(
-						{ taskId, agentId, kind: actor.kind },
-						{
-							type: "report",
-							operationKey: toolCallId,
-							status: params.status,
-							summary: params.summary,
-							evidence: params.evidence,
-							blockers: params.blockers ?? [],
-							acceptanceResults: params.acceptanceResults ?? [],
-						},
-					);
-					return { ...textResult(result), terminate: params.status !== "progress" };
-				} finally {
-					store.close();
-				}
+			async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+				const actorIdentity = await resolveActor("existing", ctx);
+				const result = await new DurableCoordination(agentDir, actorIdentity).report(toolCallId, {
+					status: params.status,
+					summary: params.summary,
+					evidence: params.evidence,
+					blockers: params.blockers ?? [],
+					acceptanceResults: params.acceptanceResults ?? [],
+				});
+				return { ...textResult(result), terminate: params.status !== "progress" };
 			},
 		}),
 		defineTool({
@@ -273,8 +222,15 @@ export function createNativeCoordinationTools(agentDir: string, taskId: string, 
 			description: "Atomically define and validate a dependency DAG of independent Agent Sessions.",
 			promptSnippet: "flow_define: create a validated DAG; independent nodes run concurrently",
 			parameters: FlowDefinitionSchema,
-			async execute(_toolCallId, params) {
-				return textResult(defineFlowForTask(agentDir, taskId, agentId, params as FlowDefinition));
+			async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+				const actor = await resolveActor("existing", ctx);
+				return textResult(
+					await new DurableCoordination(agentDir, actor).submit({
+						type: "flow",
+						operationKey: toolCallId,
+						definition: params as FlowDefinition,
+					}),
+				);
 			},
 		}),
 		defineTool({
@@ -283,9 +239,23 @@ export function createNativeCoordinationTools(agentDir: string, taskId: string, 
 			description: "Inspect the current Flow graph, node Sessions, states, and persisted Episodes.",
 			promptSnippet: "flow_status: inspect DAG progress and node Handoffs",
 			parameters: Type.Object({}),
-			async execute() {
-				return textResult(getFlowStatus(agentDir, taskId));
+			async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+				const actor = await resolveActor("existing", ctx);
+				return textResult(new DurableCoordination(agentDir, actor).snapshot());
 			},
 		}),
 	];
+}
+
+export function createNativeCoordinationTools(
+	agentDir: string,
+	taskId: string,
+	agentId: string,
+	dispatchId?: string,
+): ToolDefinition[] {
+	return createDurableCoordinationTools(agentDir, () => ({
+		taskId,
+		agentId,
+		...(dispatchId ? { dispatchId } : {}),
+	}));
 }

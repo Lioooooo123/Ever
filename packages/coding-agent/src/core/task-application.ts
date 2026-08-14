@@ -210,6 +210,7 @@ export class TaskApplication {
 									"write",
 									"task_update",
 									"agent_spawn",
+									"agent_dispatch",
 									"agent_message",
 									"agent_inbox",
 									...(input.kind === "interactive"

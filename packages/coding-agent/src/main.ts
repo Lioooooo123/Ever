@@ -880,7 +880,12 @@ export async function main(args: string[], options?: MainOptions) {
 				...(taskRunContext
 					? [
 							createNativeTaskTool(agentDir, taskRunContext.taskId, taskRunContext.agentId),
-							...createNativeCoordinationTools(agentDir, taskRunContext.taskId, taskRunContext.agentId),
+							...createNativeCoordinationTools(
+								agentDir,
+								taskRunContext.taskId,
+								taskRunContext.agentId,
+								taskRunContext.dispatchId,
+							),
 						]
 					: []),
 			],

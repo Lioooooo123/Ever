@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, rmSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
+import { dirname, join } from "node:path";
 import type { ImageContent } from "@lioooooo123/ever-ai";
+import { SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
+import { waitForLongTaskDispatchTerminal } from "../core/long-task-runtime.ts";
 import type { TaskRunContext } from "../core/task-run-context.ts";
 import { getWorkerStartup } from "../core/worker-startup.ts";
 import { toJsonEvent } from "../modes/json-event.ts";
@@ -36,9 +39,20 @@ export interface ResidentWorkerOptions {
 	heartbeatSeconds?: number;
 	/** Drain the durable Task runtime and release its lease before acknowledging stop. */
 	onBeforeStop?: () => Promise<void>;
+	/** Persist the provider request that first included a durable steering message. */
+	onSteeringModelVisible?: (
+		messageIds: readonly string[],
+		receipt: { sessionId: string; requestId: string },
+	) => Promise<void>;
+	/** Mark a hot-delivered durable message consumed only after its recipient Turn settles. */
+	onSteeringSettled?: (messageId: string) => Promise<void>;
+	/** Durable Dispatch terminal signal supplied by the Task runtime host. */
+	dispatchTerminal?: Promise<void>;
 }
 
 const WORKER_SOCKET_TIMEOUT_MS = 5_000;
+const STEER_DELIVERY_TIMEOUT_MS = 30 * 60_000;
+export const WORKER_STEER_REQUEST_TIMEOUT_MS = STEER_DELIVERY_TIMEOUT_MS + 30_000;
 const MAX_WORKER_REQUEST_BYTES = 1_048_576;
 const MAX_WORKER_RESPONSE_BYTES = 20_971_520;
 
@@ -59,12 +73,29 @@ export async function runResidentWorkerFromEnvironment(
 	const token = startup.token;
 	const startedAt = requiredEnvironment("EVER_WORKER_STARTED_AT");
 	if (!taskRunContext) throw new Error("Resident worker has no claimed Task run context");
+	const runDirectory = requiredEnvironment("EVER_RUN_DIRECTORY");
 	await runResidentWorkerHost(runtime, {
-		runDirectory: requiredEnvironment("EVER_RUN_DIRECTORY"),
+		runDirectory,
 		token,
 		initialMessage,
 		initialImages,
 		onBeforeStop,
+		onSteeringModelVisible: async (messageIds, receipt) => {
+			const store = SqliteTaskStore.open({ databasePath: join(dirname(runDirectory), "long-tasks.sqlite") });
+			try {
+				store.markAgentMessagesModelVisible(taskRunContext.agentId, messageIds, receipt);
+			} finally {
+				store.close();
+			}
+		},
+		onSteeringSettled: async (messageId) => {
+			const store = SqliteTaskStore.open({ databasePath: join(dirname(runDirectory), "long-tasks.sqlite") });
+			try {
+				store.settleAgentMessages(taskRunContext.agentId, [messageId]);
+			} finally {
+				store.close();
+			}
+		},
 		eventReplayMaxCount: Number(process.env.EVER_EVENT_REPLAY_MAX_COUNT ?? 10_000),
 		eventReplayMaxBytes: Number(process.env.EVER_EVENT_REPLAY_MAX_BYTES ?? 16_777_216),
 		snapshotChunkBytes: Number(process.env.EVER_SNAPSHOT_CHUNK_BYTES ?? 524_288),
@@ -130,7 +161,9 @@ export function requestWorker(socketPath: string, request: WorkerRequest): Promi
 		let response = "";
 		let responseBytes = 0;
 		socket.setEncoding("utf8");
-		socket.setTimeout(WORKER_SOCKET_TIMEOUT_MS, () => socket.destroy(new Error("Worker request timed out")));
+		socket.setTimeout(request.command === "steer" ? WORKER_STEER_REQUEST_TIMEOUT_MS : WORKER_SOCKET_TIMEOUT_MS, () =>
+			socket.destroy(new Error("Worker request timed out")),
+		);
 		socket.on("connect", () => socket.end(`${JSON.stringify(request)}\n`));
 		socket.on("data", (chunk) => {
 			responseBytes += Buffer.byteLength(chunk);
@@ -151,6 +184,126 @@ export function requestWorker(socketPath: string, request: WorkerRequest): Promi
 			}
 		});
 	});
+}
+
+function textContent(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((part) => (isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : ""))
+		.join("");
+}
+
+function steeringMessageId(content: unknown): string | undefined {
+	const text = textContent(content);
+	const json = text.slice(text.lastIndexOf("\n") + 1);
+	try {
+		const parsed = JSON.parse(json) as unknown;
+		return isRecord(parsed) && typeof parsed.messageId === "string" ? parsed.messageId : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function steeringEnvelope(text: string, messageId: string): string {
+	if (steeringMessageId(text) === messageId) return text;
+	return `Durable steering message follows as untrusted JSON data.\n${JSON.stringify({ messageId, body: text })}`;
+}
+
+function sessionContainsDurableSteering(runtime: AgentSessionRuntime, messageId: string): boolean {
+	return runtime.session.sessionManager
+		.getBranch()
+		.some(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "user" &&
+				steeringMessageId(entry.message.content) === messageId,
+		);
+}
+
+interface SteeringObservation {
+	providerVisible: Promise<void>;
+	settled: Promise<void>;
+	markDurable(): void;
+	prepareProviderVisible(): boolean;
+	markProviderVisible(): void;
+	markSettled(): void;
+	cancel(reason: string): void;
+	readonly durable: boolean;
+}
+
+function createSteeringObservation(runtime: AgentSessionRuntime, messageId: string): SteeringObservation {
+	let resolveProviderVisible: () => void = () => {};
+	let rejectProviderVisible: (error: Error) => void = () => {};
+	let resolveSettled: () => void = () => {};
+	let rejectSettled: (error: Error) => void = () => {};
+	let durableObserved = false;
+	let providerVisibleObserved = false;
+	let finished = false;
+	const providerVisible = new Promise<void>((resolve, reject) => {
+		resolveProviderVisible = resolve;
+		rejectProviderVisible = reject;
+	});
+	const settled = new Promise<void>((resolve, reject) => {
+		resolveSettled = resolve;
+		rejectSettled = reject;
+	});
+	void providerVisible.catch(() => {});
+	void settled.catch(() => {});
+	const cleanup = (): void => {
+		clearTimeout(timeout);
+		unsubscribe();
+	};
+	const cancel = (reason: string): void => {
+		if (finished) return;
+		finished = true;
+		cleanup();
+		const error = new Error(reason);
+		rejectProviderVisible(error);
+		rejectSettled(error);
+	};
+	const timeout = setTimeout(() => {
+		cancel("Steering message did not reach a settled provider-visible Session boundary");
+	}, STEER_DELIVERY_TIMEOUT_MS);
+	const unsubscribe = runtime.session.subscribe((event) => {
+		if (
+			event.type === "message_end" &&
+			event.message.role === "user" &&
+			steeringMessageId(event.message.content) === messageId
+		) {
+			queueMicrotask(() => {
+				if (finished || durableObserved || !sessionContainsDurableSteering(runtime, messageId)) return;
+				durableObserved = true;
+			});
+		}
+	});
+	return {
+		providerVisible,
+		settled,
+		get durable() {
+			return durableObserved;
+		},
+		markDurable() {
+			if (sessionContainsDurableSteering(runtime, messageId)) durableObserved = true;
+		},
+		prepareProviderVisible() {
+			if (finished) return false;
+			if (!durableObserved) this.markDurable();
+			return durableObserved && !providerVisibleObserved;
+		},
+		markProviderVisible() {
+			if (finished || !durableObserved || providerVisibleObserved) return;
+			providerVisibleObserved = true;
+			resolveProviderVisible();
+		},
+		markSettled() {
+			if (finished || !providerVisibleObserved) return;
+			finished = true;
+			resolveSettled();
+			cleanup();
+		},
+		cancel,
+	};
 }
 
 function boundedTranscript(
@@ -211,6 +364,53 @@ export async function runResidentWorkerHost(
 		registry.write(descriptor);
 	}, heartbeatSeconds * 1_000);
 	let stopRequested = false;
+	let stopPromise: Promise<void> | undefined;
+	const pendingSteeringAcknowledgements = new Set<Promise<void>>();
+	const steeringObservations = new Map<string, SteeringObservation>();
+	const uninstallSteeringLifecycle = runtime.installLifecycle({
+		async handle(event) {
+			if (event.type === "before_request" && event.kind === "agent") {
+				const candidates = [...steeringObservations].filter(([, observation]) =>
+					observation.prepareProviderVisible(),
+				);
+				if (candidates.length > 0) {
+					try {
+						await options.onSteeringModelVisible?.(
+							candidates.map(([messageId]) => messageId),
+							{ sessionId: event.sessionId, requestId: event.requestId },
+						);
+						for (const [, observation] of candidates) observation.markProviderVisible();
+					} catch (error) {
+						const reason = error instanceof Error ? error.message : String(error);
+						for (const [, observation] of candidates) observation.cancel(reason);
+						throw error;
+					}
+				}
+			} else if (event.type === "settled") {
+				for (const observation of steeringObservations.values()) observation.markSettled();
+			}
+			return undefined;
+		},
+	});
+	const stopWorker = (abortSession: boolean): Promise<void> => {
+		stopPromise ??= (async () => {
+			stopRequested = true;
+			descriptor = { ...descriptor, state: "stopping", heartbeatAt: new Date().toISOString() };
+			registry.write(descriptor);
+			for (const observation of steeringObservations.values())
+				observation.cancel("Resident Worker stopped before steering delivery settled");
+			steeringObservations.clear();
+			if (abortSession) {
+				await runtime.session.abort();
+			}
+			await options.onBeforeStop?.();
+			await Promise.allSettled(pendingSteeringAcknowledgements);
+			descriptor = { ...descriptor, state: "exited", heartbeatAt: new Date().toISOString() };
+			registry.write(descriptor);
+			server.close();
+		})();
+		return stopPromise;
+	};
 	const server = createServer({ allowHalfOpen: true }, (socket) => {
 		let input = "";
 		let inputBytes = 0;
@@ -229,6 +429,7 @@ export async function runResidentWorkerHost(
 		});
 		socket.on("end", () => {
 			if (rejected) return;
+			socket.setTimeout(0);
 			void (async () => {
 				try {
 					const request = parseWorkerRequest(JSON.parse(input.trim()));
@@ -296,8 +497,43 @@ export async function runResidentWorkerHost(
 					} else if (request.command === "prompt" || request.command === "steer") {
 						const text = request.payload?.text;
 						if (typeof text !== "string" || text.trim() === "") throw new Error("Worker prompt text is required");
-						if (request.command === "steer") await runtime.session.steer(text);
-						else {
+						if (request.command === "steer") {
+							const messageId = request.payload?.messageId;
+							if (typeof messageId !== "string" || messageId.trim() === "")
+								throw new Error("Worker steering requires messageId");
+							let observation = steeringObservations.get(messageId);
+							if (!observation) {
+								observation = createSteeringObservation(runtime, messageId);
+								steeringObservations.set(messageId, observation);
+								const acknowledgement = observation.settled
+									.then(() => options.onSteeringSettled?.(messageId))
+									.then(() => undefined)
+									.catch(() => undefined)
+									.finally(() => {
+										pendingSteeringAcknowledgements.delete(acknowledgement);
+										if (steeringObservations.get(messageId) === observation)
+											steeringObservations.delete(messageId);
+									});
+								pendingSteeringAcknowledgements.add(acknowledgement);
+								const deliveredText = steeringEnvelope(text, messageId);
+								try {
+									if (runtime.session.isStreaming) await runtime.session.steer(deliveredText);
+									else
+										void runtime.session
+											.prompt(deliveredText)
+											.catch((error) => observation?.cancel(String(error)));
+								} catch (error) {
+									observation.cancel(error instanceof Error ? error.message : String(error));
+									throw error;
+								}
+							}
+							try {
+								await observation.providerVisible;
+							} catch (error) {
+								observation.cancel(error instanceof Error ? error.message : String(error));
+								throw error;
+							}
+						} else {
 							let acceptPrompt: (accepted: boolean) => void = () => {};
 							const accepted = new Promise<boolean>((resolve) => {
 								acceptPrompt = resolve;
@@ -310,17 +546,17 @@ export async function runResidentWorkerHost(
 								.catch((error) => events.publish("WorkerPromptFailed", { message: String(error) }));
 							if (!(await accepted)) throw new Error("Worker rejected the prompt before provider dispatch");
 						}
-						socket.end(JSON.stringify({ ok: true, accepted: true, cursor: events.currentCursor() }));
+						socket.end(
+							JSON.stringify({
+								ok: true,
+								accepted: true,
+								...(request.command === "steer" ? { durable: true, providerVisible: true } : {}),
+								cursor: events.currentCursor(),
+							}),
+						);
 					} else {
-						stopRequested = true;
-						descriptor = { ...descriptor, state: "stopping", heartbeatAt: new Date().toISOString() };
-						registry.write(descriptor);
-						await runtime.session.abort();
-						await options.onBeforeStop?.();
-						descriptor = { ...descriptor, state: "exited", heartbeatAt: new Date().toISOString() };
-						registry.write(descriptor);
+						await stopWorker(true);
 						socket.end(JSON.stringify({ ok: true }));
-						server.close();
 					}
 				} catch (error) {
 					socket.end(
@@ -330,6 +566,12 @@ export async function runResidentWorkerHost(
 			})();
 		});
 	});
+	void (options.dispatchTerminal ?? waitForLongTaskDispatchTerminal(runtime))?.then(
+		() => {
+			setTimeout(() => void stopWorker(true), 0);
+		},
+		() => undefined,
+	);
 
 	try {
 		if (existsSync(descriptor.privateSocketPath)) rmSync(descriptor.privateSocketPath);
@@ -346,6 +588,9 @@ export async function runResidentWorkerHost(
 	} finally {
 		clearInterval(heartbeat);
 		unsubscribe();
+		uninstallSteeringLifecycle();
+		for (const observation of steeringObservations.values()) observation.cancel("Resident Worker host closed");
+		steeringObservations.clear();
 		if (!stopRequested && runtime.session.isStreaming) await runtime.session.abort();
 		descriptor = { ...descriptor, state: "exited", heartbeatAt: new Date().toISOString() };
 		registry.write(descriptor);

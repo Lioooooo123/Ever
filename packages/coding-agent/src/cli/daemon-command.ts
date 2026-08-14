@@ -39,7 +39,7 @@ import {
 } from "../daemon/service-manager.ts";
 import { deriveWorkerToken, workerTokenSha256 } from "../daemon/supervisor-credentials.ts";
 import { adoptResidentWorkers } from "../daemon/supervisor-takeover.ts";
-import { requestWorker } from "../daemon/worker-host.ts";
+import { requestWorker, WORKER_STEER_REQUEST_TIMEOUT_MS } from "../daemon/worker-host.ts";
 import { type WorkerDescriptor, WorkerRegistry } from "../daemon/worker-registry.ts";
 import { DesktopNotificationAdapter } from "./desktop-notifier.ts";
 
@@ -70,6 +70,7 @@ export interface DaemonRuntimeSettings {
 }
 
 const SOCKET_TIMEOUT_MS = 5_000;
+const STEER_CLIENT_TIMEOUT_MS = WORKER_STEER_REQUEST_TIMEOUT_MS + 30_000;
 const MAX_DAEMON_REQUEST_BYTES = 1_048_576;
 const MAX_DAEMON_RESPONSE_BYTES = 4_194_304;
 
@@ -237,7 +238,9 @@ export function requestDaemon(
 		let response = "";
 		let responseBytes = 0;
 		socket.setEncoding("utf8");
-		socket.setTimeout(SOCKET_TIMEOUT_MS, () => socket.destroy(new Error("Daemon request timed out")));
+		socket.setTimeout(request.command === "steer" ? STEER_CLIENT_TIMEOUT_MS : SOCKET_TIMEOUT_MS, () =>
+			socket.destroy(new Error("Daemon request timed out")),
+		);
 		socket.on("connect", () => socket.end(`${JSON.stringify(command)}\n`));
 		socket.on("data", (chunk) => {
 			responseBytes += Buffer.byteLength(chunk);
@@ -607,6 +610,7 @@ class DaemonSupervisor {
 			});
 			socket.on("end", () => {
 				if (rejected) return;
+				socket.setTimeout(0);
 				let parsed: unknown;
 				try {
 					parsed = JSON.parse(input.trim());
@@ -756,9 +760,14 @@ class DaemonSupervisor {
 							body = await requestWorker(worker.descriptor.privateSocketPath, {
 								token: worker.token,
 								command: workerCommand,
-								payload: command.payload,
+								payload:
+									command.command === "steer"
+										? { ...command.payload, messageId: command.commandId }
+										: command.payload,
 								...(command.resumeCursor ? { resumeCursor: command.resumeCursor } : {}),
 							});
+							if (command.command === "steer" && body.ok && body.providerVisible !== true)
+								throw new Error("Resident worker did not confirm provider-visible steering delivery");
 						} else if (command.command === "detach") {
 							body = { ok: true, message: "detached" };
 						} else if (command.command === "stop") {

@@ -1,6 +1,7 @@
 export interface TaskRunContext {
 	taskId: string;
 	agentId: string;
+	dispatchId?: string;
 	acceptRuntimeDrift: boolean;
 }
 

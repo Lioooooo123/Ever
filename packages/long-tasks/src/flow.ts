@@ -17,11 +17,19 @@ export function validateFlowDefinition(definition: FlowDefinition): string[][] {
 		if (!node.scope.allowedTools.includes("agent_report"))
 			throw new Error(`Flow node must allow agent_report: ${node.key}`);
 		const orchestrationTool = node.scope.allowedTools.find((tool) =>
-			["agent_spawn", "delegate_task", "flow_define", "task_update"].includes(tool),
+			["agent_spawn", "agent_dispatch", "delegate_task", "flow_define", "task_update"].includes(tool),
 		);
 		if (orchestrationTool)
 			throw new Error(`Flow node cannot allow orchestration tool ${orchestrationTool}: ${node.key}`);
 		if (node.dependsOn.includes(node.key)) throw new Error(`Flow node cannot depend on itself: ${node.key}`);
+	}
+	const nodesByKey = new Map(definition.nodes.map((node) => [node.key, node]));
+	for (const node of definition.nodes) {
+		for (const dependency of node.dependsOn) {
+			if (nodesByKey.get(dependency)?.scope.workspaceMode === "isolated_worktree") {
+				throw new Error(`Writable Flow dependency ${dependency} -> ${node.key} requires change-bundle composition`);
+			}
+		}
 	}
 	for (const node of definition.nodes) {
 		if (new Set(node.dependsOn).size !== node.dependsOn.length)
@@ -56,11 +64,13 @@ export class DurableFlowCoordinator {
 		this.workspaceAllocator = options?.workspaceAllocator;
 	}
 
-	define(actorIdentity: AgentIdentity, definition: FlowDefinition): FlowRecord {
+	define(actorIdentity: AgentIdentity, operationKey: string, definition: FlowDefinition): FlowRecord {
 		validateFlowDefinition(definition);
 		const actor = this.store.requireAgent(actorIdentity.agentId);
 		if (actor.taskId !== actorIdentity.taskId || actor.kind !== actorIdentity.kind)
 			throw new Error("Agent identity mismatch");
+		const replay = this.store.getFlowByOperation(actor, operationKey, definition);
+		if (replay) return replay;
 		const allocations = new Map<
 			string,
 			{
@@ -84,6 +94,6 @@ export class DurableFlowCoordinator {
 				workspaceSnapshotSha256: allocation.snapshotSha256,
 			});
 		}
-		return this.store.createFlow(actor, definition, allocations);
+		return this.store.createFlow(actor, operationKey, definition, allocations);
 	}
 }

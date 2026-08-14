@@ -116,6 +116,10 @@ describe("VerifiedChangeBundle", () => {
 		});
 		writeFileSync(join(workspaceRoot, "result.txt"), "after\n");
 		store.transitionTask(task.id, "completed", "verified");
+		expect(store.getLatestAttempt(agent.id)?.id).toBe(context.attempt.id);
+		expect(store.getLatestCheckpoint(agent.id)?.attemptId).toBe(context.attempt.id);
+		expect(store.getLatestAttempt(agent.id, context.attempt.dispatchId)?.id).toBe(context.attempt.id);
+		expect(store.getLatestCheckpoint(agent.id, context.attempt.dispatchId)?.attemptId).toBe(context.attempt.id);
 
 		const bundle = new VerifiedChangeBundle({
 			store,

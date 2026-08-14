@@ -46,6 +46,7 @@ import type {
 } from "@lioooooo123/ever-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import type { AgentSessionRequestKind } from "../agent-session-lifecycle.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { EventBus } from "../event-bus.ts";
@@ -778,6 +779,14 @@ export interface BeforeProviderRequestEvent {
 	payload: unknown;
 }
 
+/** Fired after all mutable provider-payload hooks have completed. This event is observation-only. */
+export interface ProviderRequestPreparedEvent {
+	type: "provider_request_prepared";
+	requestId: string;
+	requestKind: AgentSessionRequestKind;
+	readonly payload: unknown;
+}
+
 /**
  * Fired after request headers are assembled, before the provider HTTP call.
  * Handlers mutate `headers` in place (e.g. to inject tracing/session headers);
@@ -791,6 +800,8 @@ export interface BeforeProviderHeadersEvent {
 /** Fired after a provider response is received and before the response stream is consumed. */
 export interface AfterProviderResponseEvent {
 	type: "after_provider_response";
+	requestId: string;
+	requestKind: AgentSessionRequestKind;
 	status: number;
 	headers: Record<string, string>;
 }
@@ -1137,6 +1148,7 @@ export type ExtensionEvent =
 	| SessionEvent
 	| ContextEvent
 	| BeforeProviderRequestEvent
+	| ProviderRequestPreparedEvent
 	| BeforeProviderHeadersEvent
 	| AfterProviderResponseEvent
 	| BeforeAgentStartEvent
@@ -1322,6 +1334,7 @@ export interface ExtensionAPI {
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
 	): void;
+	on(event: "provider_request_prepared", handler: ExtensionHandler<ProviderRequestPreparedEvent>): void;
 	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): void;
 	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;

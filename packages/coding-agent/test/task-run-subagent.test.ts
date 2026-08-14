@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { DurableAgentCoordinator, type EpisodeRecord, SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import { submitInteractiveTask } from "../src/cli/ever-command.ts";
-import { createNativeCoordinationTools } from "../src/core/native-coordination-tools.ts";
+import { resolveCoordinationActor } from "../src/core/coordination-actor.ts";
+import { DurableCoordination } from "../src/core/durable-coordination.ts";
+import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import { createNativeTaskTool } from "../src/core/native-task-tool.ts";
 import { activateTaskRun, buildTaskRunInitialPrompt } from "../src/core/task-run.ts";
 import { getTaskRunContext } from "../src/core/task-run-context.ts";
@@ -16,11 +18,44 @@ afterEach(() => {
 });
 
 describe("subagent Task run", () => {
+	it("creates and reuses a Session-scoped coordination actor only on explicit spawn", () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-session-coordination-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspace = join(root, "workspace");
+		mkdirSync(workspace);
+		const context = {
+			cwd: workspace,
+			model: { provider: "openai-codex", id: "gpt-5.4" },
+			durableGoal: { status: () => undefined },
+			sessionManager: {
+				getSessionId: () => "ordinary-session",
+				getSessionName: () => "ordinary",
+				getSessionFile: () => join(root, "ordinary.jsonl"),
+			},
+		} as unknown as ExtensionContext;
+
+		expect(() => resolveCoordinationActor(agentDir, context, { create: false })).toThrow("Call agent_spawn first");
+		const created = resolveCoordinationActor(agentDir, context, { create: true });
+		expect(resolveCoordinationActor(agentDir, context, { create: false })).toEqual(created);
+		const store = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
+		try {
+			expect(store.requireAgent(created.agentId)).toMatchObject({
+				taskId: created.taskId,
+				state: "running",
+				activeSessionId: "ordinary-session",
+			});
+		} finally {
+			store.close();
+		}
+	});
+
 	it("places dependency Episodes in the user prompt and labels their fields as untrusted data", () => {
 		const episode: EpisodeRecord = {
 			id: "episode-1",
 			taskId: "task-1",
 			agentId: "agent-source",
+			dispatchId: "dispatch-1",
 			flowId: "flow-1",
 			nodeKey: "source",
 			status: "completed",
@@ -96,7 +131,7 @@ describe("subagent Task run", () => {
 		).rejects.toThrow("Only the main Agent");
 	});
 
-	it("rejects ambiguous sibling name routing for agent_message", async () => {
+	it("rejects duplicate stable Agent names", async () => {
 		const root = mkdtempSync(join(tmpdir(), "ever-subagent-route-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
@@ -112,7 +147,7 @@ describe("subagent Task run", () => {
 		try {
 			const main = store.listAgents(task.id)[0]!;
 			const coordinator = new DurableAgentCoordinator(store);
-			const first = await coordinator.coordinate(
+			await coordinator.coordinate(
 				{ taskId: task.id, agentId: main.id, kind: "main" },
 				{
 					type: "delegate",
@@ -126,41 +161,105 @@ describe("subagent Task run", () => {
 					required: true,
 				},
 			);
-			const second = await coordinator.coordinate(
-				{ taskId: task.id, agentId: main.id, kind: "main" },
-				{
-					type: "delegate",
-					operationKey: "child-b",
-					name: "research",
-					role: "researcher",
-					objective: "collect B",
-					acceptance: [],
-					scope: { paths: ["."], allowedTools: ["read", "agent_message"], workspaceMode: "read_only_shared" },
-					budget: { maxTurns: 5, maxWallTimeMinutes: 10 },
-					required: true,
-				},
-			);
-			if (first.kind !== "delegated" || second.kind !== "delegated") throw new Error("Delegation expected");
-
-			const messageTool = createNativeCoordinationTools(agentDir, task.id, first.agentId).find(
-				(tool) => tool.name === "agent_message",
-			);
-			if (!messageTool) throw new Error("Missing agent_message tool");
 			await expect(
-				messageTool.execute(
-					"ambiguous-name",
+				coordinator.coordinate(
+					{ taskId: task.id, agentId: main.id, kind: "main" },
 					{
-						recipient: "research",
-						messageType: "question",
-						body: "Which sibling should receive this?",
+						type: "delegate",
+						operationKey: "child-b",
+						name: "research",
+						role: "researcher",
+						objective: "collect B",
+						acceptance: [],
+						scope: {
+							paths: ["."],
+							allowedTools: ["read", "agent_message"],
+							workspaceMode: "read_only_shared",
+						},
+						budget: { maxTurns: 5, maxWallTimeMinutes: 10 },
+						required: true,
 					},
-					undefined,
-					undefined,
-					{} as never,
 				),
-			).rejects.toThrow("Recipient is missing or ambiguous");
+			).rejects.toThrow("Agent name already exists in Task");
 		} finally {
 			store.close();
+		}
+	});
+
+	it("persists an Agent message before live steering and retains it until recipient acknowledgement", async () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-agent-live-message-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspace = join(root, "workspace");
+		mkdirSync(workspace);
+		const task = submitInteractiveTask({
+			agentDir,
+			cwd: workspace,
+			goal: "orchestrate",
+			model: { provider: "openai-codex", id: "gpt-5.4" },
+		});
+		const store = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
+		const main = store.listAgents(task.id)[0]!;
+		const delegated = await new DurableAgentCoordinator(store).coordinate(
+			{ taskId: task.id, agentId: main.id, kind: "main" },
+			{
+				type: "delegate",
+				operationKey: "live-child",
+				name: "live-child",
+				role: "researcher",
+				objective: "inspect",
+				acceptance: [],
+				scope: { paths: ["."], allowedTools: ["read", "agent_report"], workspaceMode: "read_only_shared" },
+				budget: { maxTurns: 5, maxWallTimeMinutes: 10 },
+				required: true,
+			},
+		);
+		if (delegated.kind !== "delegated") throw new Error("Delegation expected");
+		store.bindInteractiveAgentSession(delegated.agentId, "session-child");
+		store.close();
+
+		const observations: string[] = [];
+		const result = await new DurableCoordination(
+			agentDir,
+			{ taskId: task.id, agentId: main.id },
+			{
+				runner: {
+					async wake() {},
+					async steer(_taskId, _agentId, messageId) {
+						const inspection = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
+						try {
+							observations.push(
+								inspection.listMessages(task.id).some((message) => message.id === messageId)
+									? "stored"
+									: "missing",
+							);
+						} finally {
+							inspection.close();
+						}
+						return true;
+					},
+				},
+			},
+		).send({
+			dedupeKey: "live-message",
+			recipient: delegated.agentId,
+			messageType: "steering",
+			body: "continue with the API audit",
+			artifactRefs: [],
+			priority: "high",
+		});
+
+		expect(observations).toEqual(["stored"]);
+		expect(result.delivery).toBe("delivered");
+		const verification = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
+		try {
+			const inbox = verification.readAgentInbox(delegated.agentId);
+			expect(inbox).toHaveLength(1);
+			expect(inbox[0]).toMatchObject({ id: result.messageId, state: "delivered" });
+			verification.acknowledgeAgentInbox(delegated.agentId, [result.messageId]);
+			expect(verification.readAgentInbox(delegated.agentId)).toEqual([]);
+		} finally {
+			verification.close();
 		}
 	});
 });
