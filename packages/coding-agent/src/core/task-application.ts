@@ -151,6 +151,11 @@ export class TaskApplication {
 						]
 					: [
 							{
+								id: "objective-audit",
+								kind: "objective_audit",
+								description: "完成请求必须逐项列出目标中的明确要求，并为每项绑定已核验的证据",
+							},
+							{
 								id: "agent-evidence",
 								kind: "agent_evidence",
 								description: "Agent 提交至少一条可核验的完成证据",

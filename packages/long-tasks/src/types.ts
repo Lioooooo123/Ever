@@ -181,6 +181,11 @@ export const AcceptanceCriterionSchema = Type.Union([
 		description: Type.String({ minLength: 1 }),
 		minEvidence: Type.Integer({ minimum: 1 }),
 	}),
+	Type.Object({
+		id: Type.String({ minLength: 1 }),
+		kind: Type.Literal("objective_audit"),
+		description: Type.String({ minLength: 1 }),
+	}),
 ]);
 
 export type TaskNotificationKind = "completed" | "failed" | "waiting_input";
@@ -195,6 +200,11 @@ export interface TaskNotification {
 }
 
 export type AcceptanceCriterion = Static<typeof AcceptanceCriterionSchema>;
+
+export interface CompletionRequirement {
+	requirement: string;
+	evidenceIds: string[];
+}
 
 export const BudgetSchema = Type.Object({
 	maxTurns: Type.Integer({ minimum: 1 }),

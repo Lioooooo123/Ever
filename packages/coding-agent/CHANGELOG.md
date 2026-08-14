@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Restored `/goal <objective>` as a thin Session adapter over the durable Task runtime, without reintroducing a second Goal state machine.
+- Required durable completion requests to audit each explicit objective requirement against host-verified evidence.
+- Deferred automatic Task continuation whenever the Session is already occupied by user work.
+
 ## [0.0.1] - 2026-08-14
 
 ### Added

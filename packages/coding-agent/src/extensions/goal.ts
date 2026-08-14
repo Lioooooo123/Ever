@@ -111,6 +111,13 @@ export default function goalExtension(ever: ExtensionAPI): void {
 			Type.Object({
 				action: Type.Literal("complete"),
 				summary: Type.String(),
+				requirements: Type.Array(
+					Type.Object({
+						requirement: Type.String({ minLength: 1 }),
+						evidenceIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+					}),
+					{ minItems: 1 },
+				),
 				evidence: Type.Array(
 					Type.Object({
 						id: Type.String({ minLength: 1 }),
@@ -236,9 +243,20 @@ export default function goalExtension(ever: ExtensionAPI): void {
 				ctx.ui.notify(`Task is waiting for input: ${reason}`, "warning");
 				return;
 			}
-			throw new Error(
-				"Usage: /goal status|pause|resume|blocked <reason>|cancel|permissions. Create Tasks from Task Home or ever <goal>.",
-			);
+			if (input) {
+				const goal = await ctx.durableGoal.start(input);
+				updatePresentation(ctx);
+				ever.sendMessage(
+					{
+						customType: GOAL_START_MESSAGE_TYPE,
+						content: `Start durable Task ${goal.taskId.slice(0, 8)}: ${goal.goal}`,
+						display: true,
+					},
+					{ triggerTurn: true, deliverAs: "followUp" },
+				);
+				return;
+			}
+			throw new Error("Usage: /goal <objective>|status|pause|resume|blocked <reason>|cancel|permissions");
 		},
 	});
 

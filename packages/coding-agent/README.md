@@ -22,7 +22,7 @@ ever status <task-id>
 /goal status
 ```
 
-The CLI creates the durable Task before starting its Session. Task Store owns the Goal, budget, progress, checkpoints, evidence, permissions, and recovery state. Inside an attached Task, `/goal status`, `/goal pause`, `/goal resume`, `/goal blocked <reason>`, and `/goal cancel` are convenience controls for that same Task; `/goal` does not create a parallel Goal state machine. Completion is accepted only through evidence-backed `task_update` verification.
+The CLI normally creates the durable Task before starting its Session. In an idle Session with no active Task, `/goal <objective>` can create and attach one through the same Task Application. Task Store owns the Goal, budget, progress, checkpoints, evidence, permissions, and recovery state; `/goal` remains a thin adapter and does not own a parallel state machine. Completion is accepted only when `task_update` maps each explicit requirement to host-verified evidence.
 
 The same Task can be resumed by a resident Worker after the client exits and reopened through `ever task`.
 
@@ -169,6 +169,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
+| `/goal <objective>` | Start a durable Task in the current idle Session |
 | `/goal status\|pause\|resume\|blocked\|cancel` | Control the current durable Task |
 | `/trust` | Save project trust decision for future sessions (restart required) |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |

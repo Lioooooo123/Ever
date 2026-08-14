@@ -1,7 +1,12 @@
 import { AcceptanceRunner } from "./acceptance.ts";
 import { EvidenceResolver } from "./evidence-resolver.ts";
 import type { SqliteTaskStore } from "./store.ts";
-import type { EvidenceRef, TaskState } from "./types.ts";
+import type { CompletionRequirement, EvidenceRef, TaskState } from "./types.ts";
+
+export interface CompletionRequirementResult extends CompletionRequirement {
+	verified: boolean;
+	reason?: string;
+}
 
 export interface VerifiedCompletionResult {
 	accepted: boolean;
@@ -13,6 +18,7 @@ export interface VerifiedCompletionResult {
 		outcomeUnknown: string[];
 	};
 	verifiedEvidence: EvidenceRef[];
+	requirementAudit: CompletionRequirementResult[];
 	replayed: boolean;
 }
 
@@ -28,6 +34,7 @@ export class VerifiedCompletion {
 		requestId: string;
 		summary: string;
 		evidence: readonly EvidenceRef[];
+		requirements?: readonly CompletionRequirement[];
 	}): VerifiedCompletionResult {
 		const request = this.store.beginVerifiedCompletion(input);
 		if (request.status === "completed") {
@@ -40,6 +47,7 @@ export class VerifiedCompletion {
 				state: this.store.requireTask(input.taskId).state,
 				acceptance: { passed: [], failed: [], pendingManual: [], outcomeUnknown: ["completion_request"] },
 				verifiedEvidence: [],
+				requirementAudit: [],
 				replayed: true,
 			};
 		}
@@ -48,6 +56,29 @@ export class VerifiedCompletion {
 		const resolved = new EvidenceResolver(this.store).resolve(input.taskId, input.evidence);
 		const verifiedEvidence = resolved.filter((item) => item.verified).map((item) => item.evidence);
 		const task = this.store.requireTask(input.taskId);
+		const verifiedById = new Map(resolved.map((item) => [item.evidence.id, item.verified]));
+		const requirementNames = new Set<string>();
+		const requirementAudit = (input.requirements ?? []).map((item): CompletionRequirementResult => {
+			const requirement = item.requirement.trim();
+			const evidenceIds = item.evidenceIds.map((id) => id.trim()).filter(Boolean);
+			let reason: string | undefined;
+			if (!requirement) reason = "Requirement must not be empty";
+			else if (requirementNames.has(requirement)) reason = "Requirement is duplicated";
+			else if (evidenceIds.length === 0) reason = "Requirement has no evidence";
+			else if (new Set(evidenceIds).size !== evidenceIds.length) reason = "Requirement repeats an evidence ID";
+			else if (evidenceIds.some((id) => verifiedById.get(id) !== true))
+				reason = "Requirement references missing or unverified evidence";
+			requirementNames.add(requirement);
+			return { requirement, evidenceIds, verified: reason === undefined, ...(reason ? { reason } : {}) };
+		});
+		const objectiveAuditPassed = requirementAudit.length > 0 && requirementAudit.every((item) => item.verified);
+		for (const criterion of task.acceptance) {
+			if (criterion.kind !== "objective_audit") continue;
+			this.store.recordAcceptance(input.taskId, criterion.id, objectiveAuditPassed, {
+				requestId: input.requestId,
+				requirements: requirementAudit,
+			});
+		}
 		for (const criterion of task.acceptance) {
 			if (criterion.kind !== "agent_evidence") continue;
 			this.store.recordAcceptance(input.taskId, criterion.id, verifiedEvidence.length >= criterion.minEvidence, {
@@ -72,6 +103,7 @@ export class VerifiedCompletion {
 			state: task.state,
 			acceptance: { passed, failed, pendingManual, outcomeUnknown },
 			verifiedEvidence,
+			requirementAudit,
 			replayed: false,
 		};
 		this.store.finishVerifiedCompletion(input.taskId, input.requestId, { ...result });
@@ -86,7 +118,8 @@ export class VerifiedCompletion {
 			typeof result.replayed !== "boolean" ||
 			!acceptance ||
 			typeof acceptance !== "object" ||
-			!Array.isArray(result.verifiedEvidence)
+			!Array.isArray(result.verifiedEvidence) ||
+			!Array.isArray(result.requirementAudit)
 		)
 			throw new Error("Stored verified completion result is corrupt");
 		return { ...(result as Omit<VerifiedCompletionResult, "replayed">), replayed: true };

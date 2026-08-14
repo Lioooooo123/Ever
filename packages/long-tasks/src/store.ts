@@ -2267,10 +2267,15 @@ export class SqliteTaskStore {
 		requestId: string;
 		summary: string;
 		evidence: readonly unknown[];
+		requirements?: readonly unknown[];
 	}): { status: "new" | "running" | "completed"; result?: Record<string, unknown> } {
 		this.requireTask(input.taskId);
 		if (input.requestId.trim() === "") throw new TypeError("Verified completion request ID is required");
-		const evidenceJson = JSON.stringify(input.evidence);
+		const evidenceJson = JSON.stringify(
+			input.requirements === undefined
+				? input.evidence
+				: { evidence: input.evidence, requirements: input.requirements },
+		);
 		return executeTransaction(this.database, () => {
 			const existing = this.database
 				.prepare(
@@ -2306,6 +2311,7 @@ export class SqliteTaskStore {
 					requestId: input.requestId,
 					summary: input.summary,
 					evidence: input.evidence,
+					...(input.requirements === undefined ? {} : { requirements: input.requirements }),
 					schemaVersion: 2,
 				},
 				now,

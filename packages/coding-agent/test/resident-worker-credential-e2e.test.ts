@@ -101,6 +101,7 @@ it("runs a durable Task with only its provider credential delivered over the Wor
 								arguments: JSON.stringify({
 									action: "complete",
 									summary: "local provider completed the Task",
+									requirements: [{ requirement: "Produce proof.txt", evidenceIds: ["proof"] }],
 									evidence: [{ id: "proof", kind: "file", ref: "proof.txt" }],
 								}),
 							},

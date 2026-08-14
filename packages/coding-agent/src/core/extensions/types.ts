@@ -346,6 +346,10 @@ export type DurableGoalUpdate =
 	| {
 			action: "complete";
 			summary: string;
+			requirements: Array<{
+				requirement: string;
+				evidenceIds: string[];
+			}>;
 			evidence: Array<{
 				id: string;
 				kind: "command" | "file" | "artifact" | "event";

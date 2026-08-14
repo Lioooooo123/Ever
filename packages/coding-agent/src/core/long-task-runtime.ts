@@ -686,6 +686,14 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 				const prompt = continuation.decision.nextPrompt;
 				setTimeout(() => {
 					if (this.stopSignal.aborted) return;
+					if (!this.runtime.session.isIdle) {
+						this.store.appendTaskEvent(context.task.id, "ContinuationPromptDeferred", {
+							decisionId: continuation.decision.id,
+							reason: "session_not_idle",
+							schemaVersion: 1,
+						});
+						return;
+					}
 					void this.runtime.session.prompt(prompt).catch((error) => {
 						this.store.appendTaskEvent(context.task.id, "ContinuationPromptFailed", {
 							decisionId: continuation.decision.id,

@@ -39,6 +39,7 @@ export function applyNativeTaskUpdate(
 				taskId,
 				requestId: toolCallId,
 				summary: params.summary,
+				requirements: params.requirements,
 				evidence: params.evidence,
 			});
 		}
@@ -72,6 +73,13 @@ export function createNativeTaskTool(agentDir: string, taskId: string): ToolDefi
 			Type.Object({
 				action: Type.Literal("complete"),
 				summary: Type.String(),
+				requirements: Type.Array(
+					Type.Object({
+						requirement: Type.String({ minLength: 1 }),
+						evidenceIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+					}),
+					{ minItems: 1 },
+				),
 				evidence: Type.Array(EvidenceRefSchema),
 			}),
 			Type.Object({ action: Type.Literal("fail"), code: Type.String(), reason: Type.String() }),

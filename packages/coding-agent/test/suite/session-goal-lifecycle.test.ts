@@ -69,15 +69,25 @@ describe("Session durable Goal lifecycle", () => {
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
-	it("rejects creating a second Task through /goal", async () => {
+	it("creates a durable Task through /goal without adding a parallel Goal state", async () => {
 		const harness = await createHarness({ extensionFactories: [{ name: "goal", factory: goalExtension }] });
 		harnesses.push(harness);
 		const host = bindGoalHost(harness);
+		harness.setResponses([fauxAssistantMessage("started durable work")]);
+		const settled = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type !== "agent_settled") return;
+				unsubscribe();
+				resolve();
+			});
+		});
 
 		await harness.session.prompt("/goal finish the migration");
+		await settled;
 
-		expect(host.start).not.toHaveBeenCalled();
-		expect(harness.eventsOfType("agent_settled")).toHaveLength(0);
+		expect(host.start).toHaveBeenCalledWith("finish the migration");
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
 	});
 
 	it("leaves retry recovery to AgentSession without Goal-owned continuation", async () => {

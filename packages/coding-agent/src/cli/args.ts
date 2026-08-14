@@ -253,6 +253,7 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
 ${chalk.bold("Attached Task controls:")}
+  /goal <objective>               Start a Task when this Session has no active Task
   /goal status                    Inspect Task state, usage, progress, and evidence
   /goal pause|resume|cancel       Control the current Task
   /goal blocked|permissions       Record a blocker or manage durable permission grants

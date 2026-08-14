@@ -55,6 +55,12 @@ export class TaskContextBuilder {
   <evidence_index>${escapeXml(JSON.stringify(evidence))}</evidence_index>
   <agent_identity>${escapeXml(JSON.stringify({ id: input.agent.id, kind: input.agent.kind, role: input.agent.role }))}</agent_identity>
   <tool_policy>${escapeXml(JSON.stringify(input.agent.toolPolicy))}</tool_policy>
+  <completion_protocol>
+    Treat completion as unproven until every explicit requirement in the Goal and Acceptance criteria has current authoritative evidence.
+    Before requesting completion, inspect the current workspace and external state, then submit one completion requirement entry per explicit requirement.
+    Every completion requirement must reference one or more evidence IDs from the same task_update call. Missing, indirect, stale, or unverified evidence does not prove completion.
+    Do not narrow the Goal to match completed work. If any requirement remains incomplete or unverified, checkpoint progress and continue instead of requesting completion.
+  </completion_protocol>
 </long_task>`;
 	}
 }

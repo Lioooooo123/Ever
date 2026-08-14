@@ -62,7 +62,7 @@ describe("ever async submission", () => {
 		expect(existsSync(join(agentDir, "long-tasks.sqlite"))).toBe(false);
 	});
 
-	it("creates an authorized queued task with agent evidence acceptance", async () => {
+	it("creates an authorized queued task with objective and evidence acceptance", async () => {
 		const root = mkdtempSync(join(tmpdir(), "ever-submit-"));
 		temporaryPaths.push(root);
 		const agentDir = join(root, "agent");
@@ -78,7 +78,11 @@ describe("ever async submission", () => {
 		expect(task.state).toBe("queued");
 		expect(task.constraints.unattendedApproved).toBe(true);
 		expect(task.workspaceRoot).toBe(realpathSync(workspace));
-		expect(task.acceptance.map((criterion) => criterion.kind)).toEqual(["agent_evidence", "command"]);
+		expect(task.acceptance.map((criterion) => criterion.kind)).toEqual([
+			"objective_audit",
+			"agent_evidence",
+			"command",
+		]);
 
 		const store = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
 		expect(store.listAgents(task.id)[0]?.state).toBe("queued");
