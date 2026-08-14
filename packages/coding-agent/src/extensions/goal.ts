@@ -5,20 +5,9 @@ import type { DurableGoalSnapshot, ExtensionAPI, ExtensionContext } from "../cor
 const LEGACY_GOAL_ENTRY_TYPE = "session-goal";
 const GOAL_START_MESSAGE_TYPE = "durable-goal-start";
 const TASK_UPDATE_TOOL = "task_update";
-const MAX_GOAL_BYTES = 8192;
 
 function normalizeGoal(value: string): string {
 	return value.replace(/\r\n?/gu, "\n").trim();
-}
-
-function validateGoal(value: string): string {
-	const objective = normalizeGoal(value);
-	if (!objective) throw new Error("Goal cannot be empty.");
-	if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(objective))
-		throw new Error("Goal cannot contain terminal control characters.");
-	if (new TextEncoder().encode(objective).byteLength > MAX_GOAL_BYTES)
-		throw new Error(`Goal cannot exceed ${MAX_GOAL_BYTES} UTF-8 bytes.`);
-	return objective;
 }
 
 function statusDetails(goal: DurableGoalSnapshot): string {
@@ -142,7 +131,7 @@ export default function goalExtension(ever: ExtensionAPI): void {
 	});
 
 	ever.registerCommand("goal", {
-		description: "Create or manage the durable Task attached to this Session",
+		description: "Manage the durable Task attached to this Session",
 		getArgumentCompletions: (prefix) =>
 			["status", "pause", "resume", "cancel", "blocked", "permissions"]
 				.filter((value) => value.startsWith(prefix))
@@ -227,20 +216,8 @@ export default function goalExtension(ever: ExtensionAPI): void {
 				ctx.ui.notify(`Task is waiting for input: ${reason}`, "warning");
 				return;
 			}
-			let objective = input;
-			if (!objective) {
-				if (!ctx.hasUI) {
-					ctx.ui.notify("Use /goal <objective> to create a durable Task.", "info");
-					return;
-				}
-				objective = normalizeGoal((await ctx.ui.editor("Create a durable Goal Task:", "")) ?? "");
-				if (!objective) return;
-			}
-			const goal = await ctx.durableGoal.start(validateGoal(objective));
-			updatePresentation(ctx);
-			ever.sendMessage(
-				{ customType: GOAL_START_MESSAGE_TYPE, content: goal.goal, display: true },
-				{ triggerTurn: true, deliverAs: "followUp" },
+			throw new Error(
+				"Usage: /goal status|pause|resume|blocked <reason>|cancel|permissions. Create Tasks from Task Home or ever <goal>.",
 			);
 		},
 	});
@@ -253,7 +230,7 @@ export default function goalExtension(ever: ExtensionAPI): void {
 			.find((entry) => entry.type === "custom" && entry.customType === LEGACY_GOAL_ENTRY_TYPE);
 		if (legacy && ctx.hasUI)
 			ctx.ui.notify(
-				"This Session contains a legacy Goal record. It is read-only; run /goal <objective> to create a durable Task.",
+				"This Session contains a legacy Goal record. It is read-only; create a Task from Task Home or ever <goal>.",
 				"warning",
 			);
 	});

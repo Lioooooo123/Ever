@@ -42,20 +42,10 @@ export function activateTaskRun(input: {
 		if (checkpoint && !checkpoint.sessionCheckpoint.sessionPath) {
 			throw new Error(`Task ${task.id} checkpoint has no resumable Session path`);
 		}
-		const acceptance = task.acceptance
-			.map((criterion) =>
-				criterion.kind === "manual" || criterion.kind === "agent_evidence"
-					? `${criterion.id}: ${criterion.description}`
-					: `${criterion.id}: ${JSON.stringify(criterion)}`,
-			)
-			.join("\n");
-		const durableContext = `<long_task>\n<goal>${task.goal}</goal>\n<acceptance>${acceptance}</acceptance>\n<constraints>${JSON.stringify(task.constraints)}</constraints>\n<budget>${JSON.stringify(task.budget)}</budget>\n</long_task>`;
 		setTaskRunContext({ taskId: task.id, agentId: mainAgent.id, acceptRuntimeDrift });
 		return [
 			...(checkpoint?.sessionCheckpoint.sessionPath ? ["--session", checkpoint.sessionCheckpoint.sessionPath] : []),
 			...taskModelArgs(task.constraints.model),
-			"--append-system-prompt",
-			durableContext,
 			...(input.json ? ["--mode", "json"] : input.print ? ["--print"] : []),
 			...(checkpoint ? [] : [task.goal]),
 		];

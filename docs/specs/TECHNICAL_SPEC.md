@@ -941,12 +941,11 @@ type TaskUpdateInput =
   <open_blockers>...</open_blockers>
   <evidence_index>...</evidence_index>
   <agent_identity>...</agent_identity>
-  <delegation_scope>...</delegation_scope>
-  <agent_roster>...</agent_roster>
+  <tool_policy>...</tool_policy>
 </long_task>
 ```
 
-不可变的 goal、acceptance 和 constraints 每次完整注入。progress 取当前 Agent 最近 checkpoint。主 Agent 获得 subagent roster 和最近 report，subagent 只获得自己的 Delegation、主 Agent 信息和获授权的共享证据。事件日志不直接注入，只在模型明确读取历史时按范围查询。
+不可变的 goal、acceptance 和 constraints 每次完整注入。progress 取当前 Main Agent 最近 checkpoint。V0.1 只注入当前 Agent identity 与 tool policy，不注入未开放的 roster 或 delegation 语义。事件日志不直接注入，只在模型明确读取历史时按范围查询。
 
 任务上下文默认上限为 8000 estimated tokens。超出时按以下顺序缩减：
 

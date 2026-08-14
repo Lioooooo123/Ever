@@ -108,7 +108,7 @@ function setup(): CliDirs {
 }
 
 describe("startup session name", () => {
-	it("opens a native session and appends its display name before model validation", async () => {
+	it("rejects public Session selection without appending display metadata", async () => {
 		const dirs = setup();
 		const result = await runCli(
 			["--session", dirs.sessionFile, "--name", "  CLI Named Session  ", "--model", "missing-model", "-p", "hi"],
@@ -117,11 +117,11 @@ describe("startup session name", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.signal).toBeNull();
-		expect(result.stderr).not.toContain("Ever CLI 只运行持久 Task");
-		expect(readSessionInfoNames(dirs.sessionFile)).toEqual(["CLI Named Session"]);
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(readSessionInfoNames(dirs.sessionFile)).toEqual([]);
 	});
 
-	it("rejects empty legacy --name values without appending session metadata", async () => {
+	it("rejects public Session selection before parsing legacy --name", async () => {
 		const dirs = setup();
 		const result = await runCli(
 			["--session", dirs.sessionFile, "--name", "   ", "--model", "missing-model", "-p", "hi"],
@@ -130,7 +130,7 @@ describe("startup session name", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.signal).toBeNull();
-		expect(result.stderr).toContain("--name requires a non-empty value");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 		expect(readSessionInfoNames(dirs.sessionFile)).toEqual([]);
 	});
 });

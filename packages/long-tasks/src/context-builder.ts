@@ -5,7 +5,6 @@ export interface TaskContextInput {
 	agent: AgentRecord;
 	progress?: Progress;
 	evidence: EvidenceRef[];
-	agents: AgentRecord[];
 	tokenBudget?: number;
 }
 
@@ -45,10 +44,6 @@ export class TaskContextBuilder {
 	}
 
 	private render(input: TaskContextInput, progress: Progress | undefined, evidence: EvidenceRef[]): string {
-		const roster =
-			input.agent.kind === "main"
-				? input.agents.map(({ id, kind, role, state }) => ({ id, kind, role, state }))
-				: [];
 		return `<long_task>
   <goal>${escapeXml(input.task.goal)}</goal>
   <acceptance>${escapeXml(JSON.stringify(input.task.acceptance))}</acceptance>
@@ -59,8 +54,7 @@ export class TaskContextBuilder {
   <open_blockers>${escapeXml(JSON.stringify(progress?.blockers ?? []))}</open_blockers>
   <evidence_index>${escapeXml(JSON.stringify(evidence))}</evidence_index>
   <agent_identity>${escapeXml(JSON.stringify({ id: input.agent.id, kind: input.agent.kind, role: input.agent.role }))}</agent_identity>
-  <delegation_scope>${escapeXml(JSON.stringify(input.agent.toolPolicy))}</delegation_scope>
-  <agent_roster>${escapeXml(JSON.stringify(roster))}</agent_roster>
+  <tool_policy>${escapeXml(JSON.stringify(input.agent.toolPolicy))}</tool_policy>
 </long_task>`;
 	}
 }

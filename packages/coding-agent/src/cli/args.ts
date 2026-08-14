@@ -252,10 +252,9 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} task <command>            Create and manage durable long-running tasks
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
-${chalk.bold("Interactive Goal:")}
-  /goal <objective>               Start opt-in long-running work in the current Session
-  /goal status                    Inspect Goal state, usage, progress, and evidence
-  /goal pause|resume|cancel       Control the active Goal without replacing the Session
+${chalk.bold("Attached Task controls:")}
+  /goal status                    Inspect Task state, usage, progress, and evidence
+  /goal pause|resume|cancel       Control the current Task
   /goal blocked|permissions       Record a blocker or manage durable permission grants
 
 ${chalk.bold("Options:")}

@@ -13,11 +13,13 @@
 
 ### Breaking Changes
 
+- Restored Task-first CLI semantics: every public execution now creates, resumes, or controls a durable Task, while direct Session selection remains an internal bridge.
 - Renamed the npm CLI distribution from `@lioooooo123/ever` to `@lioooooo123/ever-cli` and started its independent version line at `0.0.1`; reinstall the new package while continuing to invoke the `ever` command.
 - Removed all pre-Ever configuration directories, environment variables, package manifests, module aliases, and resource-discovery fallbacks. Existing state must be placed under `.ever` or `~/.ever/agent` and configured with `EVER_*` variables.
 
 ### Changed
 
+- Centralized durable `<long_task>` prompt injection in the native `before_turn` lifecycle and removed undeployed multi-Agent roster and delegation fields from V0.1 model context.
 - Changed the directly developed coding-agent distribution to publish independently as `@lioooooo123/ever-cli` with `ever-*` release artifacts, with the in-repository Ever agent, AI, and TUI source modules as its execution kernel.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 - Changed `/goal` to use the same Task Application and `NativeLongTaskAgent` execution chain as resident Workers instead of maintaining an extension-owned Goal state machine.

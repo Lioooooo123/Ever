@@ -122,7 +122,7 @@ describe("--session-id metadata commands", () => {
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-models")).toBe(false);
 	});
 
-	it("reports a missing model after resolving a new --session-id without persisting it", async () => {
+	it("rejects creating a public Session ID without persisting it", async () => {
 		const result = await runCli((dirs) => [
 			"--session-dir",
 			dirs.sessionDir,
@@ -135,12 +135,11 @@ describe("--session-id metadata commands", () => {
 		]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("creating a new session with that id");
-		expect(result.stderr).toContain('Model "missing-model" not found');
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 		expect(hasSessionWithId(result.agentDir, "missing-session-id")).toBe(false);
 	});
 
-	it("opens an existing --session-id without modifying it when model resolution fails", async () => {
+	it("rejects opening an existing public Session ID", async () => {
 		const result = await runCli(
 			(dirs) => [
 				"--session-dir",
@@ -159,10 +158,10 @@ describe("--session-id metadata commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain('Model "missing-model" not found');
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 	});
 
-	it("rejects a fork whose requested target Session ID already exists", async () => {
+	it("rejects public Session forks before resolving their target", async () => {
 		const result = await runCli(
 			(dirs) => ["--session-dir", dirs.sessionDir, "--fork", "source-id", "--session-id", "existing-id", "-p", "hi"],
 			(dirs) => {
@@ -173,17 +172,17 @@ describe("--session-id metadata commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Session already exists with id 'existing-id'");
+		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 	});
 });
 
 describe("--session-id validation", () => {
-	it("rejects invalid ids without entering SessionManager", async () => {
+	it("rejects Session IDs without entering SessionManager", async () => {
 		for (const id of ["-bad", "bad id"]) {
 			const result = await runCli(["--session-id", id, "-p", "hi"]);
 
 			expect(result.code).toBe(1);
-			expect(result.stderr).toContain("Session id must be non-empty");
+			expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
 			expect(result.stderr).not.toContain("SessionManager.create");
 		}
 	});

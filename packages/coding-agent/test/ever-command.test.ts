@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
-import { handleEverCommand, submitAsyncTask, submitInteractiveTask } from "../src/cli/ever-command.ts";
+import { submitAsyncTask, submitInteractiveTask, taskText } from "../src/cli/ever-command.ts";
 import { handleTaskCommand } from "../src/cli/task-command.ts";
 import { TaskApplication } from "../src/core/task-application.ts";
 
@@ -14,10 +14,10 @@ afterEach(() => {
 });
 
 describe("ever async submission", () => {
-	it("routes ordinary prompts through the native Session runtime", async () => {
-		const args = ["inspect", "this", "repository"];
-		expect(await handleEverCommand(args, "/tmp/agent", "/tmp/workspace")).toBe(false);
-		expect(args).toEqual(["inspect", "this", "repository"]);
+	it("treats ordinary CLI text as a Task goal", () => {
+		expect(taskText(["inspect", "this", "repository", "--max-turns", "12", "--offline", "--print"])).toBe(
+			"inspect this repository",
+		);
 	});
 
 	it("creates a foreground Task without unattended sandbox approval", () => {
