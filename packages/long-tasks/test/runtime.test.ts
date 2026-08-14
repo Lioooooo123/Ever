@@ -50,7 +50,11 @@ describe("task controller", () => {
 		const { store, task, main } = createTask();
 		expect(task.state).toBe("draft");
 		expect(main.kind).toBe("main");
-		expect(store.listEvents(task.id).map((event) => event.type)).toEqual(["TaskCreated", "AgentCreated"]);
+		expect(store.listEvents(task.id).map((event) => event.type)).toEqual([
+			"AuthorizationCompileRequested",
+			"TaskCreated",
+			"AgentCreated",
+		]);
 		store.close();
 	});
 

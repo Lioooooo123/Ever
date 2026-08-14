@@ -1,10 +1,12 @@
 # Ever Small Model Judge 与显式授权技术规范
 
-- 状态：Proposed
+- 状态：Implemented；真实 Provider 发布资格仍需按第 22 节单独验证
 - 版本：0.1
 - 日期：2026-08-14
 - 关联规范：[UNIFIED_GOAL_SANDBOX_PERMISSION_SPEC.md](./UNIFIED_GOAL_SANDBOX_PERMISSION_SPEC.md)、[LONG_RUNNING_CONTROL_PLANE_SPEC.md](./LONG_RUNNING_CONTROL_PLANE_SPEC.md)、[NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md](./NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md)
 - 目标读者：Ever 维护者、实现工程师、安全评审者、Eval 维护者
+
+实现边界：Phase A、Phase B 的运行时代码与持久化，以及 Phase C 的 fail-closed sandbox seam 和 faux-provider 回归已落地；第 22 节的真实 Provider 延迟、成本 P95 和端到端 smoke 属于发布资格验证，未通过前不得宣称达到生产发布门槛。
 
 ## 1. 决策摘要
 

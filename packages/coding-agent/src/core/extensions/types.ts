@@ -317,6 +317,12 @@ export interface DurableGoalSnapshot {
 	stateReason?: string;
 	totalTurns: number;
 	totalCostUsd: number;
+	mainAgentCostUsd?: number;
+	compilerCostUsd?: number;
+	judgeCostUsd?: number;
+	reviewerReservedUsd?: number;
+	compilerRequestCount?: number;
+	reviewerRequestCount?: number;
 	maxTurns: number;
 	maxWallTimeMinutes: number;
 }
@@ -360,6 +366,17 @@ export interface DurablePermissionGrantSummary {
 	createdAt: string;
 }
 
+export interface DurableTaskAuthorizationSummary {
+	id: string;
+	action: string;
+	state: "active" | "consumed" | "revoked";
+	targets: Record<string, unknown>;
+	limits: Record<string, unknown>;
+	usedCount: number;
+	maxUses: number;
+	createdAt: string;
+}
+
 export interface DurableGoalHost {
 	status(): DurableGoalSnapshot | undefined;
 	start(goal: string): Promise<DurableGoalSnapshot>;
@@ -369,6 +386,8 @@ export interface DurableGoalHost {
 	update(toolCallId: string, update: DurableGoalUpdate): Promise<unknown>;
 	listPermissionGrants(): DurablePermissionGrantSummary[];
 	revokePermissionGrant(grantId: string): DurablePermissionGrantSummary;
+	listTaskAuthorizations(): DurableTaskAuthorizationSummary[];
+	revokeTaskAuthorization(authorizationId: string): DurableTaskAuthorizationSummary;
 }
 
 /**

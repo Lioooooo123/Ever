@@ -27,11 +27,13 @@ describe("ModelRiskReviewer", () => {
 					reasonCode: "bounded_process",
 					explanation: "The command is contained.",
 					confidence: 0.97,
+					authorizationMatch: "none",
+					targetMatch: "exact",
 				}),
 			),
 		);
 		const result = await new ModelRiskReviewer(complete).review(intent(), {
-			goal: "inspect the repository",
+			taskSummary: "inspect the operation safely",
 			workspaceRoot: process.cwd(),
 		});
 		expect(result).toMatchObject({ verdict: "allow_once", risk: "low", confidence: 0.97 });
@@ -43,8 +45,21 @@ describe("ModelRiskReviewer", () => {
 
 	it("rejects invalid model output", async () => {
 		const reviewer = new ModelRiskReviewer(async () => fauxAssistantMessage("allow"));
-		await expect(reviewer.review(intent(), { goal: "inspect", workspaceRoot: process.cwd() })).rejects.toThrow(
-			"invalid JSON",
+		await expect(
+			reviewer.review(intent(), { taskSummary: "inspect safely", workspaceRoot: process.cwd() }),
+		).rejects.toThrow("invalid JSON");
+	});
+
+	it("aborts a reviewer request at its hard timeout", async () => {
+		const reviewer = new ModelRiskReviewer(
+			async (_context, signal) =>
+				await new Promise((_, reject) =>
+					signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
+				),
+			5,
 		);
+		await expect(
+			reviewer.review(intent(), { taskSummary: "inspect safely", workspaceRoot: process.cwd() }),
+		).rejects.toThrow();
 	});
 });

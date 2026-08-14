@@ -53,6 +53,7 @@ export type {
 	DurableGoalSnapshot,
 	DurableGoalUpdate,
 	DurablePermissionGrantSummary,
+	DurableTaskAuthorizationSummary,
 	EditorFactory,
 	EditToolCallEvent,
 	EditToolResultEvent,

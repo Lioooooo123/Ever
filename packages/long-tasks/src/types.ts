@@ -233,6 +233,18 @@ export const RuntimeSnapshotSchema = Type.Object({
 		id: Type.String(),
 		thinkingLevel: Type.Optional(Type.String()),
 	}),
+	reviewer: Type.Optional(
+		Type.Object({
+			provider: Type.String(),
+			id: Type.String(),
+			authorizationCompilerPromptSha256: Type.String(),
+			riskReviewerPromptSha256: Type.String(),
+			minimumConfidence: Type.Number({ minimum: 0, maximum: 1 }),
+			pricingSha256: Type.String(),
+			maxInputTokens: Type.Integer({ minimum: 1 }),
+			maxOutputTokens: Type.Integer({ minimum: 1 }),
+		}),
+	),
 	systemPromptSha256: Type.String(),
 	contextFiles: Type.Array(Type.Object({ path: Type.String(), sha256: Type.String() })),
 	resources: Type.Array(
@@ -383,6 +395,80 @@ export interface CreatePermissionGrantInput {
 	workspaceFingerprint: string;
 	sandboxProfileSha256: string;
 	expiresAt?: string;
+}
+
+export const TASK_AUTHORIZATION_ACTIONS = [
+	"git_push",
+	"pr_create",
+	"pr_merge",
+	"package_publish",
+	"release_publish",
+	"deploy",
+	"external_message",
+	"credential_configure",
+	"network_expand",
+	"delete",
+] as const;
+
+export type TaskAuthorizationAction = (typeof TASK_AUTHORIZATION_ACTIONS)[number];
+export type TaskAuthorizationState = "active" | "consumed" | "revoked";
+export type TaskAuthorizationSourceKind = "goal" | "steering";
+export type TaskAuthorizationSourceState = "pending" | "compiled" | "failed";
+
+export interface TaskAuthorizationEvidenceSpan {
+	startByte: number;
+	endByte: number;
+}
+
+export interface TaskAuthorizationCandidate {
+	action: TaskAuthorizationAction;
+	targets: Record<string, unknown>;
+	limits: Record<string, unknown>;
+	lifetime: "task";
+	maxUses: number;
+	confidence: number;
+	evidenceSpans: TaskAuthorizationEvidenceSpan[];
+}
+
+export interface TaskAuthorizationSourceRecord {
+	id: string;
+	taskId: string;
+	kind: TaskAuthorizationSourceKind;
+	textSha256: string;
+	text: string;
+	state: TaskAuthorizationSourceState;
+	createdAt: string;
+	compiledAt?: string;
+	errorCode?: string;
+}
+
+export interface TaskAuthorizationRecord extends TaskAuthorizationCandidate {
+	id: string;
+	taskId: string;
+	sourceMessageId: string;
+	sourceMessageSha256: string;
+	source: "user";
+	usedCount: number;
+	compilerProvider: string;
+	compilerModel: string;
+	compilerPromptSha256: string;
+	gitHead?: string;
+	changeSetSha256?: string;
+	revision: number;
+	state: TaskAuthorizationState;
+	createdAt: string;
+	consumedAt?: string;
+	revokedAt?: string;
+}
+
+export interface CompleteTaskAuthorizationSourceInput {
+	sourceId: string;
+	compilerProvider: string;
+	compilerModel: string;
+	compilerPromptSha256: string;
+	gitHead?: string;
+	changeSetSha256?: string;
+	candidates: TaskAuthorizationCandidate[];
 }
 
 export interface CreateTaskInput {

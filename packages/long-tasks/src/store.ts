@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
@@ -16,6 +16,7 @@ import {
 	type Budget,
 	type CheckpointRecord,
 	type ClaimedAttempt,
+	type CompleteTaskAuthorizationSourceInput,
 	type ContinuationDecision,
 	type CoordinationResult,
 	type CreatePermissionGrantInput,
@@ -31,6 +32,10 @@ import {
 	type ScheduleEventTrigger,
 	type ScheduleRecord,
 	type StaleExecution,
+	type TaskAuthorizationCandidate,
+	type TaskAuthorizationEvidenceSpan,
+	type TaskAuthorizationRecord,
+	type TaskAuthorizationSourceRecord,
 	type TaskCommandRecord,
 	type TaskEvent,
 	type TaskNotification,
@@ -61,7 +66,7 @@ try {
 	process.emitWarning = originalEmitWarning;
 }
 
-const CURRENT_SCHEMA_VERSION = 7;
+const CURRENT_SCHEMA_VERSION = 8;
 
 const TASK_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
 	draft: ["queued", "cancelled"],
@@ -257,6 +262,43 @@ interface PermissionGrantRow {
 	revoked_at: string | null;
 }
 
+interface TaskAuthorizationSourceRow {
+	id: string;
+	task_id: string;
+	source_kind: TaskAuthorizationSourceRecord["kind"];
+	source_message_sha256: string;
+	source_text: string;
+	state: TaskAuthorizationSourceRecord["state"];
+	created_at: string;
+	compiled_at: string | null;
+	error_code: string | null;
+}
+
+interface TaskAuthorizationRow {
+	id: string;
+	task_id: string;
+	source_message_id: string;
+	source_message_sha256: string;
+	action: TaskAuthorizationRecord["action"];
+	targets_json: string;
+	limits_json: string;
+	lifetime: TaskAuthorizationRecord["lifetime"];
+	max_uses: number;
+	used_count: number;
+	confidence: number;
+	compiler_provider: string;
+	compiler_model: string;
+	compiler_prompt_sha256: string;
+	evidence_spans_json: string;
+	git_head: string | null;
+	change_set_sha256: string | null;
+	revision: number;
+	state: TaskAuthorizationRecord["state"];
+	created_at: string;
+	consumed_at: string | null;
+	revoked_at: string | null;
+}
+
 function parseObject(text: string, label: string): Record<string, unknown> {
 	let value: unknown;
 	try {
@@ -431,6 +473,74 @@ function permissionGrantFromRow(row: PermissionGrantRow): PermissionGrantRecord 
 	};
 }
 
+function taskAuthorizationSourceFromRow(row: TaskAuthorizationSourceRow): TaskAuthorizationSourceRecord {
+	return {
+		id: row.id,
+		taskId: row.task_id,
+		kind: row.source_kind,
+		textSha256: row.source_message_sha256,
+		text: row.source_text,
+		state: row.state,
+		createdAt: row.created_at,
+		...(row.compiled_at === null ? {} : { compiledAt: row.compiled_at }),
+		...(row.error_code === null ? {} : { errorCode: row.error_code }),
+	};
+}
+
+function taskAuthorizationFromRow(row: TaskAuthorizationRow): TaskAuthorizationRecord {
+	return {
+		id: row.id,
+		taskId: row.task_id,
+		sourceMessageId: row.source_message_id,
+		sourceMessageSha256: row.source_message_sha256,
+		source: "user",
+		action: row.action,
+		targets: parseObject(row.targets_json, "Task Authorization targets"),
+		limits: parseObject(row.limits_json, "Task Authorization limits"),
+		lifetime: row.lifetime,
+		maxUses: row.max_uses,
+		usedCount: row.used_count,
+		confidence: row.confidence,
+		compilerProvider: row.compiler_provider,
+		compilerModel: row.compiler_model,
+		compilerPromptSha256: row.compiler_prompt_sha256,
+		...(row.git_head === null ? {} : { gitHead: row.git_head }),
+		...(row.change_set_sha256 === null ? {} : { changeSetSha256: row.change_set_sha256 }),
+		evidenceSpans: parseArray<TaskAuthorizationEvidenceSpan>(
+			row.evidence_spans_json,
+			"Task Authorization evidence spans",
+		),
+		revision: row.revision,
+		state: row.state,
+		createdAt: row.created_at,
+		...(row.consumed_at === null ? {} : { consumedAt: row.consumed_at }),
+		...(row.revoked_at === null ? {} : { revokedAt: row.revoked_at }),
+	};
+}
+
+function validateAuthorizationCandidate(candidate: TaskAuthorizationCandidate, sourceText: string): void {
+	const sourceBytes = Buffer.from(sourceText, "utf8");
+	if (!Number.isSafeInteger(candidate.maxUses) || candidate.maxUses < 1 || candidate.maxUses > 10)
+		throw new TypeError("Task Authorization maxUses must be 1..10");
+	if (!Number.isFinite(candidate.confidence) || candidate.confidence < 0.95 || candidate.confidence > 1)
+		throw new TypeError("Task Authorization confidence is below the activation threshold");
+	if (candidate.lifetime !== "task") throw new TypeError("Unsupported Task Authorization lifetime");
+	if (candidate.evidenceSpans.length === 0) throw new TypeError("Task Authorization requires an evidence span");
+	for (const span of candidate.evidenceSpans) {
+		if (
+			!Number.isSafeInteger(span.startByte) ||
+			!Number.isSafeInteger(span.endByte) ||
+			span.startByte < 0 ||
+			span.endByte <= span.startByte ||
+			span.endByte > sourceBytes.length
+		)
+			throw new TypeError("Invalid Task Authorization evidence span");
+		const evidenceBytes = sourceBytes.subarray(span.startByte, span.endByte);
+		if (!Buffer.from(evidenceBytes.toString("utf8"), "utf8").equals(evidenceBytes))
+			throw new TypeError("Task Authorization evidence span splits a UTF-8 code point");
+	}
+}
+
 function validatePermissionScope(scope: PermissionScope): void {
 	const arrays = [
 		scope.toolNames,
@@ -475,6 +585,7 @@ function migrationSql(version: number): string {
 		5: "verified_completion",
 		6: "task_commands",
 		7: "permissions",
+		8: "task_authorizations",
 	} as const;
 	const filename = `00${version}_${names[version as keyof typeof names]}.sql`;
 	const migrationPath = import.meta.url.includes("$bunfs")
@@ -538,6 +649,289 @@ export class SqliteTaskStore {
 
 	close(): void {
 		this.database.close();
+	}
+
+	registerTaskAuthorizationSource(input: {
+		taskId: string;
+		sourceMessageId: string;
+		kind: TaskAuthorizationSourceRecord["kind"];
+		text: string;
+	}): TaskAuthorizationSourceRecord {
+		return executeTransaction(this.database, () =>
+			this.registerTaskAuthorizationSourceInternal(
+				input.taskId,
+				input.sourceMessageId,
+				input.kind,
+				input.text,
+				this.now().toISOString(),
+			),
+		);
+	}
+
+	listPendingTaskAuthorizationSources(taskId: string, limit = 32): TaskAuthorizationSourceRecord[] {
+		this.requireTask(taskId);
+		if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
+			throw new RangeError("Task Authorization source limit must be 1..1000");
+		return (
+			this.database
+				.prepare(
+					"SELECT * FROM task_authorization_sources WHERE task_id = ? AND state = 'pending' ORDER BY created_at, id LIMIT ?",
+				)
+				.all(taskId, limit) as unknown as TaskAuthorizationSourceRow[]
+		).map(taskAuthorizationSourceFromRow);
+	}
+
+	completeTaskAuthorizationSource(input: CompleteTaskAuthorizationSourceInput): TaskAuthorizationRecord[] {
+		if (
+			input.compilerProvider.trim() === "" ||
+			input.compilerModel.trim() === "" ||
+			!/^[a-f0-9]{64}$/.test(input.compilerPromptSha256)
+		)
+			throw new TypeError("Invalid Authorization Compiler identity");
+		if (input.candidates.length > 16) throw new RangeError("Authorization Compiler returned too many candidates");
+		return executeTransaction(this.database, () => {
+			const source = this.requireTaskAuthorizationSource(input.sourceId);
+			if (source.state !== "pending") throw new Error(`Task Authorization source is ${source.state}`);
+			for (const candidate of input.candidates) validateAuthorizationCandidate(candidate, source.text);
+			const now = this.now().toISOString();
+			this.database
+				.prepare("UPDATE task_authorization_state SET revision = revision + 1 WHERE task_id = ?")
+				.run(source.taskId);
+			const state = this.database
+				.prepare("SELECT revision FROM task_authorization_state WHERE task_id = ?")
+				.get(source.taskId) as { revision: number } | undefined;
+			if (!state) throw new Error(`Task Authorization state not found: ${source.taskId}`);
+			const authorizations: TaskAuthorizationRecord[] = [];
+			for (const candidate of input.candidates) {
+				const id = randomUUID();
+				this.database
+					.prepare(
+						`INSERT INTO task_authorizations
+						 (id, task_id, source_message_id, source_message_sha256, action, targets_json, limits_json,
+						  lifetime, max_uses, confidence, compiler_provider, compiler_model, compiler_prompt_sha256,
+						  evidence_spans_json, git_head, change_set_sha256, revision, state, created_at)
+						 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+					)
+					.run(
+						id,
+						source.taskId,
+						source.id,
+						source.textSha256,
+						candidate.action,
+						JSON.stringify(candidate.targets),
+						JSON.stringify(candidate.limits),
+						candidate.lifetime,
+						candidate.maxUses,
+						candidate.confidence,
+						input.compilerProvider,
+						input.compilerModel,
+						input.compilerPromptSha256,
+						JSON.stringify(candidate.evidenceSpans),
+						input.gitHead ?? null,
+						input.changeSetSha256 ?? null,
+						state.revision,
+						now,
+					);
+				this.appendEventInternal(
+					source.taskId,
+					undefined,
+					undefined,
+					"TaskAuthorizationGranted",
+					{
+						authorizationId: id,
+						sourceMessageId: source.id,
+						action: candidate.action,
+						revision: state.revision,
+						schemaVersion: 1,
+					},
+					now,
+				);
+				authorizations.push(this.requireTaskAuthorization(id));
+			}
+			this.database
+				.prepare(
+					"UPDATE task_authorization_sources SET state = 'compiled', compiled_at = ?, error_code = NULL WHERE id = ?",
+				)
+				.run(now, source.id);
+			this.appendEventInternal(
+				source.taskId,
+				undefined,
+				undefined,
+				"AuthorizationCompiled",
+				{
+					sourceMessageId: source.id,
+					inputSha256: source.textSha256,
+					outputSha256: createHash("sha256").update(JSON.stringify(input.candidates)).digest("hex"),
+					compilerProvider: input.compilerProvider,
+					compilerModel: input.compilerModel,
+					compilerPromptSha256: input.compilerPromptSha256,
+					candidateCount: authorizations.length,
+					revision: state.revision,
+					schemaVersion: 1,
+				},
+				now,
+			);
+			return authorizations;
+		});
+	}
+
+	failTaskAuthorizationSource(sourceId: string, errorCode: string): TaskAuthorizationSourceRecord {
+		if (errorCode.trim() === "") throw new TypeError("Authorization Compiler error code is required");
+		return executeTransaction(this.database, () => {
+			const source = this.requireTaskAuthorizationSource(sourceId);
+			if (source.state !== "pending") return source;
+			const now = this.now().toISOString();
+			this.database
+				.prepare(
+					"UPDATE task_authorization_sources SET state = 'failed', compiled_at = ?, error_code = ? WHERE id = ? AND state = 'pending'",
+				)
+				.run(now, errorCode.slice(0, 200), sourceId);
+			this.appendEventInternal(
+				source.taskId,
+				undefined,
+				undefined,
+				"AuthorizationCompileFailed",
+				{ sourceMessageId: source.id, errorCode: errorCode.slice(0, 200), schemaVersion: 1 },
+				now,
+			);
+			return this.requireTaskAuthorizationSource(sourceId);
+		});
+	}
+
+	listTaskAuthorizations(taskId: string): TaskAuthorizationRecord[] {
+		this.requireTask(taskId);
+		return (
+			this.database
+				.prepare("SELECT * FROM task_authorizations WHERE task_id = ? ORDER BY created_at, id")
+				.all(taskId) as unknown as TaskAuthorizationRow[]
+		).map(taskAuthorizationFromRow);
+	}
+
+	listActiveTaskAuthorizations(taskId: string): TaskAuthorizationRecord[] {
+		return this.listTaskAuthorizations(taskId).filter(
+			(authorization) => authorization.state === "active" && authorization.usedCount < authorization.maxUses,
+		);
+	}
+
+	getTaskAuthorizationRevision(taskId: string): number {
+		this.requireTask(taskId);
+		const state = this.database
+			.prepare("SELECT revision FROM task_authorization_state WHERE task_id = ?")
+			.get(taskId) as { revision: number } | undefined;
+		if (!state) throw new Error(`Task Authorization state not found: ${taskId}`);
+		return state.revision;
+	}
+
+	getReviewerCostSummary(taskId: string): {
+		compilerCostUsd: number;
+		judgeCostUsd: number;
+		reviewerReservedUsd: number;
+		compilerRequestCount: number;
+		reviewerRequestCount: number;
+	} {
+		this.requireTask(taskId);
+		const state = this.database
+			.prepare(
+				`SELECT compiler_cost_usd, judge_cost_usd, reviewer_reserved_usd,
+				        compiler_request_count, reviewer_request_count
+				 FROM task_authorization_state WHERE task_id = ?`,
+			)
+			.get(taskId) as
+			| {
+					compiler_cost_usd: number;
+					judge_cost_usd: number;
+					reviewer_reserved_usd: number;
+					compiler_request_count: number;
+					reviewer_request_count: number;
+			  }
+			| undefined;
+		if (!state) throw new Error(`Task Authorization state not found: ${taskId}`);
+		return {
+			compilerCostUsd: state.compiler_cost_usd,
+			judgeCostUsd: state.judge_cost_usd,
+			reviewerReservedUsd: state.reviewer_reserved_usd,
+			compilerRequestCount: state.compiler_request_count,
+			reviewerRequestCount: state.reviewer_request_count,
+		};
+	}
+
+	revokeTaskAuthorization(authorizationId: string): TaskAuthorizationRecord {
+		return executeTransaction(this.database, () => {
+			const authorization = this.requireTaskAuthorization(authorizationId);
+			if (authorization.state !== "active") return authorization;
+			const now = this.now().toISOString();
+			this.database
+				.prepare(
+					"UPDATE task_authorizations SET state = 'revoked', revoked_at = ? WHERE id = ? AND state = 'active'",
+				)
+				.run(now, authorizationId);
+			this.database
+				.prepare("UPDATE task_authorization_state SET revision = revision + 1 WHERE task_id = ?")
+				.run(authorization.taskId);
+			this.appendEventInternal(
+				authorization.taskId,
+				undefined,
+				undefined,
+				"TaskAuthorizationRevoked",
+				{ authorizationId, schemaVersion: 1 },
+				now,
+			);
+			return this.requireTaskAuthorization(authorizationId);
+		});
+	}
+
+	queueUserSteering(input: { taskId: string; agentId: string; dedupeKey: string; body: string }): string {
+		if (Buffer.byteLength(input.body, "utf8") > 16_384) throw new RangeError("User steering exceeds 16 KiB");
+		if (input.body.trim() === "" || input.dedupeKey.trim() === "")
+			throw new TypeError("User steering body and dedupe key are required");
+		return executeTransaction(this.database, () => {
+			const agent = this.requireAgent(input.agentId);
+			if (agent.taskId !== input.taskId) throw new Error("User steering Agent does not belong to Task");
+			const existing = this.database
+				.prepare(
+					"SELECT id, body_json FROM agent_messages WHERE task_id = ? AND sender_agent_id = ? AND dedupe_key = ?",
+				)
+				.get(input.taskId, input.agentId, input.dedupeKey) as { id: string; body_json: string } | undefined;
+			if (existing) {
+				const body = parseObject(existing.body_json, "user steering body") as unknown as StoredMessageBody;
+				if (body.body !== input.body) throw new Error(`User steering identity conflict: ${input.dedupeKey}`);
+				return existing.id;
+			}
+			const nextSeq = this.database
+				.prepare(
+					"SELECT COALESCE(MAX(sender_seq), 0) + 1 AS seq FROM agent_messages WHERE task_id = ? AND sender_agent_id = ? AND recipient_agent_id = ?",
+				)
+				.get(input.taskId, input.agentId, input.agentId) as { seq: number };
+			const id = randomUUID();
+			const now = this.now().toISOString();
+			this.database
+				.prepare(
+					`INSERT INTO agent_messages
+					 (id, task_id, sender_agent_id, recipient_agent_id, sender_seq, type, priority, body_json,
+					  dedupe_key, state, provenance, created_at)
+					 VALUES (?, ?, ?, ?, ?, 'steering', 'high', ?, ?, 'queued', 'user', ?)`,
+				)
+				.run(
+					id,
+					input.taskId,
+					input.agentId,
+					input.agentId,
+					nextSeq.seq,
+					JSON.stringify({ body: input.body, artifactRefs: [] }),
+					input.dedupeKey,
+					now,
+				);
+			this.registerTaskAuthorizationSourceInternal(input.taskId, id, "steering", input.body, now);
+			this.appendEventInternal(
+				input.taskId,
+				input.agentId,
+				undefined,
+				"MessageQueued",
+				{ messageId: id, recipientAgentId: input.agentId, provenance: "user", schemaVersion: 1 },
+				now,
+			);
+			return id;
+		});
 	}
 
 	createPermissionGrant(input: CreatePermissionGrantInput): PermissionGrantRecord {
@@ -772,8 +1166,9 @@ export class SqliteTaskStore {
 		operationId: string;
 		intentSha256: string;
 		action: "allow" | "ask" | "deny";
-		source: "policy" | "grant" | "reviewer" | "user";
+		source: "policy" | "grant" | "reviewer" | "user" | "user_authorization";
 		grantId?: string;
+		authorizationId?: string;
 		reasonCode?: string;
 	}): string {
 		this.requireTask(input.taskId);
@@ -785,8 +1180,9 @@ export class SqliteTaskStore {
 			this.database
 				.prepare(
 					`INSERT INTO permission_decisions
-					 (id, operation_id, task_id, attempt_id, intent_sha256, action, source, grant_id, reason_code, created_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					 (id, operation_id, task_id, attempt_id, intent_sha256, action, source, grant_id,
+					  authorization_id, reason_code, created_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				)
 				.run(
 					id,
@@ -797,6 +1193,7 @@ export class SqliteTaskStore {
 					input.action,
 					input.source,
 					input.grantId ?? null,
+					input.authorizationId ?? null,
 					input.reasonCode ?? null,
 					now,
 				);
@@ -812,6 +1209,7 @@ export class SqliteTaskStore {
 					action: input.action,
 					source: input.source,
 					...(input.grantId ? { grantId: input.grantId } : {}),
+					...(input.authorizationId ? { authorizationId: input.authorizationId } : {}),
 					...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
 					schemaVersion: 1,
 				},
@@ -819,6 +1217,72 @@ export class SqliteTaskStore {
 			);
 		});
 		return id;
+	}
+
+	private registerTaskAuthorizationSourceInternal(
+		taskId: string,
+		sourceMessageId: string,
+		kind: TaskAuthorizationSourceRecord["kind"],
+		text: string,
+		createdAt: string,
+	): TaskAuthorizationSourceRecord {
+		this.requireTask(taskId);
+		if (sourceMessageId.trim() === "" || text.trim() === "")
+			throw new TypeError("Task Authorization source identity and text are required");
+		const textSha256 = createHash("sha256").update(text).digest("hex");
+		const existing = this.getTaskAuthorizationSource(sourceMessageId);
+		if (existing) {
+			if (
+				existing.taskId !== taskId ||
+				existing.kind !== kind ||
+				existing.textSha256 !== textSha256 ||
+				existing.text !== text
+			)
+				throw new Error(`Task Authorization source identity conflict: ${sourceMessageId}`);
+			return existing;
+		}
+		this.database
+			.prepare(
+				`INSERT INTO task_authorization_sources
+				 (id, task_id, source_kind, source_message_sha256, source_text, state, created_at)
+				 VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+			)
+			.run(sourceMessageId, taskId, kind, textSha256, text, createdAt);
+		this.appendEventInternal(
+			taskId,
+			undefined,
+			undefined,
+			"AuthorizationCompileRequested",
+			{ sourceMessageId, sourceKind: kind, sourceMessageSha256: textSha256, schemaVersion: 1 },
+			createdAt,
+		);
+		return this.requireTaskAuthorizationSource(sourceMessageId);
+	}
+
+	private getTaskAuthorizationSource(sourceId: string): TaskAuthorizationSourceRecord | undefined {
+		const row = this.database.prepare("SELECT * FROM task_authorization_sources WHERE id = ?").get(sourceId) as
+			| TaskAuthorizationSourceRow
+			| undefined;
+		return row ? taskAuthorizationSourceFromRow(row) : undefined;
+	}
+
+	private requireTaskAuthorizationSource(sourceId: string): TaskAuthorizationSourceRecord {
+		const source = this.getTaskAuthorizationSource(sourceId);
+		if (!source) throw new Error(`Task Authorization source not found: ${sourceId}`);
+		return source;
+	}
+
+	private getTaskAuthorization(authorizationId: string): TaskAuthorizationRecord | undefined {
+		const row = this.database.prepare("SELECT * FROM task_authorizations WHERE id = ?").get(authorizationId) as
+			| TaskAuthorizationRow
+			| undefined;
+		return row ? taskAuthorizationFromRow(row) : undefined;
+	}
+
+	private requireTaskAuthorization(authorizationId: string): TaskAuthorizationRecord {
+		const authorization = this.getTaskAuthorization(authorizationId);
+		if (!authorization) throw new Error(`Task Authorization not found: ${authorizationId}`);
+		return authorization;
 	}
 
 	private getPermissionGrant(grantId: string): PermissionGrantRecord | undefined {
@@ -1412,6 +1876,8 @@ export class SqliteTaskStore {
 					now,
 					now,
 				);
+			this.database.prepare("INSERT INTO task_authorization_state(task_id) VALUES (?)").run(taskId);
+			this.registerTaskAuthorizationSourceInternal(taskId, `goal:${taskId}`, "goal", input.goal, now);
 			this.database
 				.prepare(
 					`INSERT INTO agents (
@@ -1950,11 +2416,18 @@ export class SqliteTaskStore {
 			inputSha256: string;
 			effect: UnfinishedToolExecution["effect"];
 			paths: string[];
-			permissionSource?: "policy" | "grant" | "reviewer";
+			permissionSource?: "policy" | "grant" | "reviewer" | "user_authorization";
 			intentSha256?: string;
 			grantId?: string;
+			authorizationId?: string;
 		},
 	): void {
+		if ((input.permissionSource !== undefined) !== (input.intentSha256 !== undefined))
+			throw new Error("Permission source and intent hash must be recorded together");
+		if ((input.grantId !== undefined) !== (input.permissionSource === "grant"))
+			throw new Error("Permission grant id and permission source must be recorded together");
+		if ((input.authorizationId !== undefined) !== (input.permissionSource === "user_authorization"))
+			throw new Error("Task Authorization id and permission source must be recorded together");
 		executeTransaction(this.database, () => {
 			this.assertLeaseInternal(lease);
 			const now = this.now().toISOString();
@@ -1988,12 +2461,41 @@ export class SqliteTaskStore {
 					now,
 				);
 			}
+			if (input.authorizationId) {
+				const authorization = this.requireTaskAuthorization(input.authorizationId);
+				if (authorization.taskId !== lease.taskId)
+					throw new Error("Task Authorization does not belong to this Task");
+				if (authorization.state !== "active") throw new Error(`Task Authorization is ${authorization.state}`);
+				const update = this.database
+					.prepare(
+						`UPDATE task_authorizations SET used_count = used_count + 1,
+						 state = CASE WHEN used_count + 1 >= max_uses THEN 'consumed' ELSE state END,
+						 consumed_at = CASE WHEN used_count + 1 >= max_uses THEN ? ELSE consumed_at END
+						 WHERE id = ? AND state = 'active' AND used_count < max_uses`,
+					)
+					.run(now, authorization.id);
+				if (Number(update.changes) !== 1) throw new Error("Task Authorization has no remaining uses");
+				this.appendEventInternal(
+					lease.taskId,
+					lease.agentId,
+					attemptId,
+					"TaskAuthorizationUsed",
+					{
+						authorizationId: authorization.id,
+						operationId: input.operationId,
+						intentSha256: input.intentSha256,
+						schemaVersion: 1,
+					},
+					now,
+				);
+			}
 			if (input.permissionSource && input.intentSha256) {
 				this.database
 					.prepare(
 						`INSERT INTO permission_decisions
-						 (id, operation_id, task_id, attempt_id, intent_sha256, action, source, grant_id, created_at)
-						 VALUES (?, ?, ?, ?, ?, 'allow', ?, ?, ?)`,
+						 (id, operation_id, task_id, attempt_id, intent_sha256, action, source, grant_id,
+						  authorization_id, created_at)
+						 VALUES (?, ?, ?, ?, ?, 'allow', ?, ?, ?, ?)`,
 					)
 					.run(
 						randomUUID(),
@@ -2003,6 +2505,7 @@ export class SqliteTaskStore {
 						input.intentSha256,
 						input.permissionSource,
 						input.grantId ?? null,
+						input.authorizationId ?? null,
 						now,
 					);
 			}
@@ -2016,6 +2519,7 @@ export class SqliteTaskStore {
 				...(input.permissionSource ? { permissionSource: input.permissionSource } : {}),
 				...(input.intentSha256 ? { intentSha256: input.intentSha256 } : {}),
 				...(input.grantId ? { grantId: input.grantId } : {}),
+				...(input.authorizationId ? { authorizationId: input.authorizationId } : {}),
 				executionId: lease.executionId,
 				fencingToken: lease.fencingToken,
 				schemaVersion: 1,
@@ -2061,6 +2565,11 @@ export class SqliteTaskStore {
 	markProviderOutcomeUnknown(lease: AgentLease, attemptId: string, providerRequestId: string, reason: string): void {
 		executeTransaction(this.database, () => {
 			this.assertLeaseInternal(lease);
+			const reservation = this.database
+				.prepare("SELECT request_kind FROM budget_reservations WHERE provider_request_id = ? AND attempt_id = ?")
+				.get(providerRequestId, attemptId) as { request_kind: string | null } | undefined;
+			const reviewerRequest =
+				reservation?.request_kind === "authorization_compile" || reservation?.request_kind === "permission_review";
 			const now = this.now().toISOString();
 			this.database
 				.prepare("UPDATE agents SET state = 'unknown_outcome', updated_at = ? WHERE id = ?")
@@ -2079,6 +2588,20 @@ export class SqliteTaskStore {
 				{ providerRequestId, reason: reason.slice(0, 1000), schemaVersion: 1 },
 				now,
 			);
+			if (reviewerRequest)
+				this.appendEventInternal(
+					lease.taskId,
+					lease.agentId,
+					attemptId,
+					"ReviewerRequestUnknown",
+					{
+						providerRequestId,
+						requestKind: reservation.request_kind,
+						reason: reason.slice(0, 1000),
+						schemaVersion: 1,
+					},
+					now,
+				);
 		});
 	}
 
@@ -2703,13 +3226,16 @@ export class SqliteTaskStore {
 		return executeTransaction(this.database, () => {
 			this.assertLeaseInternal(lease);
 			const task = this.requireTask(lease.taskId);
+			const reviewerRequest =
+				input.requestKind === "authorization_compile" || input.requestKind === "permission_review";
 			const reserved = this.database
 				.prepare(
 					`SELECT COALESCE(SUM(reserved_turns), 0) AS turns, COALESCE(SUM(reserved_cost_usd), 0) AS cost
 					 FROM budget_reservations WHERE task_id = ? AND state = 'active'`,
 				)
 				.get(task.id) as { turns: number; cost: number };
-			if (task.totalTurns + reserved.turns + 1 > task.budget.maxTurns) throw new Error("Task turn budget exceeded");
+			if (!reviewerRequest && task.totalTurns + reserved.turns + 1 > task.budget.maxTurns)
+				throw new Error("Task turn budget exceeded");
 			if (
 				task.budget.maxCostUsd !== undefined &&
 				(input.worstCaseCostUsd === undefined ||
@@ -2721,13 +3247,49 @@ export class SqliteTaskStore {
 						: "Task cost budget exceeded",
 				);
 			}
+			if (reviewerRequest) {
+				if (input.worstCaseCostUsd === undefined)
+					throw new Error("Reviewer requests require a reliable worst-case cost");
+				const state = this.database
+					.prepare(
+						`SELECT compiler_request_count, reviewer_request_count, reviewer_cost_usd,
+						        reviewer_reserved_usd
+						 FROM task_authorization_state WHERE task_id = ?`,
+					)
+					.get(task.id) as
+					| {
+							compiler_request_count: number;
+							reviewer_request_count: number;
+							reviewer_cost_usd: number;
+							reviewer_reserved_usd: number;
+					  }
+					| undefined;
+				if (!state) throw new Error(`Task Authorization state not found: ${task.id}`);
+				if (input.requestKind === "authorization_compile" && state.compiler_request_count >= 32)
+					throw new Error("Authorization Compiler request limit exceeded");
+				if (state.reviewer_request_count >= 128) throw new Error("Task Reviewer request limit exceeded");
+				const attemptRequests = this.database
+					.prepare(
+						`SELECT COUNT(*) AS count FROM budget_reservations
+						 WHERE attempt_id = ? AND request_kind IN ('authorization_compile', 'permission_review')`,
+					)
+					.get(attemptId) as { count: number };
+				if (attemptRequests.count >= 32) throw new Error("Attempt Reviewer request limit exceeded");
+				const mainAgentSettled = Math.max(0, task.totalCostUsd - state.reviewer_cost_usd);
+				const reviewerCommitted = state.reviewer_cost_usd + state.reviewer_reserved_usd;
+				const absoluteRemaining = 0.05 - reviewerCommitted;
+				const shareRemaining = 0.002 + mainAgentSettled * 0.05 - reviewerCommitted;
+				if (input.worstCaseCostUsd > Math.min(absoluteRemaining, shareRemaining))
+					throw new Error("Reviewer cost budget exceeded");
+			}
 			const reservationId = randomUUID();
 			const now = this.now().toISOString();
 			this.database
 				.prepare(
 					`INSERT INTO budget_reservations
-					 (id, task_id, agent_id, attempt_id, provider_request_id, reserved_turns, reserved_cost_usd, state, created_at)
-					 VALUES (?, ?, ?, ?, ?, 1, ?, 'active', ?)`,
+					 (id, task_id, agent_id, attempt_id, provider_request_id, reserved_turns, reserved_cost_usd,
+					  request_kind, state, created_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
 				)
 				.run(
 					reservationId,
@@ -2735,9 +3297,23 @@ export class SqliteTaskStore {
 					lease.agentId,
 					attemptId,
 					input.providerRequestId,
+					reviewerRequest ? 0 : 1,
 					input.worstCaseCostUsd ?? null,
+					input.requestKind,
 					now,
 				);
+			if (reviewerRequest) {
+				this.database
+					.prepare(
+						`UPDATE task_authorization_state
+						 SET compiler_request_count = compiler_request_count + ?,
+						     reviewer_request_count = reviewer_request_count + 1,
+						     reviewer_reserved_usd = reviewer_reserved_usd + ?,
+						     startup_allowance_used = 1
+						 WHERE task_id = ?`,
+					)
+					.run(input.requestKind === "authorization_compile" ? 1 : 0, input.worstCaseCostUsd ?? 0, task.id);
+			}
 			this.appendEventInternal(
 				task.id,
 				lease.agentId,
@@ -2746,10 +3322,27 @@ export class SqliteTaskStore {
 				{
 					reservationId,
 					providerRequestId: input.providerRequestId,
+					requestKind: input.requestKind,
+					worstCaseCostUsd: input.worstCaseCostUsd,
 					schemaVersion: 1,
 				},
 				now,
 			);
+			if (reviewerRequest)
+				this.appendEventInternal(
+					task.id,
+					lease.agentId,
+					attemptId,
+					"ReviewerBudgetReserved",
+					{
+						reservationId,
+						providerRequestId: input.providerRequestId,
+						requestKind: input.requestKind,
+						worstCaseCostUsd: input.worstCaseCostUsd,
+						schemaVersion: 1,
+					},
+					now,
+				);
 			this.appendEventInternal(
 				task.id,
 				lease.agentId,
@@ -2767,6 +3360,22 @@ export class SqliteTaskStore {
 				},
 				now,
 			);
+			if (reviewerRequest)
+				this.appendEventInternal(
+					task.id,
+					lease.agentId,
+					attemptId,
+					"ReviewerRequestStarted",
+					{
+						providerRequestId: input.providerRequestId,
+						reservationId,
+						provider: input.provider,
+						modelId: input.modelId,
+						requestKind: input.requestKind,
+						schemaVersion: 1,
+					},
+					now,
+				);
 			return reservationId;
 		});
 	}
@@ -2786,11 +3395,19 @@ export class SqliteTaskStore {
 			this.assertLeaseInternal(lease);
 			const reservation = this.database
 				.prepare(
-					`SELECT task_id, agent_id, attempt_id, provider_request_id FROM budget_reservations
+					`SELECT task_id, agent_id, attempt_id, provider_request_id, reserved_cost_usd, request_kind
+					 FROM budget_reservations
 					 WHERE id = ? AND state = 'active'`,
 				)
 				.get(input.reservationId) as
-				| { task_id: string; agent_id: string; attempt_id: string; provider_request_id: string }
+				| {
+						task_id: string;
+						agent_id: string;
+						attempt_id: string;
+						provider_request_id: string;
+						reserved_cost_usd: number | null;
+						request_kind: string | null;
+				  }
 				| undefined;
 			if (
 				!reservation ||
@@ -2800,18 +3417,44 @@ export class SqliteTaskStore {
 				reservation.provider_request_id !== input.providerRequestId
 			)
 				throw new Error(`Active Provider reservation not found: ${input.reservationId}`);
+			const reviewerRequest =
+				reservation.request_kind === "authorization_compile" || reservation.request_kind === "permission_review";
+			if (
+				reviewerRequest &&
+				(reservation.reserved_cost_usd === null || input.actualCostUsd > reservation.reserved_cost_usd + 1e-9)
+			)
+				throw new Error("Reviewer actual cost exceeded its reservation");
 			const now = this.now().toISOString();
 			this.database
 				.prepare("UPDATE budget_reservations SET state = 'settled', settled_at = ? WHERE id = ?")
 				.run(now, input.reservationId);
 			this.database
 				.prepare(
-					"UPDATE tasks SET total_turns = total_turns + 1, total_cost_usd = total_cost_usd + ?, updated_at = ? WHERE id = ?",
+					`UPDATE tasks SET total_turns = total_turns + ?, total_cost_usd = total_cost_usd + ?,
+					 updated_at = ? WHERE id = ?`,
 				)
-				.run(input.actualCostUsd, now, lease.taskId);
+				.run(reviewerRequest ? 0 : 1, input.actualCostUsd, now, lease.taskId);
 			this.database
-				.prepare("UPDATE attempts SET turn_count = turn_count + 1, cost_usd = cost_usd + ? WHERE id = ?")
-				.run(input.actualCostUsd, attemptId);
+				.prepare("UPDATE attempts SET turn_count = turn_count + ?, cost_usd = cost_usd + ? WHERE id = ?")
+				.run(reviewerRequest ? 0 : 1, input.actualCostUsd, attemptId);
+			if (reviewerRequest) {
+				this.database
+					.prepare(
+						`UPDATE task_authorization_state
+						 SET reviewer_cost_usd = reviewer_cost_usd + ?,
+						     compiler_cost_usd = compiler_cost_usd + ?,
+						     judge_cost_usd = judge_cost_usd + ?,
+						     reviewer_reserved_usd = MAX(0, reviewer_reserved_usd - ?)
+						 WHERE task_id = ?`,
+					)
+					.run(
+						input.actualCostUsd,
+						reservation.request_kind === "authorization_compile" ? input.actualCostUsd : 0,
+						reservation.request_kind === "permission_review" ? input.actualCostUsd : 0,
+						reservation.reserved_cost_usd,
+						lease.taskId,
+					);
+			}
 			this.appendEventInternal(
 				lease.taskId,
 				lease.agentId,
@@ -2828,6 +3471,23 @@ export class SqliteTaskStore {
 				},
 				now,
 			);
+			if (reviewerRequest)
+				this.appendEventInternal(
+					lease.taskId,
+					lease.agentId,
+					attemptId,
+					"ReviewerRequestFinished",
+					{
+						providerRequestId: input.providerRequestId,
+						reservationId: input.reservationId,
+						requestKind: reservation.request_kind,
+						actualCostUsd: input.actualCostUsd,
+						usage: input.usage,
+						stopReason: input.stopReason,
+						schemaVersion: 1,
+					},
+					now,
+				);
 			this.appendEventInternal(
 				lease.taskId,
 				lease.agentId,
@@ -2840,6 +3500,20 @@ export class SqliteTaskStore {
 				},
 				now,
 			);
+			if (reviewerRequest)
+				this.appendEventInternal(
+					lease.taskId,
+					lease.agentId,
+					attemptId,
+					"ReviewerBudgetSettled",
+					{
+						reservationId: input.reservationId,
+						requestKind: reservation.request_kind,
+						actualCostUsd: input.actualCostUsd,
+						schemaVersion: 1,
+					},
+					now,
+				);
 		});
 	}
 

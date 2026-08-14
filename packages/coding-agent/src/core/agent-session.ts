@@ -349,6 +349,9 @@ export class AgentSession {
 		update: (toolCallId, update) => this.requireDurableGoalHost().update(toolCallId, update),
 		listPermissionGrants: () => this.requireDurableGoalHost().listPermissionGrants(),
 		revokePermissionGrant: (grantId) => this.requireDurableGoalHost().revokePermissionGrant(grantId),
+		listTaskAuthorizations: () => this.requireDurableGoalHost().listTaskAuthorizations(),
+		revokeTaskAuthorization: (authorizationId) =>
+			this.requireDurableGoalHost().revokeTaskAuthorization(authorizationId),
 	};
 	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
@@ -406,9 +409,11 @@ export class AgentSession {
 		kind: Exclude<AgentSessionRequestKind, "agent">,
 		context: Context,
 		signal?: AbortSignal,
+		request?: { model?: Model<any>; maxTokens?: number },
 	): Promise<AssistantMessage> {
-		if (!this.model) throw new Error(formatNoModelSelectedMessage());
-		const { model, apiKey, headers, env } = await this._getRequiredRequestAuth(this.model);
+		const selectedModel = request?.model ?? this.model;
+		if (!selectedModel) throw new Error(formatNoModelSelectedMessage());
+		const { model, apiKey, headers, env } = await this._getRequiredRequestAuth(selectedModel);
 		const requestId = randomUUID();
 		await this._lifecycleRef?.current?.handle({
 			type: "before_request",
@@ -420,7 +425,13 @@ export class AgentSession {
 		let message: AssistantMessage;
 		try {
 			message = await withAgentSessionRequestKind(kind, () =>
-				this._modelRuntime.completeSimple(model, context, { apiKey, headers, env, signal }),
+				this._modelRuntime.completeSimple(model, context, {
+					apiKey,
+					headers,
+					env,
+					signal,
+					...(request?.maxTokens === undefined ? {} : { maxTokens: request.maxTokens }),
+				}),
 			);
 		} catch (error) {
 			message = {

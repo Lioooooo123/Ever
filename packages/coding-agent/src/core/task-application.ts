@@ -321,14 +321,11 @@ export class TaskApplication {
 			const matches = exact ? [exact] : agents.filter((agent) => agent.id.startsWith(command.agentRef));
 			if (!main || matches.length !== 1) throw new Error("Main or target Agent not found or ambiguous");
 			const target = matches[0]!;
-			store.queueMessage({
-				actor: target.kind === "main" ? target : main,
-				recipient: target,
+			store.queueUserSteering({
+				taskId,
+				agentId: target.id,
 				dedupeKey: createHash("sha256").update(`user-steer\0${taskId}\0${commandIdentity}`).digest("hex"),
-				type: "steering",
-				priority: "high",
 				body: command.message,
-				artifactRefs: [],
 			});
 			return store.requireTask(taskId);
 		}

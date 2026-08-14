@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, writeSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import type { Api, Model } from "@lioooooo123/ever-ai";
 import type { ToolEffect } from "@lioooooo123/ever-long-tasks";
 import {
 	type AgentLease,
@@ -18,6 +19,7 @@ import {
 	runtimeSnapshotHash,
 	SqliteTaskStore,
 	TaskContextBuilder,
+	type TaskRecord,
 	VerifiedChangeBundle,
 } from "@lioooooo123/ever-long-tasks";
 import { VERSION } from "../config.ts";
@@ -28,15 +30,67 @@ import type {
 	AgentSessionLifecycleEvent,
 } from "./agent-session-lifecycle.ts";
 import type { AgentSessionRuntime } from "./agent-session-runtime.ts";
-import { normalizeToolIntent, PermissionKernel, permissionIntentSha256 } from "./permission-kernel.ts";
-import { ModelRiskReviewer, RISK_REVIEWER_PROMPT_SHA256 } from "./risk-reviewer.ts";
+import { AUTHORIZATION_COMPILER_PROMPT_SHA256, ModelAuthorizationCompiler } from "./authorization-compiler.ts";
+import { readGitAuthorizationFacts, readPrHeadSha } from "./authorization-runtime-facts.ts";
+import {
+	normalizeToolIntent,
+	PermissionKernel,
+	permissionIntentSha256,
+	permissionTaskSummary,
+	toolIntentRequiresAuthorizationFacts,
+} from "./permission-kernel.ts";
+import {
+	type ReviewerModelIdentity,
+	reviewerWorstCaseCostUsd,
+	selectReviewerModel,
+} from "./reviewer-model-selector.ts";
+import { ModelRiskReviewer, RISK_REVIEWER_PROMPT_SHA256, riskReviewPayload } from "./risk-reviewer.ts";
 import { type EvalEffectGateCapability, getWorkerStartupIfLoaded } from "./worker-startup.ts";
 
 function sha256(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-function runtimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: boolean): RuntimeSnapshot {
+function reviewerPricingSha256(model: Pick<Model<Api>, "cost" | "contextWindow" | "maxTokens">): string {
+	return sha256(JSON.stringify({ cost: model.cost, contextWindow: model.contextWindow, maxTokens: model.maxTokens }));
+}
+
+function taskReviewerIdentity(task: TaskRecord): ReviewerModelIdentity | undefined {
+	const configured = task.constraints.reviewerModel;
+	if (configured === undefined) return undefined;
+	if (
+		typeof configured !== "object" ||
+		configured === null ||
+		!("provider" in configured) ||
+		!("model" in configured) ||
+		typeof configured.provider !== "string" ||
+		typeof configured.model !== "string"
+	)
+		throw new Error("Task reviewerModel constraint must contain provider and model strings");
+	return { provider: configured.provider, model: configured.model };
+}
+
+function selectTaskReviewerModel(runtime: AgentSessionRuntime, task: TaskRecord): Model<Api> | undefined {
+	try {
+		return selectReviewerModel({
+			runtime: runtime.session.modelRuntime,
+			task: taskReviewerIdentity(task),
+			workspaceOrGlobal: runtime.session.settingsManager.getLongTaskSettings().reviewerModel,
+			preferredProvider: runtime.session.model?.provider,
+			excludedAutomaticModel: runtime.session.model
+				? { provider: runtime.session.model.provider, model: runtime.session.model.id }
+				: undefined,
+		});
+	} catch {
+		return undefined;
+	}
+}
+
+function runtimeSnapshot(
+	runtime: AgentSessionRuntime,
+	sandboxRequired: boolean,
+	reviewerModel?: Model<Api>,
+): RuntimeSnapshot {
 	const model = runtime.session.model;
 	const executionEnvironment = getWorkerStartupIfLoaded()?.executionEnvironment;
 	return {
@@ -48,6 +102,20 @@ function runtimeSnapshot(runtime: AgentSessionRuntime, sandboxRequired: boolean)
 			id: model?.id ?? "unresolved",
 			thinkingLevel: runtime.session.thinkingLevel,
 		},
+		...(reviewerModel
+			? {
+					reviewer: {
+						provider: reviewerModel.provider,
+						id: reviewerModel.id,
+						authorizationCompilerPromptSha256: AUTHORIZATION_COMPILER_PROMPT_SHA256,
+						riskReviewerPromptSha256: RISK_REVIEWER_PROMPT_SHA256,
+						minimumConfidence: 0.9,
+						pricingSha256: reviewerPricingSha256(reviewerModel),
+						maxInputTokens: 2_000,
+						maxOutputTokens: 256,
+					},
+				}
+			: {}),
 		systemPromptSha256: sha256(runtime.session.systemPrompt),
 		contextFiles: [],
 		resources: runtime.session.getActiveToolNames().map((identity) => ({
@@ -190,6 +258,8 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 	private readonly resident: boolean;
 	private readonly artifactsRoot: string;
 	private readonly permissionKernel: PermissionKernel;
+	private readonly authorizationCompiler: ModelAuthorizationCompiler;
+	private reviewerModel?: Model<Api>;
 	private claim?: ClaimedAttempt;
 	private lease?: AgentLease;
 	private deadlineAt?: string;
@@ -220,9 +290,18 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		this.onReady = options.onReady;
 		this.resident = options.resident;
 		this.artifactsRoot = options.artifactsRoot;
+		this.authorizationCompiler = new ModelAuthorizationCompiler((compileContext, signal) =>
+			this.runtime.session.completeLifecycleRequest("authorization_compile", compileContext, signal, {
+				model: this.requireReviewerModel(),
+				maxTokens: 256,
+			}),
+		);
 		this.permissionKernel = new PermissionKernel({
 			reviewer: new ModelRiskReviewer((reviewContext, signal) =>
-				this.runtime.session.completeLifecycleRequest("permission_review", reviewContext, signal),
+				this.runtime.session.completeLifecycleRequest("permission_review", reviewContext, signal, {
+					model: this.requireReviewerModel(),
+					maxTokens: 192,
+				}),
 			),
 			grants: {
 				list: (context) =>
@@ -238,6 +317,39 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 					typeof this.store.hasAttemptPermissionDenial === "function" &&
 					this.store.hasAttemptPermissionDenial(context.attemptId, intentSha256),
 			},
+			authorizations: {
+				list: (context) => this.store.listActiveTaskAuthorizations(context.agent.taskId),
+				revision: (context) => this.store.getTaskAuthorizationRevision(context.agent.taskId),
+			},
+			onReviewCacheHit: (intent) =>
+				this.store.appendTaskEvent(intent.taskId, "RiskReviewCacheHit", {
+					operationId: intent.operationId,
+					authorizationRevision: this.store.getTaskAuthorizationRevision(intent.taskId),
+					schemaVersion: 1,
+				}),
+			onReviewFailure: (intent, error) =>
+				this.store.appendTaskEvent(
+					intent.taskId,
+					error instanceof Error && error.name === "TimeoutError" ? "RiskReviewTimedOut" : "RiskReviewInvalid",
+					{
+						operationId: intent.operationId,
+						authorizationRevision: this.store.getTaskAuthorizationRevision(intent.taskId),
+						errorCode:
+							error instanceof Error && error.name === "TimeoutError"
+								? "reviewer_timeout"
+								: "reviewer_invalid_or_unavailable",
+						schemaVersion: 1,
+					},
+				),
+			onReviewConsumed: (operationId) =>
+				this.store.appendTaskEvent(
+					this.store.resolveAttemptClaim(this.requireClaim()).task.id,
+					"RiskReviewConsumed",
+					{
+						operationId,
+						schemaVersion: 1,
+					},
+				),
 		});
 	}
 
@@ -257,6 +369,7 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		const uninstallLifecycle = this.runtime.installLifecycle(this);
 		this.heartbeat = setInterval(() => this.renewLease(), this.heartbeatSeconds * 1000);
 		try {
+			await this.compilePendingAuthorizations(context.task.id);
 			this.onReady?.();
 			await new Promise<void>((resolve) => {
 				if (this.stopSignal.aborted) resolve();
@@ -303,6 +416,7 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			this.assertRunnable(event.type);
 		const context = this.store.resolveAttemptClaim(this.requireClaim());
 		if (event.type === "before_turn") {
+			await this.compilePendingAuthorizations(context.task.id);
 			const checkpoint = this.store.getLatestCheckpoint(context.agent.id);
 			const taskContext = new TaskContextBuilder().build({
 				task: context.task,
@@ -323,17 +437,19 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			return { systemPrompt: `${event.baseSystemPrompt}\n\n${taskContext}${inboxContext}` };
 		}
 		if (event.type === "before_request") {
+			const reviewerRequest = event.kind === "authorization_compile" || event.kind === "permission_review";
 			const rates = [event.model.cost, ...(event.model.cost.tiers ?? [])];
-			const worstCaseCostUsd =
-				(event.model.contextWindow * Math.max(...rates.map((rate) => rate.input + rate.cacheWrite)) +
-					event.model.maxTokens * Math.max(...rates.map((rate) => rate.output))) /
-				1_000_000;
+			const worstCaseCostUsd = reviewerRequest
+				? reviewerWorstCaseCostUsd(event.model, event.kind === "authorization_compile" ? 256 : 192)
+				: (event.model.contextWindow * Math.max(...rates.map((rate) => rate.input + rate.cacheWrite)) +
+						event.model.maxTokens * Math.max(...rates.map((rate) => rate.output))) /
+					1_000_000;
 			const reservationId = this.store.startProviderRequest(this.requireLease(), context.attempt.id, {
 				providerRequestId: event.requestId,
 				provider: event.model.provider,
 				modelId: event.model.id,
 				requestKind: event.kind,
-				...(context.task.budget.maxCostUsd === undefined ? {} : { worstCaseCostUsd }),
+				...(reviewerRequest || context.task.budget.maxCostUsd !== undefined ? { worstCaseCostUsd } : {}),
 			});
 			this.reservations.set(event.requestId, reservationId);
 			return undefined;
@@ -341,6 +457,15 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		if (event.type === "after_response") {
 			const reservationId = this.reservations.get(event.requestId);
 			if (!reservationId) throw new Error(`Provider request was not reserved: ${event.requestId}`);
+			if (
+				(event.kind === "authorization_compile" || event.kind === "permission_review") &&
+				event.message.stopReason === "error"
+			) {
+				const reason = `Provider request outcome is unknown: ${event.message.errorMessage ?? "request failed"}`;
+				this.store.markProviderOutcomeUnknown(this.requireLease(), context.attempt.id, event.requestId, reason);
+				this.reservations.delete(event.requestId);
+				throw new Error(reason);
+			}
 			try {
 				this.store.finishProviderRequest(this.requireLease(), context.attempt.id, {
 					providerRequestId: event.requestId,
@@ -362,6 +487,7 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			return undefined;
 		}
 		if (event.type === "before_tool") {
+			await this.compilePendingAuthorizations(context.task.id);
 			const intent = normalizeToolIntent({
 				operationId: event.operationId,
 				taskId: context.task.id,
@@ -373,6 +499,8 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 				...(event.durability ? { metadata: event.durability } : {}),
 			});
 			const executionEnvironment = getWorkerStartupIfLoaded()?.executionEnvironment;
+			const needsAuthorizationFacts = toolIntentRequiresAuthorizationFacts(intent);
+			const gitFacts = needsAuthorizationFacts ? readGitAuthorizationFacts(this.runtime.cwd) : {};
 			const permissionContext = {
 				agent: context.agent,
 				attemptId: context.attempt.id,
@@ -382,13 +510,16 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 				sandboxAllowedDomains: executionEnvironment?.allowedDomains,
 				unattended: executionEnvironment !== undefined,
 				unsafeNoSandbox: executionEnvironment?.trust === "unsafe_host",
+				...gitFacts,
+				prHeadSha: needsAuthorizationFacts
+					? readPrHeadSha(intent.command?.normalized, this.runtime.cwd)
+					: undefined,
 			};
 			const intentFingerprint = permissionIntentSha256(intent);
 			let decision = await this.permissionKernel.authorize(intent, permissionContext, this.stopSignal);
 			const riskReview = "review" in decision ? decision.review : undefined;
 			if (riskReview) {
-				const model = this.runtime.session.model;
-				if (!model) throw new Error("Risk Review completed without an active model");
+				const model = this.requireReviewerModel();
 				this.store.recordRiskReview({
 					taskId: context.task.id,
 					attemptId: context.attempt.id,
@@ -396,7 +527,12 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 					modelProvider: model.provider,
 					modelId: model.id,
 					promptSha256: RISK_REVIEWER_PROMPT_SHA256,
-					inputSha256: sha256(JSON.stringify({ intent, goal: context.agent.objective })),
+					inputSha256: sha256(
+						riskReviewPayload(intent, {
+							taskSummary: permissionTaskSummary(context.agent.objective),
+							workspaceRoot: context.agent.workspaceRoot,
+						}),
+					),
 					outputSha256: sha256(JSON.stringify(riskReview)),
 					verdict: riskReview.verdict,
 					risk: riskReview.risk,
@@ -433,6 +569,20 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 				} else if (approval?.action === "deny") {
 					decision = { action: "deny", code: "user_denied", reason: "User denied this action" };
 				}
+			}
+			if (decision.action === "allow" && decision.source === "user_authorization" && needsAuthorizationFacts) {
+				const refreshedGitFacts = readGitAuthorizationFacts(this.runtime.cwd);
+				const refreshedPrHeadSha = readPrHeadSha(intent.command?.normalized, this.runtime.cwd);
+				if (
+					refreshedGitFacts.gitHead !== permissionContext.gitHead ||
+					refreshedGitFacts.changeSetSha256 !== permissionContext.changeSetSha256 ||
+					refreshedPrHeadSha !== permissionContext.prHeadSha
+				)
+					decision = await this.permissionKernel.authorize(
+						intent,
+						{ ...permissionContext, ...refreshedGitFacts, prHeadSha: refreshedPrHeadSha },
+						this.stopSignal,
+					);
 			}
 			if (decision.action !== "allow") {
 				if (typeof this.store.recordPermissionDecision === "function")
@@ -474,7 +624,9 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 				permissionSource: decision.source,
 				intentSha256: intentFingerprint,
 				...(decision.source === "grant" && decision.grantId ? { grantId: decision.grantId } : {}),
+				...(decision.source === "user_authorization" ? { authorizationId: decision.authorizationId } : {}),
 			});
+			if (decision.source === "reviewer") this.permissionKernel.consumeReviewerAllowance(intent.operationId);
 			return undefined;
 		}
 		if (event.type === "after_tool") {
@@ -611,6 +763,39 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		this.consumedMessageIds.clear();
 	}
 
+	private async compilePendingAuthorizations(taskId: string): Promise<void> {
+		for (const source of this.store.listPendingTaskAuthorizationSources(taskId)) {
+			try {
+				const candidates = await this.authorizationCompiler.compile(source, this.stopSignal);
+				const model = this.requireReviewerModel();
+				this.store.completeTaskAuthorizationSource({
+					sourceId: source.id,
+					compilerProvider: model.provider,
+					compilerModel: model.id,
+					compilerPromptSha256: AUTHORIZATION_COMPILER_PROMPT_SHA256,
+					...readGitAuthorizationFacts(this.runtime.cwd),
+					candidates,
+				});
+			} catch {
+				this.store.failTaskAuthorizationSource(source.id, "authorization_compile_invalid_or_unavailable");
+			}
+		}
+	}
+
+	private requireReviewerModel(): Model<Api> {
+		if (this.reviewerModel) return this.reviewerModel;
+		const context = this.store.resolveAttemptClaim(this.requireClaim());
+		const frozen = context.attempt.runtimeSnapshot.reviewer;
+		if (!frozen) throw new Error("Reviewer is disabled for this Attempt");
+		const model = this.runtime.session.modelRuntime.getModel(frozen.provider, frozen.id);
+		if (!model || !this.runtime.session.modelRuntime.hasConfiguredAuth(model.provider))
+			throw new Error("Frozen Reviewer model is unavailable");
+		if (reviewerPricingSha256(model) !== frozen.pricingSha256)
+			throw new Error("Frozen Reviewer pricing changed during the Attempt");
+		this.reviewerModel = model;
+		return this.reviewerModel;
+	}
+
 	private requireClaim(): ClaimedAttempt {
 		if (!this.claim) throw new Error("NativeLongTaskAgent has no active Attempt claim");
 		return this.claim;
@@ -676,7 +861,7 @@ class NativeLongTaskExecution {
 			databasePath: join(agentDir, "long-tasks.sqlite"),
 			artifactsRoot: join(agentDir, "tasks"),
 		});
-		store.requireTask(taskId);
+		const task = store.requireTask(taskId);
 		const actor = store.listAgents(taskId).find((agent) => agent.id === agentId);
 		if (!actor) {
 			store.close();
@@ -696,7 +881,11 @@ class NativeLongTaskExecution {
 				`Recovery blocked for Agent ${blockedRecovery.agentId}: ${blockedRecovery.reason ?? "unknown"}`,
 			);
 		}
-		const snapshot = runtimeSnapshot(runtime, actor.toolPolicy.sandboxRequired);
+		const snapshot = runtimeSnapshot(
+			runtime,
+			actor.toolPolicy.sandboxRequired,
+			selectTaskReviewerModel(runtime, task),
+		);
 		const previousAttempt = store.getLatestAttempt(actor.id);
 		if (previousAttempt) {
 			const drift = compareRuntimeSnapshots(previousAttempt.runtimeSnapshot, snapshot);

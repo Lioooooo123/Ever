@@ -111,6 +111,10 @@ describe("ExtensionRunner", () => {
 			revokePermissionGrant: () => {
 				throw new Error("not configured");
 			},
+			listTaskAuthorizations: () => [],
+			revokeTaskAuthorization: () => {
+				throw new Error("not configured");
+			},
 		},
 		isIdle: () => true,
 		isProjectTrusted: () => true,

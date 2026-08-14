@@ -17,6 +17,15 @@ function statusDetails(goal: DurableGoalSnapshot): string {
 		`Turns: ${goal.totalTurns}/${goal.maxTurns}`,
 		`Wall time budget: ${goal.maxWallTimeMinutes} minutes`,
 		`Cost: $${goal.totalCostUsd.toFixed(4)}`,
+		...(goal.mainAgentCostUsd === undefined
+			? []
+			: [
+					`Main Agent: $${goal.mainAgentCostUsd.toFixed(4)}`,
+					`Authorization Compiler: $${(goal.compilerCostUsd ?? 0).toFixed(4)}`,
+					`Small Model Judge: $${(goal.judgeCostUsd ?? 0).toFixed(4)}`,
+					`Reviewer reserved: $${(goal.reviewerReservedUsd ?? 0).toFixed(4)}`,
+					`Reviewer requests: ${goal.reviewerRequestCount ?? 0} (${goal.compilerRequestCount ?? 0} compiler)`,
+				]),
 		...(goal.stateReason ? [`Reason: ${goal.stateReason}`] : []),
 	].join("\n");
 }
@@ -169,38 +178,49 @@ export default function goalExtension(ever: ExtensionAPI): void {
 			}
 			if (command === "permissions") {
 				const grants = ctx.durableGoal.listPermissionGrants().filter((grant) => grant.state === "active");
+				const authorizations = ctx.durableGoal
+					.listTaskAuthorizations()
+					.filter((authorization) => authorization.state === "active");
 				if (rest[0] === "revoke") {
-					const grantId = rest[1];
-					if (!grantId) throw new Error("Usage: /goal permissions revoke <grant-id>");
-					const revoked = ctx.durableGoal.revokePermissionGrant(grantId);
+					const permissionId = rest[1];
+					if (!permissionId) throw new Error("Usage: /goal permissions revoke <permission-id>");
+					const authorization = authorizations.find((candidate) => candidate.id === permissionId);
+					const revoked = authorization
+						? ctx.durableGoal.revokeTaskAuthorization(permissionId)
+						: ctx.durableGoal.revokePermissionGrant(permissionId);
 					ctx.ui.notify(`Revoked permission ${revoked.id.slice(0, 8)}.`, "info");
 					return;
 				}
-				if (grants.length === 0) {
-					ctx.ui.notify("No active durable permission grants.", "info");
+				if (grants.length === 0 && authorizations.length === 0) {
+					ctx.ui.notify("No active Task Authorizations or durable permission grants.", "info");
 					return;
 				}
+				const entries = [
+					...authorizations.map((authorization) => ({
+						kind: "authorization" as const,
+						id: authorization.id,
+						label: `${authorization.id.slice(0, 8)}  authorization  ${authorization.action}  ${authorization.usedCount}/${authorization.maxUses}  ${JSON.stringify(authorization.targets)}`,
+					})),
+					...grants.map((grant) => ({
+						kind: "grant" as const,
+						id: grant.id,
+						label: `${grant.id.slice(0, 8)}  grant:${grant.lifetime}  ${grant.tools.join(",")}  ${grant.paths.join(",")}`,
+					})),
+				];
 				if (!ctx.hasUI) {
-					ctx.ui.notify(
-						grants
-							.map(
-								(grant) => `${grant.id}  ${grant.lifetime}  ${grant.tools.join(",")}  ${grant.paths.join(",")}`,
-							)
-							.join("\n"),
-						"info",
-					);
+					ctx.ui.notify(entries.map((entry) => `${entry.id}  ${entry.label}`).join("\n"), "info");
 					return;
 				}
-				const labels = grants.map(
-					(grant) =>
-						`${grant.id.slice(0, 8)}  ${grant.lifetime}  ${grant.tools.join(",")}  ${grant.paths.join(",")}`,
-				);
-				const selected = await ctx.ui.select("Select a permission grant to revoke", [...labels, "Cancel"]);
+				const labels = entries.map((entry) => entry.label);
+				const selected = await ctx.ui.select("Select a permission to revoke", [...labels, "Cancel"]);
 				const index = selected ? labels.indexOf(selected) : -1;
 				if (index < 0) return;
-				const selectedGrant = grants[index];
-				if (!selectedGrant) return;
-				const revoked = ctx.durableGoal.revokePermissionGrant(selectedGrant.id);
+				const selectedEntry = entries[index];
+				if (!selectedEntry) return;
+				const revoked =
+					selectedEntry.kind === "authorization"
+						? ctx.durableGoal.revokeTaskAuthorization(selectedEntry.id)
+						: ctx.durableGoal.revokePermissionGrant(selectedEntry.id);
 				ctx.ui.notify(`Revoked permission ${revoked.id.slice(0, 8)}.`, "info");
 				return;
 			}

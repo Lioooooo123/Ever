@@ -297,6 +297,10 @@ export class ExtensionRunner {
 		revokePermissionGrant: () => {
 			throw new Error("Durable Goal host is unavailable");
 		},
+		listTaskAuthorizations: () => [],
+		revokeTaskAuthorization: () => {
+			throw new Error("Durable Goal host is unavailable");
+		},
 	};
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;

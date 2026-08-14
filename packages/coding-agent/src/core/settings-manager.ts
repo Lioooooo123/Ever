@@ -95,6 +95,10 @@ export interface LongTaskSettings {
 	eventReplayMaxBytes?: number;
 	snapshotChunkBytes?: number;
 	commandJournalRetentionDays?: number;
+	reviewerModel?: {
+		provider: string;
+		model: string;
+	};
 	continuation?: LongTaskContinuationSettings;
 }
 
@@ -858,7 +862,8 @@ export class SettingsManager {
 		};
 	}
 
-	getLongTaskSettings(): Omit<Required<LongTaskSettings>, "continuation"> & {
+	getLongTaskSettings(): Omit<Required<LongTaskSettings>, "continuation" | "reviewerModel"> & {
+		reviewerModel?: { provider: string; model: string };
 		continuation: Required<LongTaskContinuationSettings>;
 	} {
 		return {
@@ -883,6 +888,7 @@ export class SettingsManager {
 			eventReplayMaxBytes: this.settings.longTasks?.eventReplayMaxBytes ?? 16_777_216,
 			snapshotChunkBytes: this.settings.longTasks?.snapshotChunkBytes ?? 524_288,
 			commandJournalRetentionDays: this.settings.longTasks?.commandJournalRetentionDays ?? 7,
+			reviewerModel: this.settings.longTasks?.reviewerModel,
 			continuation: {
 				maxIdenticalProgressTurns: this.settings.longTasks?.continuation?.maxIdenticalProgressTurns ?? 2,
 				pauseAfterIdenticalProgressTurns:
