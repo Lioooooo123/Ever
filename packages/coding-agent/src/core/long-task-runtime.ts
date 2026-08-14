@@ -309,7 +309,6 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 				agent: context.agent,
 				progress: checkpoint?.progress ?? this.progress,
 				evidence: checkpoint?.evidence ?? this.evidence,
-				agents: [context.agent],
 			});
 			const inbox = this.store.claimInbox(context.agent.id, this.requireLease(), 20);
 			for (const message of inbox) this.consumedMessageIds.add(message.id);

@@ -138,19 +138,17 @@ function setup(
 afterEach(() => vi.restoreAllMocks());
 
 describe("durable Goal adapter", () => {
-	it("creates one durable Task and delegates continuation to the native runtime", async () => {
+	it("rejects Task creation inside an already running Session", async () => {
 		const runtime = setup();
 		await runtime.emit("session_start");
 		expect(runtime.activeTools()).toEqual(["read"]);
 
-		await runtime.runGoal("ship the unified execution chain");
-
-		expect(runtime.host.start).toHaveBeenCalledWith("ship the unified execution chain");
-		expect(runtime.activeTools()).toEqual(["read", "task_update"]);
-		expect(runtime.sendMessage).toHaveBeenCalledWith(
-			expect.objectContaining({ customType: "durable-goal-start", content: "ship the unified execution chain" }),
-			{ triggerTurn: true, deliverAs: "followUp" },
+		await expect(runtime.runGoal("ship the unified execution chain")).rejects.toThrow(
+			"Create Tasks from Task Home or ever <goal>",
 		);
+
+		expect(runtime.host.start).not.toHaveBeenCalled();
+		expect(runtime.activeTools()).toEqual(["read"]);
 		expect(runtime.renderer()).toBeDefined();
 	});
 
@@ -219,10 +217,9 @@ describe("durable Goal adapter", () => {
 		expect(runtime.sendMessage).not.toHaveBeenCalled();
 	});
 
-	it("validates Goal input before creating a Task", async () => {
+	it("does not expose a second Goal creation syntax", async () => {
 		const runtime = setup();
-		await expect(runtime.runGoal(`bad\u001bgoal`)).rejects.toThrow("control characters");
-		await expect(runtime.runGoal("x".repeat(8193))).rejects.toThrow("8192");
+		await expect(runtime.runGoal("new objective")).rejects.toThrow("Usage: /goal status");
 		expect(runtime.host.start).not.toHaveBeenCalled();
 	});
 });

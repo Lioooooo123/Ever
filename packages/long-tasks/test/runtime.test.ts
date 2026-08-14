@@ -237,9 +237,12 @@ describe("runtime and policy", () => {
 				{ sandboxAvailable: false, unattended: true },
 			),
 		).toMatchObject({ allowed: false, code: "unattended_sandbox_required" });
-		const context = new TaskContextBuilder().build({ task, agent: main, evidence: [], agents: [main] });
+		const context = new TaskContextBuilder().build({ task, agent: main, evidence: [] });
 		expect(context).toContain("<goal>finish safely</goal>");
 		expect(context).toContain("<acceptance>");
+		expect(context).toContain("<tool_policy>");
+		expect(context).not.toContain("<delegation_scope>");
+		expect(context).not.toContain("<agent_roster>");
 		store.close();
 	});
 });

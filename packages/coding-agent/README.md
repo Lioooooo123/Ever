@@ -2,28 +2,27 @@
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-## Sessions and Goals
+## Tasks and Sessions
 
-Ever is Session-native. Normal prompts use the same interactive Session, history, resume, branching, and compaction flow. Long-running autonomous work is opt-in through `/goal` inside that Session.
+Ever is Task-first. Every public execution creates, resumes, or controls a durable Task. A Session is the Task's internal execution and conversation record; it is not a separate public CLI workflow.
 
 ```bash
-# Open Ever
+# Open Task Home
 ever
 
-# Start with an ordinary prompt
+# Create a Task and enter its TUI
 ever "inspect this repository and explain the architecture"
 
-# Or open the TUI and start a long-running Goal
-ever
-/goal refactor the repository and run the focused tests
-/goal status
+# Create a detached Task
+ever "refactor the repository and run the focused tests" --detach --yes
 
-# Resume the same Session later
-ever --continue
-ever --resume
+# Reopen or control a Task
+ever attach <task-id>
+ever status <task-id>
+/goal status
 ```
 
-`/goal` creates a durable Task and attaches the current Session to its native execution lifecycle. Task Store owns the Goal, budget, progress, checkpoints, evidence, permissions, and recovery state; the extension does not run a second continuation loop. Use `/goal status`, `/goal pause`, `/goal resume`, `/goal blocked <reason>`, and `/goal cancel` to control the attached Task. Completion is accepted only through evidence-backed `task_update` verification.
+The CLI creates the durable Task before starting its Session. Task Store owns the Goal, budget, progress, checkpoints, evidence, permissions, and recovery state. Inside an attached Task, `/goal status`, `/goal pause`, `/goal resume`, `/goal blocked <reason>`, and `/goal cancel` are convenience controls for that same Task; `/goal` does not create a parallel Goal state machine. Completion is accepted only through evidence-backed `task_update` verification.
 
 The same Task can be resumed by a resident Worker after the client exits and reopened through `ever task`.
 
@@ -37,7 +36,7 @@ Ever runs in four modes: interactive, print or JSON, RPC for process integration
 
 ## Table of Contents
 
-- [Sessions and Goals](#sessions-and-goals)
+- [Tasks and Sessions](#tasks-and-sessions)
 - [Quick Start](#quick-start)
 - [Providers & Models](#providers--models)
 - [Interactive Mode](#interactive-mode)
@@ -170,8 +169,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
-| `/goal [objective]` | Create a durable Task and attach it to this Session |
-| `/goal status\|pause\|resume\|blocked\|cancel` | Control the attached durable Task |
+| `/goal status\|pause\|resume\|blocked\|cancel` | Control the current durable Task |
 | `/trust` | Save project trust decision for future sessions (restart required) |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
@@ -218,7 +216,7 @@ Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUp
 
 ## Sessions
 
-A Session is Ever's execution and conversation record. Use `--continue`, `--resume`, `--session`, `--session-id`, and `--fork` to return to or branch existing work. `/goal` creates a durable Task whose Attempt adopts the settled Session; Task state remains in Task Store rather than being copied into the transcript. See [Session details](docs/sessions.md).
+A Session is a Task Agent's execution and conversation record. The public CLI resumes work with `ever attach <task-id>`; `--continue`, `--resume`, `--session`, `--session-id`, and `--fork` are reserved for Ever's internal Task-to-Session bridge. Task state remains in Task Store rather than being copied into the transcript. SDK consumers may still manage standalone Sessions directly. See [Session details](docs/sessions.md).
 
 ### Compaction
 
@@ -444,7 +442,7 @@ See [docs/rpc.md](docs/rpc.md) for the protocol.
 
 ## Design principles
 
-Ever is Session-native. Ordinary interaction stays conversational and user-driven; `/goal` promotes one objective into a durable Task while retaining the current Session transcript.
+Ever is Task-first and Session-powered. Public execution begins with a durable Task; `AgentSessionRuntime` remains the single model, tool, context, transcript, and compaction kernel inside each Task Attempt.
 
 The native Task lifecycle is `reasoning -> execute -> observe -> verify -> repair`, repeated until acceptance passes, a budget pauses execution, or the Task waits for user or external input. The same lifecycle owns checkpoints, leases, permissions, continuation, and Worker recovery; there is no separate Goal Mode state machine.
 
@@ -455,8 +453,10 @@ Extensions, skills, prompt templates, and packages customize execution without c
 ## CLI Reference
 
 ```bash
-ever [prompt] [options]
+ever [goal] [task-options]
 ```
+
+Run `ever` without arguments for Task Home. `ever <goal>` creates a foreground Task; add `--detach --yes` for unattended execution. Use `ever tasks`, `ever status <task-id>`, `ever attach <task-id>`, and `ever pause|resume|cancel|stop <task-id>` to manage it. Session-selection flags are internal and rejected at the public CLI boundary.
 
 ### Package Commands
 
@@ -481,11 +481,11 @@ ever config                    # Enable/disable package resources
 
 | Flag | Description |
 |------|-------------|
-| (default) | Interactive mode |
-| `-p`, `--print` | Print response and exit |
-| `--mode json` | Output all events as JSON lines (see [docs/json.md](docs/json.md)) |
-| `--mode rpc` | RPC mode for process integration (see [docs/rpc.md](docs/rpc.md)) |
-| `--export <in> [out]` | Export session to HTML |
+| (default) | Create a foreground Task and enter its TUI |
+| `-p`, `--print` | Print the foreground Task result and exit |
+| `--mode json` | Output Task execution events as JSON lines |
+| `--mode rpc` | Task JSONL RPC for process integration |
+| `--detach --yes` | Authorize and submit an unattended Task |
 
 In print mode, ever also reads piped stdin and merges it into the initial prompt:
 
@@ -557,11 +557,11 @@ ever @code.ts @test.ts "Review these files"
 ### Examples
 
 ```bash
-# Interactive with initial prompt
+# Foreground Task
 ever "List all .ts files in src/"
 
-# Non-interactive
-ever -p "Summarize this codebase"
+# Detached Task
+ever "Run the focused checks and fix failures" --detach --yes
 
 # Non-interactive with piped stdin
 cat README.md | ever -p "Summarize this text"

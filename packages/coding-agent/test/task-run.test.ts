@@ -33,16 +33,8 @@ describe("activateTaskRun", () => {
 			clientId: "test-cli",
 		});
 
-		expect(args).toEqual(
-			expect.arrayContaining([
-				"--provider",
-				"openai-codex",
-				"--model",
-				"gpt-5.4",
-				"--append-system-prompt",
-				"复用原 Ever TUI",
-			]),
-		);
+		expect(args).toEqual(["--provider", "openai-codex", "--model", "gpt-5.4", "复用原 Ever TUI"]);
+		expect(args).not.toContain("--append-system-prompt");
 		expect(getTaskRunContext()).toMatchObject({ taskId: task.id, acceptRuntimeDrift: false });
 	});
 });

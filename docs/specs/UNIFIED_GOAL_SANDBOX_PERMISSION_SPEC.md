@@ -1,6 +1,6 @@
 # Ever 统一 Goal、Session Sandbox 与自动权限技术规范
 
-- 状态：Proposed
+- 状态：Partially superseded；权限与 sandbox 设计仍为 Proposed，CLI/Goal 入口以 Task-first 规范为准
 - 版本：0.1
 - 日期：2026-08-14
 - 关联规范：[EVER_ARCHITECTURE_OPTIMIZATION_SPEC.md](./EVER_ARCHITECTURE_OPTIMIZATION_SPEC.md)、[LONG_RUNNING_CONTROL_PLANE_SPEC.md](./LONG_RUNNING_CONTROL_PLANE_SPEC.md)、[NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md](./NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md)、[TECHNICAL_SPEC.md](./TECHNICAL_SPEC.md)
@@ -8,7 +8,7 @@
 
 ## 1. 决策摘要
 
-Ever 只保留一种长程执行模式。Goal 是 Task 的目标，不是独立运行模式。`/goal` 是创建或附着持久 Task 的命令 adapter，不拥有状态机、continuation、预算或完成判定。
+Ever 只保留一种长程执行模式。Goal 是 Task 的目标，不是独立运行模式。公开 CLI 在 Session 启动前创建或选择 Task；`/goal` 只控制当前已附着 Task，不创建或附着另一套 Task，也不拥有状态机、continuation、预算或完成判定。
 
 每个公开 Session 在启动时进入长寿命 OS sandbox。一个 resident Worker 持有一个 `AgentSessionRuntime`，同一 sandbox 连续执行多个 Turn，不为每个 Turn 或工具调用重复初始化 sandbox。普通交互、Goal 执行、后台续跑、恢复和 attach 使用同一 Session 执行链。
 
@@ -118,7 +118,7 @@ OS sandbox 只能在进程启动前可靠建立。Session 已经在宿主进程�
 | Grant | 用户或受限自动审批产生的持久授权 |
 | Risk Review | 对确定性规则无法判断的 Tool Intent 进行的结构化 LLM 风险评估 |
 
-不存在独立的“Session Goal”和“Long Task Goal”。`/goal` 只是 Task Application 的命令入口。
+不存在独立的“Session Goal”和“Long Task Goal”。公开 CLI 是 Task Application 的创建入口，`/goal` 是当前 Task 的控制入口。
 
 ## 6. 核心不变量
 
@@ -170,9 +170,9 @@ flowchart LR
 统一执行链：
 
 ```text
-/goal <objective>
+ever <goal>
   -> TaskApplication 创建 Task
-  -> SessionExecutionHost 启动或采用已 sandboxed 的 resident Session
+  -> SessionExecutionHost 启动或恢复已 sandboxed 的 resident Session
   -> NativeLongTaskAgent 领取 Attempt
   -> AgentSession 执行 Turn
   -> PermissionKernel 授权每个 Tool Intent
@@ -181,17 +181,15 @@ flowchart LR
   -> AcceptanceRunner 决定完成
 ```
 
-## 8. `/goal` 语义
+## 8. `/goal` 控制语义
 
 ### 8.1 命令职责
 
-`/goal <objective>` 只负责：
+`/goal status|pause|resume|blocked|cancel` 只负责：
 
-1. 校验当前 Session 是否运行在可用于长程执行的 sandbox environment。
-2. 通过 Task Application 创建 durable Task。
-3. 将当前 Session ID 和最近 settled entry 绑定为首次 Attempt 的恢复基线。
-4. 将当前客户端 attach 到对应 Worker。
-5. 显示 Task ID、Goal、预算、sandbox 和权限摘要。
+1. 读取当前进程内的 Task/Agent identity。
+2. 通过 Task Application 查询或控制同一个 durable Task。
+3. 显示 Task ID、Goal、预算、sandbox 和权限摘要。
 
 `/goal` 不负责：
 
@@ -201,11 +199,11 @@ flowchart LR
 - 判断完成。
 - 保存 blocker 或 evidence 的第二份副本。
 
-### 8.2 Session 采用
+### 8.2 Session 创建与恢复
 
-所有公开交互 Session 启动时已进入 sandbox，因此 `/goal` 可以采用当前 Session，而不迁移进程。采用过程只能在 Session settled 时完成。
+所有公开交互 Session 都由 Task bridge 启动或从 settled checkpoint 恢复。不存在先创建公开临时 Session、再由 `/goal` 原地采用的产品路径。
 
-采用后：
+Task bridge 启动后：
 
 - Session ID 保持不变。
 - transcript 和 compaction 历史保持不变。
@@ -213,7 +211,7 @@ flowchart LR
 - 后续 continuation 只由 `NativeLongTaskAgent` 驱动。
 - 客户端退出不终止 Worker。
 
-如果 Session 不在可验证 sandbox 中，例如 SDK 调用方显式创建 trusted host Session，`/goal` 必须拒绝原地采用，并提示用户在 sandbox Worker 中重新打开 Session。系统不得声称单独包装 Bash 等价于完整 Session sandbox。
+SDK 调用方仍可显式创建 standalone Session，但它不属于 Ever CLI 的 durable Task 产品路径，也不能通过 `/goal` 原地升级为 Task。系统不得声称单独包装 Bash 等价于完整 Session sandbox。
 
 ### 8.3 旧 Goal extension
 
@@ -818,7 +816,7 @@ TUI、`task show` 和 `daemon workers` 至少显示：
 
 ### 23.3 Sandbox 集成测试
 
-- 普通 Session、`/goal`、后台恢复使用相同 Host。
+- 前台 Task、后台 Task、attach 恢复使用相同 Host。
 - Session 启动前建立 sandbox。
 - Worker 内连续多个 Turn 不重建 sandbox。
 - workspace 外读写、secret 读取、其他 worktree 写入失败。
@@ -829,8 +827,8 @@ TUI、`task show` 和 `daemon workers` 至少显示：
 
 ### 23.4 Goal 统一回归
 
-- `/goal` 创建一个 Task，不创建 extension Goal state。
-- 当前 settled Session 被同一 Task Attempt 采用。
+- `ever <goal>` 创建一个 Task，不创建 extension Goal state。
+- 新 Task 创建 Session，已有 Task 从 settled checkpoint 恢复。
 - continuation 只由 `NativeLongTaskAgent` 触发。
 - pause、resume、blocked、budget 和 completion 只有一份 durable 状态。
 - Acceptance 未通过时模型不能完成 Task。
@@ -908,8 +906,8 @@ TUI、`task show` 和 `daemon workers` 至少显示：
 
 范围：
 
-- `/goal` 改为 Task Application adapter。
-- 支持 settled Session adoption 和首次 checkpoint。
+- `/goal` 收缩为当前 Task 的控制 adapter。
+- 由 CLI Task bridge 创建 Session 或恢复 settled checkpoint。
 - continuation、budget、progress、evidence 和 completion 全部迁入 `NativeLongTaskAgent`。
 - 删除 `extensions/goal.ts` 状态机。
 - 增加旧 Session goal entry 的只读迁移提示。
@@ -993,7 +991,7 @@ TUI、`task show` 和 `daemon workers` 至少显示：
 发布自动审批前必须完成：
 
 1. 一个真实 Goal 连续运行不少于 20 个 Turn。
-2. 普通交互转为 `/goal` 后保持同一 Session ID。
+2. `ever attach <task-id>` 从 settled checkpoint 恢复同一 Task 的 Session。
 3. 客户端退出并重新 attach，Task 和审批状态完整。
 4. 至少一次 sandbox profile 变化与 checkpoint-restart。
 5. 至少一次 reviewer allow once、一次 ask、一次 deny。

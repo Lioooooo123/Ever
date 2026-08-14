@@ -1,6 +1,6 @@
 # Ever 产品定位与原生长程 Agent 架构
 
-- 状态：Proposed
+- 状态：Accepted，实施中
 - 日期：2026-08-12
 - 目标分支：`zh/native-long-running-agent`
 - 相关规范：[`TECHNICAL_SPEC.md`](./TECHNICAL_SPEC.md)、[`LONG_RUNNING_CONTROL_PLANE_SPEC.md`](./LONG_RUNNING_CONTROL_PLANE_SPEC.md)
@@ -57,9 +57,9 @@ ever run "升级依赖并修复测试" --verify "npm run check"
 
 首发公开命令收敛为 `run`、`status`、`attach` 和 `stop`。高级 Task、Daemon 和诊断命令可以保留，但不要求普通用户理解 Task、Agent、Attempt、lease 或 fencing token。
 
-## 3. 当前问题
+## 3. 已收敛的问题与剩余工作
 
-当前长程任务通过多处接线进入普通 Ever Runtime：
+长程任务仍通过 Task bridge 进入同一个 Ever Runtime：
 
 ```text
 ever <goal>
@@ -72,12 +72,12 @@ ever <goal>
   -> attachLongTaskRuntime
 ```
 
-这产生四个结构问题：
+入口和生命周期 seam 已按以下边界收敛：
 
-1. **入口语义分裂**：同一个 `ever` 既可能创建持久 Task，也可能进入普通临时 Session。
-2. **生命周期分裂**：Worker、CLI、环境变量、Extension 和 Runtime 分别掌握一部分执行状态。
-3. **安全门禁可选**：长程 Tool Policy 通过 Extension hook 接入，结构上仍像附加功能。
-4. **恢复路径隐式**：Task 和 Agent identity 通过进程环境变量传递，调用方难以从 interface 看出执行约束。
+1. **唯一公开入口**：`ever` 和 `ever <goal>` 都先创建或选择持久 Task；Session 参数只供内部 bridge 使用。
+2. **唯一上下文注入**：`NativeLongTaskAgent.before_turn` 动态构建一次 `<long_task>`；`task run` 不再静态追加重复 prompt。
+3. **原生安全门禁**：预算、权限、checkpoint、continuation 和 acceptance 位于 `AgentSessionLifecycle` 必经路径。
+4. **单 Agent 首发上下文**：V0.1 只注入当前 Main Agent identity 和 tool policy，不向模型暴露 roster 或 delegation 语义。
 
 问题不在于 Extension 机制本身。用户 Extension 仍适合提供工具、资源和界面增强。问题在于持久性、安全、预算和恢复属于 Ever 的核心语义，不应由 Extension 承担。
 
@@ -390,7 +390,7 @@ await taskStore.persistResult()
 
 该阶段完成后，长程正确性不再依赖 Extension、环境变量或 listener 执行时序。
 
-### 阶段三：收拢唯一入口
+### 阶段三：收拢唯一入口（已完成）
 
 - `ever` 默认进入 Task 创建或管理界面。
 - 所有执行模式必须解析为 Task。

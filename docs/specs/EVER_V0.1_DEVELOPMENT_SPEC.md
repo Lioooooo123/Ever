@@ -53,7 +53,7 @@ Ever 继续拥有 Provider、模型、认证、流式生成、Agent Loop、工�
 
 职责是将 Task 状态投影为 Ever CLI 参数，同时设置进程内 Task 上下文。它不是新的执行器。
 
-- 新 Task：附加 durable context，并提交一次原始 goal。
+- 新 Task：提交一次原始 goal；durable context 由 `NativeLongTaskAgent.before_turn` 动态注入一次。
 - 已有 checkpoint：打开 checkpoint Session，但不提交原始 goal。
 - 终态 Task：拒绝运行。
 
@@ -133,7 +133,7 @@ Ever workspace 包可以继续作为内部上游依赖存在；是否 fork/改�
 ### Phase 5：文档与删除
 
 - 以本 Spec、`EVER_PRD_V0.1.md` 和 `NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md` 为事实源收敛旧文档。
-- 经确认后删除无消费者的自建 Task Home、旧 attach event TUI 和过期技术规格入口。
+- 保留 Task Home 作为无参数 CLI 的唯一创建与管理入口；经确认后删除旧 attach event TUI 和过期技术规格入口。
 
 ## 7. 非目标
 

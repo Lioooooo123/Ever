@@ -65,39 +65,25 @@ describe("Session durable Goal lifecycle", () => {
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
-	it("adapts /goal to a Task and never schedules extension-owned continuation", async () => {
+	it("rejects creating a second Task through /goal", async () => {
 		const harness = await createHarness({ extensionFactories: [{ name: "goal", factory: goalExtension }] });
 		harnesses.push(harness);
 		const host = bindGoalHost(harness);
-		harness.setResponses([fauxAssistantMessage("first durable step")]);
-		const settled = new Promise<void>((resolve) => {
-			const unsubscribe = harness.session.subscribe((event) => {
-				if (event.type !== "agent_settled") return;
-				unsubscribe();
-				resolve();
-			});
-		});
 
 		await harness.session.prompt("/goal finish the migration");
-		await settled;
 
-		expect(host.start).toHaveBeenCalledWith("finish the migration");
-		expect(
-			harness.session.messages.filter(
-				(message) => message.role === "custom" && message.customType === "durable-goal-start",
-			),
-		).toHaveLength(1);
-		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
-		expect(harness.getPendingResponseCount()).toBe(0);
+		expect(host.start).not.toHaveBeenCalled();
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(0);
 	});
 
-	it("leaves retry recovery to AgentSession without creating a second Goal turn", async () => {
+	it("leaves retry recovery to AgentSession without Goal-owned continuation", async () => {
 		const harness = await createHarness({
 			extensionFactories: [{ name: "goal", factory: goalExtension }],
 			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } },
 		});
 		harnesses.push(harness);
-		bindGoalHost(harness);
+		const host = bindGoalHost(harness);
+		await host.start("recover before continuing");
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
 			fauxAssistantMessage("recovered step"),
@@ -110,16 +96,12 @@ describe("Session durable Goal lifecycle", () => {
 			});
 		});
 
-		await harness.session.prompt("/goal recover before continuing");
+		await harness.session.prompt("continue the attached Task");
 		await settled;
 
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(1);
 		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
-		expect(
-			harness.session.messages.filter(
-				(message) => message.role === "custom" && message.customType === "durable-goal-start",
-			),
-		).toHaveLength(1);
+		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 });
