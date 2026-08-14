@@ -3,8 +3,7 @@ import { createInMemoryTaskStore, type RuntimeSnapshot, runtimeSnapshotHash, Tas
 
 const profileSha256 = "b".repeat(64);
 
-function createRunningAttempt() {
-	const store = createInMemoryTaskStore(() => new Date("2026-08-14T00:00:00.000Z"));
+function createRunningAttempt(store = createInMemoryTaskStore(() => new Date("2026-08-14T00:00:00.000Z"))) {
 	const controller = new TaskController(store);
 	const task = controller.submit(
 		controller.create({
@@ -139,6 +138,39 @@ describe("durable permission grants", () => {
 			}),
 		);
 		store.close();
+	});
+
+	it("rejects audit records associated with an Attempt from another Task", () => {
+		const first = createRunningAttempt();
+		const second = createRunningAttempt(first.store);
+		const auditIdentity = {
+			taskId: first.task.id,
+			attemptId: second.context.attempt.id,
+			intentSha256: "a".repeat(64),
+		};
+
+		expect(() =>
+			first.store.recordRiskReview({
+				...auditIdentity,
+				modelProvider: "test",
+				modelId: "reviewer",
+				promptSha256: "b".repeat(64),
+				inputSha256: "c".repeat(64),
+				outputSha256: "d".repeat(64),
+				verdict: "ask",
+				risk: "medium",
+				confidence: 0.8,
+			}),
+		).toThrow("Attempt does not belong to the Task");
+		expect(() =>
+			first.store.recordPermissionDecision({
+				...auditIdentity,
+				operationId: "cross-task-operation",
+				action: "deny",
+				source: "user",
+			}),
+		).toThrow("Attempt does not belong to the Task");
+		first.store.close();
 	});
 
 	it("invalidates grants on profile drift and suppresses repeated user-denied intents per Attempt", () => {

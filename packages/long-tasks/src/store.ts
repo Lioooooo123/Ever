@@ -712,6 +712,8 @@ export class SqliteTaskStore {
 		confidence: number;
 	}): string {
 		this.requireTask(input.taskId);
+		if (input.attemptId !== undefined && this.getAttempt(input.attemptId)?.taskId !== input.taskId)
+			throw new Error("Risk Review Attempt does not belong to the Task");
 		for (const hash of [input.intentSha256, input.promptSha256, input.inputSha256, input.outputSha256]) {
 			if (!/^[a-f0-9]{64}$/.test(hash)) throw new TypeError("Invalid Risk Review hash");
 		}
@@ -771,6 +773,8 @@ export class SqliteTaskStore {
 		reasonCode?: string;
 	}): string {
 		this.requireTask(input.taskId);
+		if (input.attemptId !== undefined && this.getAttempt(input.attemptId)?.taskId !== input.taskId)
+			throw new Error("Permission decision Attempt does not belong to the Task");
 		const id = randomUUID();
 		const now = this.now().toISOString();
 		executeTransaction(this.database, () => {
