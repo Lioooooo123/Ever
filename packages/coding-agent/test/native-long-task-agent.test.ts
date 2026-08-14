@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage } from "@lioooooo123/ever-ai";
 import {
 	DEFAULT_CONTINUATION_POLICY,
+	type RuntimeSnapshot,
 	SqliteTaskStore,
 	TaskController,
 	VerifiedCompletion,
@@ -13,7 +14,11 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSessionLifecycle, AgentSessionLifecycleEvent } from "../src/core/agent-session-lifecycle.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
-import { attachLongTaskRuntime, waitForEvalEffectRelease } from "../src/core/long-task-runtime.ts";
+import {
+	attachLongTaskRuntime,
+	waitForEvalEffectRelease,
+	waitForLongTaskDispatchTerminal,
+} from "../src/core/long-task-runtime.ts";
 
 const temporaryPaths: string[] = [];
 
@@ -25,10 +30,12 @@ function createRuntimeAdapter(workspaceRoot: string, sessionId: string) {
 	let lifecycle: AgentSessionLifecycle | undefined;
 	let idle = true;
 	const prompts: string[] = [];
+	const messages: Array<ReturnType<typeof fauxAssistantMessage>> = [];
 	return {
 		cwd: workspaceRoot,
 		session: {
 			sessionId,
+			state: { messages },
 			model: {
 				provider: "test",
 				id: "faux",
@@ -48,6 +55,7 @@ function createRuntimeAdapter(workspaceRoot: string, sessionId: string) {
 			},
 		},
 		prompts,
+		messages,
 		setIdle(value: boolean) {
 			idle = value;
 		},
@@ -78,6 +86,300 @@ function createRuntimeAdapter(workspaceRoot: string, sessionId: string) {
 }
 
 describe("NativeLongTaskAgent", () => {
+	it("terminates the resident runtime when lease renewal fails", async () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-native-lease-failure-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspaceRoot = join(root, "workspace");
+		mkdirSync(workspaceRoot);
+		const store = SqliteTaskStore.open({
+			databasePath: join(agentDir, "long-tasks.sqlite"),
+			artifactsRoot: join(agentDir, "tasks"),
+		});
+		const controller = new TaskController(store);
+		const task = controller.create({
+			title: "lease failure",
+			goal: "stop the worker",
+			acceptance: [],
+			budget: { maxTurns: 5, maxWallTimeMinutes: 60 },
+			workspaceRoot,
+			workspaceFingerprint: "fingerprint",
+		});
+		controller.submit(task.id);
+		const agent = store.listAgents(task.id)[0]!;
+		store.close();
+		const previousHeartbeat = process.env.EVER_WORKER_HEARTBEAT_SECONDS;
+		const renewLease = SqliteTaskStore.prototype.renewLease;
+		process.env.EVER_WORKER_HEARTBEAT_SECONDS = "0.01";
+		try {
+			const runtime = createRuntimeAdapter(workspaceRoot, "lease-session");
+			const running = await attachLongTaskRuntime(
+				runtime as unknown as AgentSessionRuntime,
+				agentDir,
+				task.id,
+				agent.id,
+				false,
+				DEFAULT_CONTINUATION_POLICY,
+			);
+			SqliteTaskStore.prototype.renewLease = () => {
+				throw new Error("lease renewal failed");
+			};
+			await expect(
+				waitForLongTaskDispatchTerminal(runtime as unknown as AgentSessionRuntime),
+			).resolves.toBeUndefined();
+			await expect(running.drainAndClose()).rejects.toThrow("lease renewal failed");
+		} finally {
+			SqliteTaskStore.prototype.renewLease = renewLease;
+			if (previousHeartbeat === undefined) delete process.env.EVER_WORKER_HEARTBEAT_SECONDS;
+			else process.env.EVER_WORKER_HEARTBEAT_SECONDS = previousHeartbeat;
+		}
+	});
+
+	it("does not finalize a subagent from a pre-compaction checkpoint", async () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-native-subagent-recovery-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspaceRoot = join(root, "workspace");
+		mkdirSync(workspaceRoot);
+		const databasePath = join(agentDir, "long-tasks.sqlite");
+		const store = SqliteTaskStore.open({ databasePath, artifactsRoot: join(agentDir, "tasks") });
+		const controller = new TaskController(store);
+		const task = controller.create({
+			title: "recover compacting subagent",
+			goal: "continue after checkpoint crash",
+			acceptance: [],
+			budget: { maxTurns: 5, maxWallTimeMinutes: 60 },
+			workspaceRoot,
+			workspaceFingerprint: "fingerprint",
+		});
+		const main = store.listAgents(task.id)[0]!;
+		const delegated = store.createDelegation({
+			actor: main,
+			operationKey: "recover-compacting-worker",
+			name: "recoverer",
+			role: "worker",
+			objective: "continue after compaction",
+			acceptance: [],
+			paths: [workspaceRoot],
+			allowedTools: [],
+			workspaceMode: "read_only_shared",
+			budget: { maxTurns: 5, maxWallTimeMinutes: 10 },
+			required: true,
+		});
+		controller.submit(task.id);
+		const snapshot: RuntimeSnapshot = {
+			everVersion: "test",
+			upstreamCommit: "test",
+			protocolVersion: 1,
+			model: { provider: "test", id: "faux", thinkingLevel: "medium" },
+			systemPromptSha256: "prompt",
+			contextFiles: [],
+			resources: [],
+			toolPolicySha256: "tools",
+			sandboxPolicySha256: "sandbox",
+		};
+		const runtimeHash = "a".repeat(64);
+		const claim = store.claimAttempt({
+			agentId: delegated.agentId,
+			sessionId: "recovered-session",
+			runtimeSnapshot: snapshot,
+			runtimeSnapshotSha256: runtimeHash,
+			workerId: "crashed-worker",
+			executionId: "crashed-execution",
+		});
+		const context = store.resolveAttemptClaim(claim);
+		store.commitCheckpoint({
+			taskId: task.id,
+			agentId: delegated.agentId,
+			attemptId: context.attempt.id,
+			lease: context.lease,
+			sessionCheckpoint: {
+				sessionId: "recovered-session",
+				settledTurnIndex: 1,
+				runtimeSnapshotSha256: runtimeHash,
+				createdAt: new Date().toISOString(),
+			},
+			progress: {
+				summary: "compaction checkpoint persisted",
+				completedItems: [],
+				nextActions: [],
+				blockers: [],
+				filesRead: [],
+				filesModified: [],
+				verification: [],
+				consumedMessageIds: [],
+				outboundMessageIds: [],
+			},
+			evidence: [],
+			workspaceSnapshot: {},
+		});
+		store.releaseLease(context.lease);
+		store.transitionAgent(delegated.agentId, "queued", "crash_recovery");
+		store.close();
+
+		const runtime = createRuntimeAdapter(workspaceRoot, "recovered-session");
+		runtime.messages.push({ ...fauxAssistantMessage("call a tool next"), stopReason: "toolUse" });
+		const running = await attachLongTaskRuntime(
+			runtime as unknown as AgentSessionRuntime,
+			agentDir,
+			task.id,
+			delegated.agentId,
+			true,
+			DEFAULT_CONTINUATION_POLICY,
+		);
+		let terminal = false;
+		void waitForLongTaskDispatchTerminal(runtime as unknown as AgentSessionRuntime)?.then(() => {
+			terminal = true;
+		});
+		await new Promise((resolve) => setTimeout(resolve, 25));
+		expect(terminal).toBe(false);
+		await running.drainAndClose();
+		const inspection = SqliteTaskStore.open({ databasePath });
+		const dispatch = inspection.listAgentDispatches(delegated.agentId)[0]!;
+		expect(dispatch.state).toBe("running");
+		expect(inspection.listEpisodes({ taskId: task.id, agentId: delegated.agentId })).toEqual([]);
+		inspection.close();
+	});
+
+	it("turns an unreported settled subagent response into a Dispatch-bound raw Episode", async () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-native-subagent-settled-"));
+		temporaryPaths.push(root);
+		const agentDir = join(root, "agent");
+		const workspaceRoot = join(root, "workspace");
+		mkdirSync(workspaceRoot);
+		const databasePath = join(agentDir, "long-tasks.sqlite");
+		const store = SqliteTaskStore.open({ databasePath, artifactsRoot: join(agentDir, "tasks") });
+		const controller = new TaskController(store);
+		const task = controller.create({
+			title: "settled subagent",
+			goal: "retain a raw response",
+			acceptance: [],
+			budget: { maxTurns: 5, maxWallTimeMinutes: 60 },
+			workspaceRoot,
+			workspaceFingerprint: "fingerprint",
+			toolPolicy: {
+				allowedTools: ["read", "agent_report"],
+				allowedPaths: [workspaceRoot],
+				readOnly: false,
+				sandboxRequired: false,
+			},
+		});
+		const main = store.listAgents(task.id)[0]!;
+		const delegated = store.createDelegation({
+			actor: main,
+			operationKey: "delegate-review",
+			name: "reviewer",
+			role: "reviewer",
+			objective: "review the result",
+			acceptance: [{ id: "review", kind: "manual", description: "review supplied" }],
+			paths: [workspaceRoot],
+			allowedTools: ["read", "agent_report"],
+			workspaceMode: "read_only_shared",
+			budget: { maxTurns: 5, maxWallTimeMinutes: 10 },
+			required: true,
+		});
+		controller.submit(task.id);
+		const agent = store.requireAgent(delegated.agentId);
+		const dispatch = store.getRunnableAgentDispatch(agent.id)!;
+		store.close();
+
+		const runtimeAdapter = createRuntimeAdapter(workspaceRoot, "session-subagent");
+		const running = await attachLongTaskRuntime(
+			runtimeAdapter as unknown as AgentSessionRuntime,
+			agentDir,
+			task.id,
+			agent.id,
+			false,
+			DEFAULT_CONTINUATION_POLICY,
+		);
+		const terminalDispatch = waitForLongTaskDispatchTerminal(runtimeAdapter as unknown as AgentSessionRuntime)!;
+		const message = fauxAssistantMessage("review found one actionable issue");
+		await runtimeAdapter.emit({
+			type: "before_request",
+			sessionId: "session-subagent",
+			requestId: "request-subagent",
+			kind: "agent",
+			model: runtimeAdapter.session.model,
+		});
+		await runtimeAdapter.emit({
+			type: "after_response",
+			sessionId: "session-subagent",
+			requestId: "request-subagent",
+			kind: "agent",
+			message,
+			usage: message.usage,
+		});
+		await runtimeAdapter.emit({ type: "settled", sessionId: "session-subagent" });
+		await expect(terminalDispatch).resolves.toBeUndefined();
+		await running.drainAndClose();
+
+		const inspectionStore = SqliteTaskStore.open({ databasePath });
+		const episode = inspectionStore.listEpisodes({ taskId: task.id, agentId: agent.id }).at(-1)!;
+		expect(inspectionStore.requireAgentDispatch(dispatch.id).state).toBe("completed_unaccepted");
+		expect(inspectionStore.getLatestCheckpoint(agent.id, dispatch.id)).toBeUndefined();
+		expect(episode).toMatchObject({
+			dispatchId: dispatch.id,
+			status: "completed_unaccepted",
+			summary: "review found one actionable issue",
+		});
+		expect(episode.originalResponseArtifactRef).toBeTruthy();
+		expect(JSON.parse(readFileSync(episode.originalResponseArtifactRef!, "utf8"))).toMatchObject({
+			schemaVersion: 1,
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "review found one actionable issue" }],
+			},
+		});
+		const secondDispatch = inspectionStore.createAgentDispatch({
+			actor: inspectionStore.listAgents(task.id).find((candidate) => candidate.kind === "main")!,
+			agentId: agent.id,
+			operationKey: "retry-after-truncated-response",
+			action: "retry the review",
+		}).dispatch;
+		inspectionStore.close();
+
+		const retryRuntime = createRuntimeAdapter(workspaceRoot, "session-subagent-retry");
+		const retryRunning = await attachLongTaskRuntime(
+			retryRuntime as unknown as AgentSessionRuntime,
+			agentDir,
+			task.id,
+			agent.id,
+			false,
+			DEFAULT_CONTINUATION_POLICY,
+		);
+		await retryRuntime.emit({
+			type: "before_request",
+			sessionId: "session-subagent-retry",
+			requestId: "request-subagent-retry",
+			kind: "agent",
+			model: retryRuntime.session.model,
+		});
+		const failedMessage = {
+			...fauxAssistantMessage(""),
+			content: [],
+			stopReason: "length" as const,
+		};
+		await retryRuntime.emit({
+			type: "after_response",
+			sessionId: "session-subagent-retry",
+			requestId: "request-subagent-retry",
+			kind: "agent",
+			message: failedMessage,
+			usage: failedMessage.usage,
+		});
+		await retryRuntime.emit({ type: "settled", sessionId: "session-subagent-retry" });
+		await retryRunning.drainAndClose();
+		const retryInspection = SqliteTaskStore.open({ databasePath });
+		expect(retryInspection.requireAgentDispatch(secondDispatch.id).state).toBe("failed");
+		expect(retryInspection.listEpisodes({ taskId: task.id, agentId: agent.id }).at(-1)).toMatchObject({
+			dispatchId: secondDispatch.id,
+			status: "failed",
+			summary: "Subagent did not complete cleanly (length).",
+			blockers: ["Subagent did not complete cleanly (length)."],
+		});
+		retryInspection.close();
+	});
+
 	it("journals Provider and tool boundaries through the awaited lifecycle", async () => {
 		const root = mkdtempSync(join(tmpdir(), "ever-native-agent-"));
 		temporaryPaths.push(root);

@@ -1,29 +1,17 @@
-import { join } from "node:path";
-import { type FlowDefinition, SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
+import type { FlowDefinition } from "@lioooooo123/ever-long-tasks";
 import { Text } from "@lioooooo123/ever-tui";
 import { Type } from "typebox";
-import { requestDaemon, startDaemon } from "../cli/daemon-command.ts";
 import { getAgentDir } from "../config.ts";
+import { resolveTaskMainCoordinationActor } from "../core/coordination-actor.ts";
 import type { ExtensionAPI } from "../core/extensions/types.ts";
 import { defineFlowForTask, FlowDefinitionSchema, getFlowStatus } from "../core/native-coordination-tools.ts";
 
 const FLOW_START_MESSAGE_TYPE = "flow-start";
-const FLOW_TOOLS = ["flow_define", "flow_status", "session_message", "session_inbox", "session_address", "task_update"];
-
-function mainAgentId(taskId: string): string {
-	const agentDir = getAgentDir();
-	const store = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
-	try {
-		const main = store.listAgents(taskId).find((agent) => agent.kind === "main");
-		if (!main) throw new Error(`Task ${taskId} has no main Agent`);
-		return main.id;
-	} finally {
-		store.close();
-	}
-}
+const FLOW_TOOLS = ["flow_define", "flow_status", "agent_message", "agent_inbox", "task_update"];
 
 function formatStatus(taskId: string): string {
-	const status = getFlowStatus(getAgentDir(), taskId);
+	const agentDir = getAgentDir();
+	const status = getFlowStatus(agentDir, taskId, resolveTaskMainCoordinationActor(agentDir, taskId).agentId);
 	if (!status.flow) return `FLOW ${taskId.slice(0, 8)}  awaiting definition`;
 	return [
 		`FLOW ${status.flow.id.slice(0, 8)}  ${status.flow.state}`,
@@ -62,10 +50,12 @@ export default function flowExtension(ever: ExtensionAPI): void {
 			const goal = ctx.durableGoal.status();
 			if (!goal || goal.executionMode !== "flow")
 				throw new Error("/flow must start a Flow Task before defining its graph");
-			const flow = defineFlowForTask(getAgentDir(), goal.taskId, mainAgentId(goal.taskId), params as FlowDefinition);
-			await startDaemon(getAgentDir());
-			const wake = await requestDaemon(getAgentDir(), { command: "wake", taskId: goal.taskId });
-			if (!wake.ok) throw new Error(wake.message ?? "Daemon rejected Flow dispatch");
+			const flow = await defineFlowForTask(
+				getAgentDir(),
+				goal.taskId,
+				resolveTaskMainCoordinationActor(getAgentDir(), goal.taskId).agentId,
+				params as FlowDefinition,
+			);
 			return {
 				content: [{ type: "text", text: JSON.stringify(flow) }],
 				details: flow,
@@ -81,7 +71,13 @@ export default function flowExtension(ever: ExtensionAPI): void {
 		parameters: Type.Object({}),
 		execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) => {
 			const goal = ctx.durableGoal.status();
-			const status = goal ? getFlowStatus(getAgentDir(), goal.taskId) : { flow: undefined };
+			const status = goal
+				? getFlowStatus(
+						getAgentDir(),
+						goal.taskId,
+						resolveTaskMainCoordinationActor(getAgentDir(), goal.taskId).agentId,
+					)
+				: { flow: undefined };
 			return { content: [{ type: "text", text: JSON.stringify(status) }], details: status };
 		},
 	});
@@ -134,7 +130,7 @@ export default function flowExtension(ever: ExtensionAPI): void {
 						`Orchestrate Flow ${goal.taskId.slice(0, 8)}: ${input}`,
 						"You are the Orchestrator. Do not execute the work directly.",
 						"Use flow_define once to create a bounded DAG. Independent nodes should run concurrently.",
-						"Use session_message for steering and sibling communication. Use flow_status to observe Episodes.",
+						"Use agent_message for steering and sibling communication. Use agent_inbox to read Task-local messages.",
 						"When every required node is accepted, call task_update complete with evidence.",
 					].join("\n"),
 					display: true,

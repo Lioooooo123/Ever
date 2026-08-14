@@ -366,6 +366,32 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 					websocketConnectTimeoutMs,
 					maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 					maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+					onPayload: async (payload) => {
+						const runner = extensionRunnerRef.current;
+						const prepared = runner?.hasHandlers("before_provider_request")
+							? await runner.emitBeforeProviderRequest(payload)
+							: payload;
+						if (runner?.hasHandlers("provider_request_prepared")) {
+							await runner.emit({
+								type: "provider_request_prepared",
+								requestId,
+								requestKind,
+								payload: prepared,
+							});
+						}
+						return prepared;
+					},
+					onResponse: async (providerResponse) => {
+						const runner = extensionRunnerRef.current;
+						if (!runner?.hasHandlers("after_provider_response")) return;
+						await runner.emit({
+							type: "after_provider_response",
+							requestId,
+							requestKind,
+							status: providerResponse.status,
+							headers: providerResponse.headers,
+						});
+					},
 					transformHeaders: async (requestHeaders) => {
 						const headers = mergeProviderAttributionHeaders(
 							model,
@@ -467,24 +493,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				wrapped.push({ type: "error", reason: "error", error: message });
 			});
 			return wrapped;
-		},
-		onPayload: async (payload, _model) => {
-			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
-				return payload;
-			}
-			return runner.emitBeforeProviderRequest(payload);
-		},
-		onResponse: async (response, _model) => {
-			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("after_provider_response")) {
-				return;
-			}
-			await runner.emit({
-				type: "after_provider_response",
-				status: response.status,
-				headers: response.headers,
-			});
 		},
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {

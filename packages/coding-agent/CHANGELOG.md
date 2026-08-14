@@ -10,7 +10,7 @@
 
 ### Added
 
-- Added `/flow` for durable DAG orchestration across concurrent Agent Sessions, reusable Agent delegation and messaging tools, persistent Episodes and Handoffs, and cross-Session messaging for ordinary Sessions.
+- Added `/flow` for durable DAG orchestration and reusable `agent_spawn`, `agent_dispatch`, `agent_message`, `agent_inbox`, and `agent_report` tools for named Agents across ordinary Sessions, with fresh Dispatch Sessions, persistent Episodes, and durable cross-Session delivery.
 
 ## [0.0.1] - 2026-08-14
 

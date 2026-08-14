@@ -3,6 +3,7 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
  * Local test harness for the new coding-agent test suite.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -110,6 +111,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const toolMap = options.tools ? Object.fromEntries(options.tools.map((tool) => [tool.name, tool])) : undefined;
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	let providerRequestId: string | undefined;
 
 	const sessionManager = SessionManager.inMemory();
 	const settingsManager = SettingsManager.inMemory(options.settings);
@@ -153,10 +155,19 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		convertToLlm,
 		onPayload: async (payload) => {
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
-				return payload;
+			const prepared = runner?.hasHandlers("before_provider_request")
+				? await runner.emitBeforeProviderRequest(payload)
+				: payload;
+			providerRequestId = randomUUID();
+			if (runner?.hasHandlers("provider_request_prepared")) {
+				await runner.emit({
+					type: "provider_request_prepared",
+					requestId: providerRequestId,
+					requestKind: "agent",
+					payload: prepared,
+				});
 			}
-			return runner.emitBeforeProviderRequest(payload);
+			return prepared;
 		},
 		onResponse: async (response) => {
 			const runner = extensionRunnerRef.current;
@@ -165,6 +176,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			}
 			await runner.emit({
 				type: "after_provider_response",
+				requestId: providerRequestId ?? randomUUID(),
+				requestKind: "agent",
 				status: response.status,
 				headers: response.headers,
 			});

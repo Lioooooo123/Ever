@@ -8,7 +8,12 @@ import {
 	type AcceptanceCriterion,
 	type AcceptanceResult,
 	type AgentCheckpointCommit,
+	type AgentDispatchContextEpisode,
+	type AgentDispatchContextManifest,
+	type AgentDispatchRecord,
+	type AgentDispatchState,
 	type AgentLease,
+	type AgentMessageReceiptInput,
 	type AgentRecord,
 	type AttemptClaimContext,
 	type AttemptRecord,
@@ -19,6 +24,7 @@ import {
 	type ClaimedAttempt,
 	type CompleteTaskAuthorizationSourceInput,
 	type ContinuationDecision,
+	type CoordinationCommand,
 	type CoordinationResult,
 	type CreatePermissionGrantInput,
 	type CreateTaskInput,
@@ -51,6 +57,7 @@ import {
 	type ToolPolicy,
 	type UnfinishedProviderRequest,
 	type UnfinishedToolExecution,
+	type UnsettledAgentMessageReceipt,
 	type WorkspaceSnapshot,
 } from "./types.ts";
 
@@ -72,7 +79,8 @@ try {
 	process.emitWarning = originalEmitWarning;
 }
 
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 10;
+const LIVE_DELIVERY_STALE_AFTER_MS = 35 * 60_000;
 
 const TASK_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
 	draft: ["queued", "cancelled"],
@@ -105,8 +113,8 @@ const AGENT_TRANSITIONS: Readonly<Record<AgentRecord["state"], readonly AgentRec
 	waiting_external: ["queued", "paused", "cancelled"],
 	paused: ["queued", "cancelled"],
 	unknown_outcome: ["queued", "failed", "cancelled"],
-	completed: [],
-	failed: [],
+	completed: ["queued"],
+	failed: ["queued"],
 	cancelled: [],
 };
 
@@ -154,6 +162,8 @@ interface FlowRow {
 	id: string;
 	task_id: string;
 	orchestrator_agent_id: string;
+	operation_key: string;
+	definition_sha256: string;
 	objective: string;
 	state: FlowRecord["state"];
 	created_at: string;
@@ -165,7 +175,9 @@ interface FlowNodeRow {
 	flow_id: string;
 	node_key: string;
 	agent_id: string;
+	dispatch_id: string;
 	delegation_id: string;
+	required: 0 | 1;
 	state: FlowNodeRecord["state"];
 	created_at: string;
 	updated_at: string;
@@ -176,6 +188,7 @@ interface EpisodeRow {
 	id: string;
 	task_id: string;
 	agent_id: string;
+	dispatch_id: string;
 	flow_id: string | null;
 	node_key: string | null;
 	status: EpisodeRecord["status"];
@@ -183,13 +196,33 @@ interface EpisodeRow {
 	evidence_json: string;
 	blockers_json: string;
 	acceptance_results_json: string;
+	original_response_artifact_ref: string | null;
 	created_at: string;
+}
+
+interface AgentDispatchRow {
+	id: string;
+	task_id: string;
+	agent_id: string;
+	actor_agent_id: string | null;
+	operation_key: string;
+	sequence: number;
+	action: string;
+	state: AgentDispatchState;
+	context_manifest_json: string;
+	context_manifest_sha256: string;
+	session_id: string | null;
+	episode_id: string | null;
+	created_at: string;
+	started_at: string | null;
+	settled_at: string | null;
 }
 
 interface EventRow {
 	id: string;
 	task_id: string;
 	agent_id: string | null;
+	dispatch_id: string | null;
 	attempt_id: string | null;
 	seq: number;
 	type: string;
@@ -198,7 +231,7 @@ interface EventRow {
 }
 
 interface MessageRow {
-	state: "queued" | "delivered" | "acknowledged";
+	state: "queued" | "delivering" | "delivered" | "acknowledged";
 	id: string;
 	task_id: string;
 	sender_agent_id: string;
@@ -209,6 +242,15 @@ interface MessageRow {
 	body_json: string;
 	reply_to_message_id: string | null;
 	created_at: string;
+}
+
+interface MessageReceiptRow {
+	message_id: string;
+	recipient_agent_id: string;
+	session_id: string;
+	request_id: string;
+	model_visible_at: string;
+	settled_at: string | null;
 }
 
 interface StoredMessageBody {
@@ -365,6 +407,15 @@ function parseArray<T>(text: string, label: string): T[] {
 	return value as T[];
 }
 
+function canonicalJson(value: unknown): string {
+	if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+	if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+	return `{${Object.entries(value)
+		.sort(([left], [right]) => left.localeCompare(right))
+		.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+		.join(",")}}`;
+}
+
 function taskFromRow(row: TaskRow): TaskRecord {
 	const acceptance = parseArray<AcceptanceCriterion>(row.acceptance_json, "task acceptance");
 	assertSchema("acceptance", acceptance);
@@ -420,10 +471,104 @@ function eventFromRow(row: EventRow): TaskEvent {
 		id: row.id,
 		taskId: row.task_id,
 		...(row.agent_id === null ? {} : { agentId: row.agent_id }),
+		...(row.dispatch_id === null ? {} : { dispatchId: row.dispatch_id }),
 		...(row.attempt_id === null ? {} : { attemptId: row.attempt_id }),
 		seq: row.seq,
 		type: row.type,
 		payload: parseObject(row.payload_json, "event payload"),
+		createdAt: row.created_at,
+	};
+}
+
+function dispatchFromRow(row: AgentDispatchRow): AgentDispatchRecord {
+	const contextManifest = parseObject(row.context_manifest_json, "Agent Dispatch context manifest");
+	if (
+		!/^[a-f0-9]{64}$/.test(row.context_manifest_sha256) ||
+		createHash("sha256").update(row.context_manifest_json).digest("hex") !== row.context_manifest_sha256
+	)
+		throw new Error(`Corrupt Agent Dispatch context manifest hash: ${row.id}`);
+	validateContextManifest(contextManifest, row.id);
+	return {
+		id: row.id,
+		taskId: row.task_id,
+		agentId: row.agent_id,
+		...(row.actor_agent_id === null ? {} : { actorAgentId: row.actor_agent_id }),
+		operationKey: row.operation_key,
+		sequence: row.sequence,
+		action: row.action,
+		state: row.state,
+		contextManifest: contextManifest as unknown as AgentDispatchContextManifest,
+		contextManifestSha256: row.context_manifest_sha256,
+		...(row.session_id === null ? {} : { sessionId: row.session_id }),
+		...(row.episode_id === null ? {} : { episodeId: row.episode_id }),
+		createdAt: row.created_at,
+		...(row.started_at === null ? {} : { startedAt: row.started_at }),
+		...(row.settled_at === null ? {} : { settledAt: row.settled_at }),
+	};
+}
+
+function validateContextEpisode(value: unknown, dispatchId: string): void {
+	if (value === null || typeof value !== "object" || Array.isArray(value))
+		throw new Error(`Corrupt Agent Dispatch context Episode: ${dispatchId}`);
+	const episode = value as Record<string, unknown>;
+	if (
+		typeof episode.id !== "string" ||
+		typeof episode.agentId !== "string" ||
+		episode.status !== "completed" ||
+		typeof episode.summary !== "string" ||
+		!Array.isArray(episode.evidence) ||
+		!Array.isArray(episode.blockers) ||
+		!Array.isArray(episode.acceptanceResults) ||
+		typeof episode.sha256 !== "string"
+	)
+		throw new Error(`Corrupt Agent Dispatch context Episode: ${dispatchId}`);
+	const { sha256, ...content } = episode;
+	if (createHash("sha256").update(JSON.stringify(content)).digest("hex") !== sha256)
+		throw new Error(`Corrupt Agent Dispatch context Episode hash: ${dispatchId}`);
+}
+
+function validateContextManifest(value: Record<string, unknown>, dispatchId: string): void {
+	if (
+		typeof value.action !== "string" ||
+		typeof value.createdAt !== "string" ||
+		!Array.isArray(value.sourceAgentIds) ||
+		!value.sourceAgentIds.every((item) => typeof item === "string") ||
+		!Array.isArray(value.sourceEpisodes)
+	)
+		throw new Error(`Corrupt Agent Dispatch context manifest: ${dispatchId}`);
+	if (value.selfEpisode !== undefined) validateContextEpisode(value.selfEpisode, dispatchId);
+	for (const episode of value.sourceEpisodes) validateContextEpisode(episode, dispatchId);
+}
+
+function contextEpisode(episode: EpisodeRecord): AgentDispatchContextEpisode {
+	const content = {
+		id: episode.id,
+		agentId: episode.agentId,
+		status: "completed" as const,
+		summary: episode.summary.slice(0, 4000),
+		evidence: episode.evidence.slice(0, 32),
+		blockers: episode.blockers.slice(0, 32),
+		acceptanceResults: episode.acceptanceResults.slice(0, 32),
+	};
+	return { ...content, sha256: createHash("sha256").update(JSON.stringify(content)).digest("hex") };
+}
+
+function episodeFromRow(row: EpisodeRow): EpisodeRecord {
+	return {
+		id: row.id,
+		taskId: row.task_id,
+		agentId: row.agent_id,
+		dispatchId: row.dispatch_id,
+		...(row.flow_id ? { flowId: row.flow_id } : {}),
+		...(row.node_key ? { nodeKey: row.node_key } : {}),
+		status: row.status,
+		summary: row.summary,
+		evidence: parseArray<EvidenceRef>(row.evidence_json, "episode evidence"),
+		blockers: parseArray<string>(row.blockers_json, "episode blockers"),
+		acceptanceResults: parseArray<AcceptanceResult>(row.acceptance_results_json, "episode acceptance results"),
+		...(row.original_response_artifact_ref === null
+			? {}
+			: { originalResponseArtifactRef: row.original_response_artifact_ref }),
 		createdAt: row.created_at,
 	};
 }
@@ -632,8 +777,9 @@ function migrationSql(version: number): string {
 		7: "permissions",
 		8: "task_authorizations",
 		9: "flows",
+		10: "agent_dispatches",
 	} as const;
-	const filename = `00${version}_${names[version as keyof typeof names]}.sql`;
+	const filename = `${String(version).padStart(3, "0")}_${names[version as keyof typeof names]}.sql`;
 	const migrationPath = import.meta.url.includes("$bunfs")
 		? resolve(dirname(process.execPath), "migrations", filename)
 		: fileURLToPath(new URL(`./migrations/${filename}`, import.meta.url));
@@ -685,6 +831,18 @@ export class SqliteTaskStore {
 					.run(version, new Date().toISOString());
 			});
 		}
+		executeTransaction(database, () => {
+			const legacyManifests = database
+				.prepare("SELECT id, context_manifest_json FROM agent_dispatches WHERE context_manifest_sha256 = ''")
+				.all() as unknown as Array<{ id: string; context_manifest_json: string }>;
+			for (const manifest of legacyManifests) {
+				const parsed = parseObject(manifest.context_manifest_json, "Agent Dispatch context manifest");
+				validateContextManifest(parsed, manifest.id);
+				database
+					.prepare("UPDATE agent_dispatches SET context_manifest_sha256 = ? WHERE id = ?")
+					.run(createHash("sha256").update(manifest.context_manifest_json).digest("hex"), manifest.id);
+			}
+		});
 		if (options.databasePath !== ":memory:") chmodSync(options.databasePath, 0o600);
 		if (options.artifactsRoot) {
 			mkdirSync(options.artifactsRoot, { recursive: true, mode: 0o700 });
@@ -1941,6 +2099,7 @@ export class SqliteTaskStore {
 					now,
 					now,
 				);
+			this.createAgentDispatchInternal(this.requireAgent(agentId), "initial", input.goal, [], now);
 			this.appendEventInternal(
 				taskId,
 				agentId,
@@ -2110,15 +2269,210 @@ export class SqliteTaskStore {
 		).map(agentFromRow);
 	}
 
+	getAgentDispatch(dispatchId: string): AgentDispatchRecord | undefined {
+		const row = this.database.prepare("SELECT * FROM agent_dispatches WHERE id = ?").get(dispatchId) as
+			| AgentDispatchRow
+			| undefined;
+		return row ? dispatchFromRow(row) : undefined;
+	}
+
+	requireAgentDispatch(dispatchId: string): AgentDispatchRecord {
+		const dispatch = this.getAgentDispatch(dispatchId);
+		if (!dispatch) throw new Error(`Agent Dispatch not found: ${dispatchId}`);
+		return dispatch;
+	}
+
+	listAgentDispatches(agentId: string): AgentDispatchRecord[] {
+		this.requireAgent(agentId);
+		return (
+			this.database
+				.prepare("SELECT * FROM agent_dispatches WHERE agent_id = ? ORDER BY sequence")
+				.all(agentId) as unknown as AgentDispatchRow[]
+		).map(dispatchFromRow);
+	}
+
+	getActiveAgentDispatch(agentId: string): AgentDispatchRecord | undefined {
+		this.requireAgent(agentId);
+		const row = this.database
+			.prepare(
+				`SELECT * FROM agent_dispatches WHERE agent_id = ?
+				 AND state IN ('running', 'finalizing') ORDER BY sequence LIMIT 1`,
+			)
+			.get(agentId) as AgentDispatchRow | undefined;
+		return row ? dispatchFromRow(row) : undefined;
+	}
+
+	getRunnableAgentDispatch(agentId: string): AgentDispatchRecord | undefined {
+		this.requireAgent(agentId);
+		const row = this.database
+			.prepare(
+				`SELECT * FROM agent_dispatches WHERE agent_id = ?
+				 AND state IN ('running', 'queued')
+				 ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END, sequence LIMIT 1`,
+			)
+			.get(agentId) as AgentDispatchRow | undefined;
+		return row ? dispatchFromRow(row) : undefined;
+	}
+
+	getLatestCompletedEpisode(agentId: string): EpisodeRecord | undefined {
+		this.requireAgent(agentId);
+		return this.listEpisodes({ taskId: this.requireAgent(agentId).taskId, agentId, limit: 10_000 })
+			.filter((episode) => episode.status === "completed")
+			.at(-1);
+	}
+
+	getCompletedEpisodeForDispatch(dispatchId: string): EpisodeRecord | undefined {
+		const dispatch = this.requireAgentDispatch(dispatchId);
+		const row = this.database
+			.prepare(
+				`SELECT * FROM episodes WHERE dispatch_id = ? AND status = 'completed'
+				 ORDER BY created_at DESC, id DESC LIMIT 1`,
+			)
+			.get(dispatch.id) as EpisodeRow | undefined;
+		return row ? episodeFromRow(row) : undefined;
+	}
+
+	createAgentDispatch(input: {
+		actor: AgentRecord;
+		agentId: string;
+		operationKey: string;
+		action: string;
+		sourceAgentIds?: string[];
+	}): { dispatch: AgentDispatchRecord; replayed: boolean } {
+		return executeTransaction(this.database, () => {
+			if (input.actor.kind !== "main") throw new Error("Only the main Agent may create an Agent Dispatch");
+			const target = this.requireAgent(input.agentId);
+			if (target.taskId !== input.actor.taskId) throw new Error("Cross-task Agent Dispatch is forbidden");
+			if (target.kind !== "subagent") throw new Error("Only a subagent may receive a new Agent Dispatch");
+			if (input.operationKey.trim() === "" || input.action.trim() === "")
+				throw new TypeError("Agent Dispatch operation key and action are required");
+			const existing = this.database
+				.prepare("SELECT * FROM agent_dispatches WHERE task_id = ? AND actor_agent_id = ? AND operation_key = ?")
+				.get(target.taskId, input.actor.id, input.operationKey) as AgentDispatchRow | undefined;
+			if (existing) {
+				const dispatch = dispatchFromRow(existing);
+				const requestedSources = [...new Set(input.sourceAgentIds ?? [])].sort();
+				const storedSources = [...(dispatch.contextManifest.sourceAgentIds ?? [])].sort();
+				if (
+					dispatch.agentId !== target.id ||
+					dispatch.action !== input.action ||
+					JSON.stringify(requestedSources) !== JSON.stringify(storedSources)
+				)
+					throw new Error(`Agent Dispatch identity conflict: ${input.operationKey}`);
+				return { dispatch, replayed: true };
+			}
+			if (target.state === "cancelled") throw new Error("Cancelled Agent cannot receive a new Agent Dispatch");
+			const task = this.requireTask(target.taskId);
+			if (["completed", "failed", "cancelled"].includes(task.state))
+				throw new Error(`Cannot dispatch an Agent in terminal Task state ${task.state}`);
+			return {
+				dispatch: this.createAgentDispatchInternal(
+					target,
+					input.operationKey,
+					input.action,
+					input.sourceAgentIds ?? [],
+					this.now().toISOString(),
+					input.actor.id,
+				),
+				replayed: false,
+			};
+		});
+	}
+
+	prepareAgentDispatchContext(dispatchId: string): AgentDispatchRecord {
+		return executeTransaction(this.database, () => {
+			const dispatch = this.requireAgentDispatch(dispatchId);
+			if (!["queued", "running"].includes(dispatch.state)) return dispatch;
+			const manifest = dispatch.contextManifest;
+			const flowSources = this.database
+				.prepare(
+					`SELECT source.agent_id, source.dispatch_id
+					 FROM flow_nodes target
+					 JOIN flow_edges edge
+					   ON edge.flow_id = target.flow_id AND edge.target_node_key = target.node_key
+					 JOIN flow_nodes source
+					   ON source.flow_id = edge.flow_id AND source.node_key = edge.source_node_key
+					 WHERE target.dispatch_id = ? ORDER BY source.node_key`,
+				)
+				.all(dispatch.id) as unknown as Array<{ agent_id: string; dispatch_id: string }>;
+			const sourceAgentIds =
+				manifest.sourceAgentIds?.length > 0
+					? [...new Set(manifest.sourceAgentIds)].sort()
+					: flowSources.map((row) => row.agent_id);
+			const alreadyFrozen =
+				dispatch.contextManifestSha256 !== "" &&
+				sourceAgentIds.length === manifest.sourceEpisodes.length &&
+				sourceAgentIds.every((agentId) => manifest.sourceEpisodes.some((episode) => episode.agentId === agentId));
+			if (alreadyFrozen) return dispatch;
+			const sourceEpisodes = sourceAgentIds.map((sourceAgentId) => {
+				const flowSource = flowSources.find((source) => source.agent_id === sourceAgentId);
+				const episode = flowSource
+					? this.getCompletedEpisodeForDispatch(flowSource.dispatch_id)
+					: this.getLatestCompletedEpisode(sourceAgentId);
+				if (!episode) throw new Error(`Dispatch source Agent has no completed Episode: ${sourceAgentId}`);
+				return contextEpisode(episode);
+			});
+			const frozen: AgentDispatchContextManifest = {
+				...manifest,
+				sourceAgentIds,
+				sourceEpisodes,
+			};
+			const frozenJson = JSON.stringify(frozen);
+			this.database
+				.prepare("UPDATE agent_dispatches SET context_manifest_json = ?, context_manifest_sha256 = ? WHERE id = ?")
+				.run(frozenJson, createHash("sha256").update(frozenJson).digest("hex"), dispatch.id);
+			return this.requireAgentDispatch(dispatch.id);
+		});
+	}
+
+	bindAgentDispatchSession(dispatchId: string, sessionId: string): AgentDispatchRecord {
+		if (sessionId.trim() === "") throw new TypeError("Agent Dispatch Session ID is required");
+		return executeTransaction(this.database, () => {
+			const dispatch = this.requireAgentDispatch(dispatchId);
+			if (dispatch.sessionId && dispatch.sessionId !== sessionId)
+				throw new Error(`Agent Dispatch is already bound to Session ${dispatch.sessionId}`);
+			if (["completed", "completed_unaccepted", "failed", "cancelled", "unknown_outcome"].includes(dispatch.state))
+				throw new Error(`Terminal Agent Dispatch cannot bind a Session: ${dispatch.state}`);
+			this.database.prepare("UPDATE agent_dispatches SET session_id = ? WHERE id = ?").run(sessionId, dispatchId);
+			return this.requireAgentDispatch(dispatchId);
+		});
+	}
+
+	bindInteractiveAgentSession(agentId: string, sessionId: string): AgentDispatchRecord {
+		return executeTransaction(this.database, () => {
+			const agent = this.requireAgent(agentId);
+			const dispatch = this.getRunnableAgentDispatch(agentId);
+			if (!dispatch) throw new Error(`Agent has no runnable Dispatch: ${agentId}`);
+			this.bindAgentDispatchSession(dispatch.id, sessionId);
+			const now = this.now().toISOString();
+			if (dispatch.state === "queued")
+				this.database
+					.prepare(
+						"UPDATE agent_dispatches SET state = 'running', started_at = ? WHERE id = ? AND state = 'queued'",
+					)
+					.run(now, dispatch.id);
+			this.database
+				.prepare(
+					"UPDATE agents SET state = 'running', active_session_id = ?, completed_at = NULL, updated_at = ? WHERE id = ?",
+				)
+				.run(sessionId, now, agent.id);
+			return this.requireAgentDispatch(dispatch.id);
+		});
+	}
+
 	listRunnableAgents(taskId: string, maxConcurrent = 4): AgentRecord[] {
 		const agents = this.listAgents(taskId);
-		const active = agents.filter((agent) => ["running", "recovering"].includes(agent.state)).length;
+		const active = agents.filter(
+			(agent) => agent.kind === "subagent" && ["running", "recovering"].includes(agent.state),
+		).length;
 		return agents
 			.filter((agent) => {
 				if (agent.state !== "queued") return false;
+				const dispatch = this.getRunnableAgentDispatch(agent.id);
+				if (!dispatch) return false;
 				const flowNode = this.database
-					.prepare("SELECT flow_id, node_key, state FROM flow_nodes WHERE agent_id = ?")
-					.get(agent.id) as Pick<FlowNodeRow, "flow_id" | "node_key" | "state"> | undefined;
+					.prepare("SELECT flow_id, node_key, state FROM flow_nodes WHERE dispatch_id = ?")
+					.get(dispatch.id) as Pick<FlowNodeRow, "flow_id" | "node_key" | "state"> | undefined;
 				if (!flowNode) return true;
 				if (flowNode.state !== "queued") return false;
 				const blocked = this.database
@@ -2138,6 +2492,7 @@ export class SqliteTaskStore {
 
 	createFlow(
 		actor: AgentRecord,
+		operationKey: string,
 		definition: FlowDefinition,
 		allocations: ReadonlyMap<
 			string,
@@ -2145,16 +2500,34 @@ export class SqliteTaskStore {
 		> = new Map(),
 	): FlowRecord {
 		if (actor.kind !== "main") throw new Error("Only the main Agent may define a Flow");
+		if (operationKey.trim() === "") throw new TypeError("Flow operation key is required");
 		return executeTransaction(this.database, () => {
+			const replay = this.getFlowByOperation(actor, operationKey, definition);
+			if (replay) return replay;
+			const task = this.requireTask(actor.taskId);
+			if (["completed", "failed", "cancelled"].includes(task.state))
+				throw new Error(`Cannot define a Flow in terminal Task state ${task.state}`);
 			const existing = this.getActiveFlow(actor.taskId);
 			if (existing) throw new Error(`Task already has an active Flow: ${existing.id}`);
 			const flowId = randomUUID();
 			const now = this.now().toISOString();
 			this.database
 				.prepare(
-					"INSERT INTO flows(id, task_id, orchestrator_agent_id, objective, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'running', ?, ?)",
+					`INSERT INTO flows(
+					 id, task_id, orchestrator_agent_id, operation_key, definition_sha256,
+					 objective, state, created_at, updated_at
+					) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
 				)
-				.run(flowId, actor.taskId, actor.id, definition.objective, now, now);
+				.run(
+					flowId,
+					actor.taskId,
+					actor.id,
+					operationKey,
+					createHash("sha256").update(canonicalJson(definition)).digest("hex"),
+					definition.objective,
+					now,
+					now,
+				);
 			for (const node of definition.nodes) {
 				const allocation = allocations.get(node.key);
 				const created = this.createDelegation({
@@ -2173,10 +2546,19 @@ export class SqliteTaskStore {
 				});
 				this.database
 					.prepare(
-						`INSERT INTO flow_nodes(flow_id, node_key, agent_id, delegation_id, state, created_at, updated_at)
-						 VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
+						`INSERT INTO flow_nodes(flow_id, node_key, agent_id, dispatch_id, delegation_id, required, state, created_at, updated_at)
+						 VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
 					)
-					.run(flowId, node.key, created.agentId, created.delegationId, now, now);
+					.run(
+						flowId,
+						node.key,
+						created.agentId,
+						this.getRunnableAgentDispatch(created.agentId)!.id,
+						created.delegationId,
+						node.required ? 1 : 0,
+						now,
+						now,
+					);
 			}
 			for (const node of definition.nodes) {
 				for (const dependency of node.dependsOn) {
@@ -2201,6 +2583,17 @@ export class SqliteTaskStore {
 			);
 			return this.requireFlow(flowId);
 		});
+	}
+
+	getFlowByOperation(actor: AgentRecord, operationKey: string, definition: FlowDefinition): FlowRecord | undefined {
+		const row = this.database
+			.prepare("SELECT * FROM flows WHERE task_id = ? AND orchestrator_agent_id = ? AND operation_key = ?")
+			.get(actor.taskId, actor.id, operationKey) as FlowRow | undefined;
+		if (!row) return undefined;
+		const requestedSha256 = createHash("sha256").update(canonicalJson(definition)).digest("hex");
+		if (row.definition_sha256 !== requestedSha256)
+			throw new Error(`Flow operation key was reused with different input: ${operationKey}`);
+		return this.flowFromRow(row);
 	}
 
 	getActiveFlow(taskId: string): FlowRecord | undefined {
@@ -2242,19 +2635,7 @@ export class SqliteTaskStore {
 				input.flowId ?? null,
 				limit,
 			) as unknown as EpisodeRow[];
-		return rows.map((row) => ({
-			id: row.id,
-			taskId: row.task_id,
-			agentId: row.agent_id,
-			...(row.flow_id ? { flowId: row.flow_id } : {}),
-			...(row.node_key ? { nodeKey: row.node_key } : {}),
-			status: row.status,
-			summary: row.summary,
-			evidence: parseArray<EvidenceRef>(row.evidence_json, "episode evidence"),
-			blockers: parseArray<string>(row.blockers_json, "episode blockers"),
-			acceptanceResults: parseArray<AcceptanceResult>(row.acceptance_results_json, "episode acceptance results"),
-			createdAt: row.created_at,
-		}));
+		return rows.map(episodeFromRow);
 	}
 
 	listDependencyEpisodes(agentId: string): EpisodeRecord[] {
@@ -2267,31 +2648,12 @@ export class SqliteTaskStore {
 				   ON edge.flow_id = target.flow_id AND edge.target_node_key = target.node_key
 				 JOIN flow_nodes source
 				   ON source.flow_id = edge.flow_id AND source.node_key = edge.source_node_key
-				 JOIN episodes episode
-				   ON episode.flow_id = source.flow_id AND episode.node_key = source.node_key
+				 JOIN episodes episode ON episode.dispatch_id = source.dispatch_id
 				 WHERE target.agent_id = ? AND episode.status = 'completed'
-				   AND episode.id = (
-				     SELECT latest.id FROM episodes latest
-				     WHERE latest.flow_id = source.flow_id AND latest.node_key = source.node_key
-				       AND latest.status = 'completed'
-				     ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
-				   )
 				 ORDER BY source.node_key`,
 			)
 			.all(agent.id) as unknown as EpisodeRow[];
-		return rows.map((row) => ({
-			id: row.id,
-			taskId: row.task_id,
-			agentId: row.agent_id,
-			...(row.flow_id ? { flowId: row.flow_id } : {}),
-			...(row.node_key ? { nodeKey: row.node_key } : {}),
-			status: row.status,
-			summary: row.summary,
-			evidence: parseArray<EvidenceRef>(row.evidence_json, "episode evidence"),
-			blockers: parseArray<string>(row.blockers_json, "episode blockers"),
-			acceptanceResults: parseArray<AcceptanceResult>(row.acceptance_results_json, "episode acceptance results"),
-			createdAt: row.created_at,
-		}));
+		return rows.map(episodeFromRow);
 	}
 
 	private flowFromRow(row: FlowRow): FlowRecord {
@@ -2312,8 +2674,10 @@ export class SqliteTaskStore {
 				flowId: node.flow_id,
 				key: node.node_key,
 				agentId: node.agent_id,
+				dispatchId: node.dispatch_id,
 				...(sessions.get(node.agent_id) ? { activeSessionId: sessions.get(node.agent_id)! } : {}),
 				delegationId: node.delegation_id,
+				required: node.required === 1,
 				state: node.state,
 				dependsOn: dependencies
 					.filter((edge) => edge.target_node_key === node.node_key)
@@ -2335,9 +2699,39 @@ export class SqliteTaskStore {
 				throw new Error(`Illegal Agent transition: ${agent.state} -> ${nextState}`);
 			const now = this.now().toISOString();
 			const completedAt = ["completed", "failed", "cancelled"].includes(nextState) ? now : null;
+			const terminalFlowNodes = ["completed", "failed", "cancelled"].includes(nextState)
+				? (this.database
+						.prepare(
+							`SELECT flow_id, node_key FROM flow_nodes WHERE agent_id = ?
+							 AND state NOT IN ('completed', 'failed', 'skipped', 'cancelled')`,
+						)
+						.all(agentId) as unknown as Array<{ flow_id: string; node_key: string }>)
+				: [];
 			this.database
 				.prepare("UPDATE agents SET state = ?, updated_at = ?, completed_at = ? WHERE id = ?")
 				.run(nextState, now, completedAt, agentId);
+			if (["completed", "failed", "cancelled"].includes(nextState))
+				this.database
+					.prepare(
+						`UPDATE agent_dispatches SET state = ?, settled_at = ?
+						 WHERE agent_id = ? AND state IN ('queued', 'running', 'finalizing')`,
+					)
+					.run(nextState, now, agentId);
+			if (["completed", "failed", "cancelled"].includes(nextState)) {
+				this.database
+					.prepare("UPDATE delegations SET state = ?, completed_at = ? WHERE child_agent_id = ?")
+					.run(nextState, now, agentId);
+				this.database
+					.prepare(
+						`UPDATE flow_nodes SET state = ?, updated_at = ?, completed_at = ? WHERE agent_id = ?
+						 AND state NOT IN ('completed', 'failed', 'skipped', 'cancelled')`,
+					)
+					.run(nextState, now, now, agentId);
+				for (const node of terminalFlowNodes) {
+					if (nextState === "failed") this.skipBlockedFlowNodes(node.flow_id, node.node_key, now);
+					this.settleFlow(node.flow_id, now);
+				}
+			}
 			if (nextState === "running")
 				this.database
 					.prepare(
@@ -2385,7 +2779,7 @@ export class SqliteTaskStore {
 				return false;
 			const queued = this.database
 				.prepare(
-					"SELECT COUNT(*) AS count FROM agent_messages WHERE task_id = ? AND state IN ('queued', 'delivered')",
+					"SELECT COUNT(*) AS count FROM agent_messages WHERE task_id = ? AND state IN ('queued', 'delivering', 'delivered')",
 				)
 				.get(taskId) as { count: number };
 			const wakes = this.database
@@ -2498,6 +2892,12 @@ export class SqliteTaskStore {
 					.prepare(
 						`UPDATE attempts SET state = ?, settled_at = ? WHERE task_id = ?
 						 AND state NOT IN ('completed', 'failed', 'cancelled', 'unknown_outcome')`,
+					)
+					.run(nextState, now, taskId);
+				this.database
+					.prepare(
+						`UPDATE agent_dispatches SET state = ?, settled_at = ?
+						 WHERE task_id = ? AND state IN ('queued', 'running', 'finalizing')`,
 					)
 					.run(nextState, now, taskId);
 				const flowNodeState = nextState === "failed" ? "failed" : "cancelled";
@@ -2951,6 +3351,8 @@ export class SqliteTaskStore {
 		runtimeSnapshotSha256: string,
 	): string {
 		const agent = this.requireAgent(agentId);
+		const dispatch = this.getRunnableAgentDispatch(agentId);
+		if (!dispatch) throw new Error(`Agent has no runnable Dispatch: ${agentId}`);
 		assertSchema("runtimeSnapshot", runtimeSnapshot);
 		const attemptId = randomUUID();
 		const now = this.now().toISOString();
@@ -2963,20 +3365,26 @@ export class SqliteTaskStore {
 			this.database
 				.prepare(
 					`INSERT INTO attempts (
-					 id, task_id, agent_id, session_id, ordinal, state, runtime_snapshot_json,
+					 id, task_id, agent_id, dispatch_id, session_id, ordinal, state, runtime_snapshot_json,
 					 runtime_snapshot_sha256, started_at
-					) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+					) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
 				)
 				.run(
 					attemptId,
 					agent.taskId,
 					agentId,
+					dispatch.id,
 					sessionId ?? null,
 					ordinalRow.ordinal,
 					JSON.stringify(runtimeSnapshot),
 					runtimeSnapshotSha256,
 					now,
 				);
+			this.database
+				.prepare(
+					"UPDATE agent_dispatches SET state = 'running', session_id = COALESCE(?, session_id), started_at = COALESCE(started_at, ?) WHERE id = ? AND state IN ('queued', 'running')",
+				)
+				.run(sessionId ?? null, now, dispatch.id);
 			this.database
 				.prepare("UPDATE agents SET state = 'running', active_session_id = ?, updated_at = ? WHERE id = ?")
 				.run(sessionId ?? null, now, agentId);
@@ -3009,6 +3417,8 @@ export class SqliteTaskStore {
 		assertSchema("runtimeSnapshot", input.runtimeSnapshot);
 		return executeTransaction(this.database, () => {
 			const agent = this.requireAgent(input.agentId);
+			const dispatch = this.getRunnableAgentDispatch(agent.id);
+			if (!dispatch) throw new Error(`Agent has no runnable Dispatch: ${agent.id}`);
 			const task = this.requireTask(agent.taskId);
 			if (task.state !== "queued" && task.state !== "running")
 				throw new Error(`Task ${task.id} is not runnable from state ${task.state}`);
@@ -3058,20 +3468,26 @@ export class SqliteTaskStore {
 			this.database
 				.prepare(
 					`INSERT INTO attempts (
-					 id, task_id, agent_id, session_id, ordinal, state, runtime_snapshot_json,
+					 id, task_id, agent_id, dispatch_id, session_id, ordinal, state, runtime_snapshot_json,
 					 runtime_snapshot_sha256, started_at
-					) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+					) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
 				)
 				.run(
 					attemptId,
 					task.id,
 					agent.id,
+					dispatch.id,
 					input.sessionId ?? null,
 					ordinalRow.ordinal,
 					JSON.stringify(input.runtimeSnapshot),
 					input.runtimeSnapshotSha256,
 					now,
 				);
+			this.database
+				.prepare(
+					"UPDATE agent_dispatches SET state = 'running', session_id = COALESCE(?, session_id), started_at = COALESCE(started_at, ?) WHERE id = ? AND state IN ('queued', 'running')",
+				)
+				.run(input.sessionId ?? null, now, dispatch.id);
 			this.database
 				.prepare("UPDATE agents SET state = 'running', active_session_id = ?, updated_at = ? WHERE id = ?")
 				.run(input.sessionId ?? null, now, agent.id);
@@ -3149,6 +3565,7 @@ export class SqliteTaskStore {
 					id: string;
 					task_id: string;
 					agent_id: string;
+					dispatch_id: string;
 					session_id: string | null;
 					ordinal: number;
 					state: string;
@@ -3168,6 +3585,7 @@ export class SqliteTaskStore {
 			id: row.id,
 			taskId: row.task_id,
 			agentId: row.agent_id,
+			dispatchId: row.dispatch_id,
 			...(row.session_id === null ? {} : { sessionId: row.session_id }),
 			ordinal: row.ordinal,
 			state: row.state,
@@ -3181,14 +3599,19 @@ export class SqliteTaskStore {
 		};
 	}
 
-	getLatestAttempt(agentId: string): AttemptRecord | undefined {
+	getLatestAttempt(agentId: string, dispatchId?: string): AttemptRecord | undefined {
 		const row = this.database
-			.prepare("SELECT * FROM attempts WHERE agent_id = ? ORDER BY ordinal DESC LIMIT 1")
-			.get(agentId) as
+			.prepare(
+				dispatchId
+					? "SELECT * FROM attempts WHERE agent_id = ? AND dispatch_id = ? ORDER BY ordinal DESC LIMIT 1"
+					: "SELECT * FROM attempts WHERE agent_id = ? ORDER BY ordinal DESC LIMIT 1",
+			)
+			.get(...(dispatchId ? [agentId, dispatchId] : [agentId])) as
 			| {
 					id: string;
 					task_id: string;
 					agent_id: string;
+					dispatch_id: string;
 					session_id: string | null;
 					ordinal: number;
 					state: string;
@@ -3208,6 +3631,7 @@ export class SqliteTaskStore {
 			id: row.id,
 			taskId: row.task_id,
 			agentId: row.agent_id,
+			dispatchId: row.dispatch_id,
 			...(row.session_id === null ? {} : { sessionId: row.session_id }),
 			ordinal: row.ordinal,
 			state: row.state,
@@ -3221,14 +3645,19 @@ export class SqliteTaskStore {
 		};
 	}
 
-	getLatestCheckpoint(agentId: string): CheckpointRecord | undefined {
+	getLatestCheckpoint(agentId: string, dispatchId?: string): CheckpointRecord | undefined {
 		const row = this.database
-			.prepare("SELECT * FROM checkpoints WHERE agent_id = ? ORDER BY event_seq DESC LIMIT 1")
-			.get(agentId) as
+			.prepare(
+				dispatchId
+					? "SELECT * FROM checkpoints WHERE agent_id = ? AND dispatch_id = ? ORDER BY event_seq DESC LIMIT 1"
+					: "SELECT * FROM checkpoints WHERE agent_id = ? ORDER BY event_seq DESC LIMIT 1",
+			)
+			.get(...(dispatchId ? [agentId, dispatchId] : [agentId])) as
 			| {
 					id: string;
 					task_id: string;
 					agent_id: string;
+					dispatch_id: string;
 					attempt_id: string;
 					event_seq: number;
 					session_checkpoint_json: string;
@@ -3250,6 +3679,7 @@ export class SqliteTaskStore {
 			id: row.id,
 			taskId: row.task_id,
 			agentId: row.agent_id,
+			dispatchId: row.dispatch_id,
 			attemptId: row.attempt_id,
 			eventSeq: row.event_seq,
 			sessionCheckpoint: sessionCheckpoint as unknown as CheckpointRecord["sessionCheckpoint"],
@@ -3857,23 +4287,37 @@ export class SqliteTaskStore {
 		});
 	}
 
-	coordinate(actorId: string, operationKey: string, operation: () => CoordinationResult): CoordinationResult {
+	coordinate(
+		actorId: string,
+		operationKey: string,
+		payload: CoordinationCommand,
+		operation: () => CoordinationResult,
+	): CoordinationResult {
 		return executeTransaction(this.database, () => {
+			const actor = this.requireAgent(actorId);
+			const payloadSha256 = createHash("sha256").update(canonicalJson(payload)).digest("hex");
 			const existing = this.database
-				.prepare("SELECT result_json FROM coordination_results WHERE operation_key = ?")
-				.get(operationKey) as { result_json: string } | undefined;
-			if (existing)
+				.prepare(
+					`SELECT payload_sha256, result_json FROM coordination_results
+					 WHERE task_id = ? AND actor_agent_id = ? AND operation_key = ?`,
+				)
+				.get(actor.taskId, actorId, operationKey) as { payload_sha256: string; result_json: string } | undefined;
+			if (existing) {
+				if (existing.payload_sha256 !== payloadSha256)
+					throw new Error(`Coordination operation key was reused with different input: ${operationKey}`);
 				return {
 					...(parseObject(existing.result_json, "coordination result") as unknown as CoordinationResult),
 					replayed: true,
 				};
+			}
 			const result = operation();
-			const actor = this.requireAgent(actorId);
 			this.database
 				.prepare(
-					"INSERT INTO coordination_results(operation_key, task_id, actor_agent_id, result_json, created_at) VALUES (?, ?, ?, ?, ?)",
+					`INSERT INTO coordination_results(
+					 task_id, actor_agent_id, operation_key, payload_sha256, result_json, created_at
+					) VALUES (?, ?, ?, ?, ?, ?)`,
 				)
-				.run(operationKey, actor.taskId, actorId, JSON.stringify(result), this.now().toISOString());
+				.run(actor.taskId, actorId, operationKey, payloadSha256, JSON.stringify(result), this.now().toISOString());
 			return result;
 		});
 	}
@@ -3895,13 +4339,17 @@ export class SqliteTaskStore {
 		workspaceSnapshotSha256?: string;
 	}): { delegationId: string; agentId: string } {
 		if (input.actor.kind !== "main") throw new Error("Only the main agent may delegate");
+		const duplicateName = this.database
+			.prepare("SELECT id FROM agents WHERE task_id = ? AND name = ? LIMIT 1")
+			.get(input.actor.taskId, input.name) as { id: string } | undefined;
+		if (duplicateName) throw new Error(`Agent name already exists in Task: ${input.name}`);
 		assertSchema("acceptance", input.acceptance);
 		assertSchema("budget", input.budget);
 		const task = this.requireTask(input.actor.taskId);
 		if (["completed", "failed", "cancelled"].includes(task.state))
 			throw new Error("Cannot delegate from a terminal task");
 		const orchestrationTool = input.allowedTools.find((tool) =>
-			["agent_spawn", "delegate_task", "flow_define", "task_update"].includes(tool),
+			["agent_spawn", "agent_dispatch", "delegate_task", "flow_define", "task_update"].includes(tool),
 		);
 		if (orchestrationTool) throw new Error(`Subagent tools cannot include ${orchestrationTool}`);
 		if (input.budget.maxTurns > input.actor.budget.maxTurns)
@@ -3970,6 +4418,7 @@ export class SqliteTaskStore {
 				now,
 				now,
 			);
+		this.createAgentDispatchInternal(this.requireAgent(agentId), "initial", input.objective, [], now);
 		this.database
 			.prepare(
 				`INSERT INTO delegations (
@@ -4120,6 +4569,7 @@ export class SqliteTaskStore {
 				priority: row.priority,
 				body: body.body,
 				artifactRefs: body.artifactRefs,
+				state: row.state,
 				...(row.reply_to_message_id === null ? {} : { replyToMessageId: row.reply_to_message_id }),
 				createdAt: row.created_at,
 			};
@@ -4129,6 +4579,7 @@ export class SqliteTaskStore {
 	readAgentInbox(agentId: string, limit = 50): InboxMessage[] {
 		return executeTransaction(this.database, () => {
 			const agent = this.requireAgent(agentId);
+			this.recoverStaleAgentMessageDeliveries();
 			const rows = this.database
 				.prepare(
 					`SELECT * FROM agent_messages
@@ -4157,6 +4608,238 @@ export class SqliteTaskStore {
 		});
 	}
 
+	peekAgentInbox(agentId: string, limit = 50): InboxMessage[] {
+		const agent = this.requireAgent(agentId);
+		this.recoverStaleAgentMessageDeliveries();
+		const rows = this.database
+			.prepare(
+				`SELECT id FROM agent_messages
+				 WHERE recipient_agent_id = ? AND state = 'queued'
+				 ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, sender_agent_id, sender_seq LIMIT ?`,
+			)
+			.all(agentId, limit) as unknown as Array<{ id: string }>;
+		const ids = new Set(rows.map((row) => row.id));
+		return this.listMessages(agent.taskId, agentId, 1000)
+			.filter((message) => message.recipientAgentId === agentId && ids.has(message.id))
+			.slice(0, limit);
+	}
+
+	markAgentMessagesDelivered(agentId: string, messageIds: readonly string[]): void {
+		executeTransaction(this.database, () => {
+			const agent = this.requireAgent(agentId);
+			const now = this.now().toISOString();
+			for (const messageId of messageIds) {
+				const result = this.database
+					.prepare(
+						`UPDATE agent_messages SET state = 'delivered', delivered_at = ?
+						 WHERE id = ? AND recipient_agent_id = ? AND state = 'queued'`,
+					)
+					.run(now, messageId, agentId);
+				if (Number(result.changes) !== 1) throw new Error(`Cannot mark queued message delivered: ${messageId}`);
+				this.appendEventInternal(
+					agent.taskId,
+					agentId,
+					undefined,
+					"MessageDelivered",
+					{ messageId, schemaVersion: 1 },
+					now,
+				);
+			}
+		});
+	}
+
+	markAgentMessagesModelVisible(
+		agentId: string,
+		messageIds: readonly string[],
+		receipt: AgentMessageReceiptInput,
+	): void {
+		if (receipt.sessionId.trim() === "" || receipt.requestId.trim() === "")
+			throw new TypeError("Model-visible receipt Session ID and request ID are required");
+		executeTransaction(this.database, () => {
+			const agent = this.requireAgent(agentId);
+			const now = this.now().toISOString();
+			for (const messageId of messageIds) {
+				const existingReceipt = this.database
+					.prepare("SELECT * FROM agent_message_receipts WHERE message_id = ?")
+					.get(messageId) as MessageReceiptRow | undefined;
+				if (existingReceipt) {
+					if (
+						existingReceipt.recipient_agent_id !== agentId ||
+						existingReceipt.session_id !== receipt.sessionId ||
+						existingReceipt.request_id !== receipt.requestId
+					)
+						throw new Error(`Model-visible receipt identity conflict: ${messageId}`);
+					continue;
+				}
+				const message = this.database
+					.prepare("SELECT state FROM agent_messages WHERE id = ? AND recipient_agent_id = ?")
+					.get(messageId, agentId) as { state: MessageRow["state"] } | undefined;
+				if (message?.state !== "queued" && message?.state !== "delivering" && message?.state !== "delivered")
+					throw new Error(`Cannot mark unavailable message model-visible: ${messageId}`);
+				this.database
+					.prepare(
+						`UPDATE agent_messages SET state = 'delivered', delivery_claimed_at = NULL,
+						 delivered_at = COALESCE(delivered_at, ?)
+						 WHERE id = ? AND recipient_agent_id = ? AND state IN ('queued', 'delivering', 'delivered')`,
+					)
+					.run(now, messageId, agentId);
+				this.database
+					.prepare(
+						`INSERT INTO agent_message_receipts(
+						 message_id, recipient_agent_id, session_id, request_id, model_visible_at
+						) VALUES (?, ?, ?, ?, ?)`,
+					)
+					.run(messageId, agentId, receipt.sessionId, receipt.requestId, now);
+				if (message.state !== "delivered") {
+					this.appendEventInternal(
+						agent.taskId,
+						agentId,
+						undefined,
+						"MessageDelivered",
+						{ messageId, schemaVersion: 1 },
+						now,
+					);
+				}
+				this.appendEventInternal(
+					agent.taskId,
+					agentId,
+					undefined,
+					"MessageModelVisible",
+					{ messageId, sessionId: receipt.sessionId, requestId: receipt.requestId, schemaVersion: 1 },
+					now,
+				);
+			}
+		});
+	}
+
+	listUnsettledAgentMessageReceipts(agentId: string, sessionId?: string): UnsettledAgentMessageReceipt[] {
+		this.requireAgent(agentId);
+		if (sessionId !== undefined && sessionId.trim() === "") throw new TypeError("Receipt Session ID cannot be empty");
+		const rows = this.database
+			.prepare(
+				`SELECT * FROM agent_message_receipts
+				 WHERE recipient_agent_id = ? AND settled_at IS NULL
+				 AND (? IS NULL OR session_id = ?)
+				 ORDER BY model_visible_at, message_id`,
+			)
+			.all(agentId, sessionId ?? null, sessionId ?? null) as unknown as MessageReceiptRow[];
+		return rows.map((row) => ({
+			messageId: row.message_id,
+			sessionId: row.session_id,
+			requestId: row.request_id,
+			modelVisibleAt: row.model_visible_at,
+		}));
+	}
+
+	settleAgentMessages(agentId: string, messageIds: readonly string[]): void {
+		executeTransaction(this.database, () => {
+			const agent = this.requireAgent(agentId);
+			const now = this.now().toISOString();
+			for (const messageId of messageIds) {
+				const row = this.database
+					.prepare(
+						`SELECT message.state, receipt.message_id AS receipt_message_id, receipt.settled_at
+						 FROM agent_messages message
+						 LEFT JOIN agent_message_receipts receipt ON receipt.message_id = message.id
+						 WHERE message.id = ? AND message.recipient_agent_id = ?`,
+					)
+					.get(messageId, agentId) as
+					| { state: MessageRow["state"]; receipt_message_id: string | null; settled_at: string | null }
+					| undefined;
+				if (row?.state === "acknowledged" && row.settled_at !== null) continue;
+				if (!row || row.receipt_message_id === null)
+					throw new Error(`Model-visible receipt not found: ${messageId}`);
+				if (row.state !== "delivered" || row.settled_at !== null) {
+					throw new Error(`Cannot settle unavailable message ${messageId}`);
+				}
+				const result = this.database
+					.prepare(
+						`UPDATE agent_messages SET state = 'acknowledged', acknowledged_at = ?
+						 WHERE id = ? AND recipient_agent_id = ? AND state = 'delivered'`,
+					)
+					.run(now, messageId, agentId);
+				if (Number(result.changes) !== 1) throw new Error(`Cannot settle unavailable message ${messageId}`);
+				const settled = this.database
+					.prepare(
+						`UPDATE agent_message_receipts SET settled_at = ?
+						 WHERE message_id = ? AND recipient_agent_id = ? AND settled_at IS NULL`,
+					)
+					.run(now, messageId, agentId);
+				if (Number(settled.changes) !== 1) throw new Error(`Cannot settle message receipt ${messageId}`);
+				this.appendEventInternal(
+					agent.taskId,
+					agentId,
+					undefined,
+					"MessageAcknowledged",
+					{ messageId, schemaVersion: 1 },
+					now,
+				);
+			}
+		});
+	}
+
+	recoverStaleAgentMessageDeliveries(staleAfterMs = LIVE_DELIVERY_STALE_AFTER_MS): number {
+		if (!Number.isSafeInteger(staleAfterMs) || staleAfterMs < 1)
+			throw new RangeError("Live delivery stale timeout must be a positive integer");
+		const staleBefore = new Date(this.now().getTime() - staleAfterMs).toISOString();
+		const result = this.database
+			.prepare(
+				`UPDATE agent_messages SET state = 'queued', delivery_claimed_at = NULL
+				 WHERE state = 'delivering' AND delivery_claimed_at <= ?`,
+			)
+			.run(staleBefore);
+		return Number(result.changes);
+	}
+
+	claimAgentMessageForLiveDelivery(messageId: string, recipientAgentId: string): boolean {
+		this.requireAgent(recipientAgentId);
+		const now = this.now();
+		const staleBefore = new Date(now.getTime() - LIVE_DELIVERY_STALE_AFTER_MS).toISOString();
+		const result = this.database
+			.prepare(
+				`UPDATE agent_messages SET state = 'delivering', delivery_claimed_at = ?
+				 WHERE id = ? AND recipient_agent_id = ?
+				 AND (state = 'queued' OR (state = 'delivering' AND delivery_claimed_at <= ?))`,
+			)
+			.run(now.toISOString(), messageId, recipientAgentId, staleBefore);
+		return Number(result.changes) === 1;
+	}
+
+	completeAgentMessageLiveDelivery(
+		messageId: string,
+		recipientAgentId: string,
+		succeeded: boolean,
+	): "delivered" | "queued" {
+		return executeTransaction(this.database, () => {
+			const agent = this.requireAgent(recipientAgentId);
+			const now = this.now().toISOString();
+			const state = succeeded ? "delivered" : "queued";
+			const result = this.database
+				.prepare(
+					`UPDATE agent_messages SET state = ?, delivery_claimed_at = NULL,
+					 delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END
+					 WHERE id = ? AND recipient_agent_id = ? AND state = 'delivering'`,
+				)
+				.run(state, state, now, messageId, recipientAgentId);
+			if (Number(result.changes) !== 1) {
+				const existing = this.database
+					.prepare("SELECT state FROM agent_messages WHERE id = ? AND recipient_agent_id = ?")
+					.get(messageId, recipientAgentId) as { state: MessageRow["state"] } | undefined;
+				if (existing?.state === "delivered" || existing?.state === "acknowledged") return "delivered";
+				throw new Error(`Live delivery claim not found: ${messageId}`);
+			}
+			this.appendEventInternal(
+				agent.taskId,
+				recipientAgentId,
+				undefined,
+				succeeded ? "MessageDelivered" : "MessageDeliveryDeferred",
+				{ messageId, schemaVersion: 1 },
+				now,
+			);
+			return state;
+		});
+	}
+
 	acknowledgeAgentInbox(agentId: string, messageIds: readonly string[]): void {
 		executeTransaction(this.database, () => {
 			const agent = this.requireAgent(agentId);
@@ -4182,16 +4865,120 @@ export class SqliteTaskStore {
 
 	countPendingAgentMessages(agentId: string): number {
 		this.requireAgent(agentId);
+		this.recoverStaleAgentMessageDeliveries();
 		const row = this.database
 			.prepare(
-				"SELECT COUNT(*) AS count FROM agent_messages WHERE recipient_agent_id = ? AND state IN ('queued', 'delivered')",
+				"SELECT COUNT(*) AS count FROM agent_messages WHERE recipient_agent_id = ? AND state IN ('queued', 'delivering', 'delivered')",
 			)
 			.get(agentId) as { count: number };
 		return row.count;
 	}
 
+	finalizeAgentDispatch(input: {
+		agent: AgentRecord;
+		dispatchId: string;
+		status: "completed" | "completed_unaccepted" | "failed";
+		messageId: string;
+		episode: {
+			summary: string;
+			evidence: EvidenceRef[];
+			blockers: string[];
+			acceptanceResults: AcceptanceResult[];
+			originalResponseArtifactRef?: string;
+		};
+	}): AgentRecord["state"] {
+		return executeTransaction(this.database, () => {
+			const dispatch = this.requireAgentDispatch(input.dispatchId);
+			if (dispatch.agentId !== input.agent.id || dispatch.taskId !== input.agent.taskId)
+				throw new Error("Agent Dispatch identity mismatch");
+			const terminal = ["completed", "completed_unaccepted", "failed", "cancelled", "unknown_outcome"];
+			if (terminal.includes(dispatch.state)) throw new Error(`Agent Dispatch is already terminal: ${dispatch.id}`);
+			const currentAgent = this.requireAgent(input.agent.id);
+			const task = this.requireTask(dispatch.taskId);
+			if (["completed", "failed", "cancelled"].includes(currentAgent.state))
+				throw new Error(`Terminal Agent cannot finalize a Dispatch: ${currentAgent.state}`);
+			if (["completed", "failed", "cancelled"].includes(task.state))
+				throw new Error(`Terminal Task cannot finalize a Dispatch: ${task.state}`);
+			const now = this.now().toISOString();
+			this.database
+				.prepare("UPDATE agent_dispatches SET state = 'finalizing' WHERE id = ? AND state IN ('queued', 'running')")
+				.run(dispatch.id);
+			const flowNode = this.database
+				.prepare("SELECT flow_id, node_key FROM flow_nodes WHERE dispatch_id = ?")
+				.get(dispatch.id) as Pick<FlowNodeRow, "flow_id" | "node_key"> | undefined;
+			const episodeId = randomUUID();
+			this.database
+				.prepare(
+					`INSERT INTO episodes(
+					 id, task_id, agent_id, dispatch_id, flow_id, node_key, status, summary, evidence_json,
+					 blockers_json, acceptance_results_json, original_response_artifact_ref, created_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					episodeId,
+					input.agent.taskId,
+					input.agent.id,
+					dispatch.id,
+					flowNode?.flow_id ?? null,
+					flowNode?.node_key ?? null,
+					input.status,
+					input.episode.summary.slice(0, 4000),
+					JSON.stringify(input.episode.evidence.slice(0, 64)),
+					JSON.stringify(input.episode.blockers.slice(0, 64)),
+					JSON.stringify(input.episode.acceptanceResults.slice(0, 64)),
+					input.episode.originalResponseArtifactRef ?? null,
+					now,
+				);
+			this.database
+				.prepare(
+					"UPDATE agent_dispatches SET state = ?, episode_id = ?, settled_at = ? WHERE id = ? AND state = 'finalizing'",
+				)
+				.run(input.status, episodeId, now, dispatch.id);
+			if (flowNode) {
+				const nodeState = input.status === "completed" ? "completed" : "failed";
+				this.database
+					.prepare("UPDATE flow_nodes SET state = ?, updated_at = ?, completed_at = ? WHERE dispatch_id = ?")
+					.run(nodeState, now, now, dispatch.id);
+				if (nodeState === "failed") this.skipBlockedFlowNodes(flowNode.flow_id, flowNode.node_key, now);
+				this.settleFlow(flowNode.flow_id, now);
+			}
+			const next = this.database
+				.prepare(
+					"SELECT id FROM agent_dispatches WHERE agent_id = ? AND state = 'queued' ORDER BY sequence LIMIT 1",
+				)
+				.get(input.agent.id) as { id: string } | undefined;
+			const agentState: AgentRecord["state"] = next
+				? "queued"
+				: input.status === "completed"
+					? "completed"
+					: "failed";
+			this.database
+				.prepare(
+					"UPDATE agents SET state = ?, active_session_id = NULL, updated_at = ?, completed_at = ? WHERE id = ?",
+				)
+				.run(agentState, now, next ? null : now, input.agent.id);
+			this.database
+				.prepare("UPDATE delegations SET state = ?, completed_at = ? WHERE child_agent_id = ?")
+				.run(
+					next ? "queued" : input.status === "completed" ? "completed" : "failed",
+					next ? null : now,
+					input.agent.id,
+				);
+			this.appendEventInternal(
+				input.agent.taskId,
+				input.agent.id,
+				undefined,
+				"AgentDispatchSettled",
+				{ dispatchId: dispatch.id, episodeId, status: input.status, messageId: input.messageId, schemaVersion: 1 },
+				now,
+			);
+			return agentState;
+		});
+	}
+
 	recordAgentReport(
 		agent: AgentRecord,
+		dispatchId: string,
 		status: "progress" | "completed" | "failed",
 		messageId: string,
 		episode: {
@@ -4201,31 +4988,42 @@ export class SqliteTaskStore {
 			acceptanceResults: AcceptanceResult[];
 		},
 	): AgentRecord["state"] {
+		const dispatch = this.requireAgentDispatch(dispatchId);
+		if (dispatch.agentId !== agent.id || dispatch.taskId !== agent.taskId)
+			throw new Error("Agent Dispatch identity mismatch");
+		if (!["queued", "running"].includes(dispatch.state))
+			throw new Error(`Agent Dispatch cannot accept reports in state ${dispatch.state}: ${dispatch.id}`);
+		if (status !== "progress") {
+			const acceptance = this.getDelegationForAgent(agent.id)?.acceptance ?? [];
+			const accepted = acceptance.every((criterion) =>
+				episode.acceptanceResults.some((result) => result.criterionId === criterion.id && result.passed),
+			);
+			return this.finalizeAgentDispatch({
+				agent,
+				dispatchId: dispatch.id,
+				status: status === "failed" ? "failed" : accepted ? "completed" : "completed_unaccepted",
+				messageId,
+				episode,
+			});
+		}
 		return executeTransaction(this.database, () => {
 			const now = this.now().toISOString();
-			const nextState = status === "completed" ? "completed" : status === "failed" ? "failed" : agent.state;
-			if (status !== "progress") {
-				this.database
-					.prepare("UPDATE agents SET state = ?, updated_at = ?, completed_at = ? WHERE id = ?")
-					.run(nextState, now, now, agent.id);
-				this.database
-					.prepare("UPDATE delegations SET state = ?, completed_at = ? WHERE child_agent_id = ?")
-					.run(nextState, now, agent.id);
-			}
+			const nextState = agent.state;
 			const flowNode = this.database
-				.prepare("SELECT flow_id, node_key FROM flow_nodes WHERE agent_id = ?")
-				.get(agent.id) as Pick<FlowNodeRow, "flow_id" | "node_key"> | undefined;
+				.prepare("SELECT flow_id, node_key FROM flow_nodes WHERE dispatch_id = ?")
+				.get(dispatch.id) as Pick<FlowNodeRow, "flow_id" | "node_key"> | undefined;
 			this.database
 				.prepare(
 					`INSERT INTO episodes(
-					 id, task_id, agent_id, flow_id, node_key, status, summary, evidence_json,
+					 id, task_id, agent_id, dispatch_id, flow_id, node_key, status, summary, evidence_json,
 					 blockers_json, acceptance_results_json, created_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				)
 				.run(
 					randomUUID(),
 					agent.taskId,
 					agent.id,
+					dispatch.id,
 					flowNode?.flow_id ?? null,
 					flowNode?.node_key ?? null,
 					status,
@@ -4235,13 +5033,6 @@ export class SqliteTaskStore {
 					JSON.stringify(episode.acceptanceResults),
 					now,
 				);
-			if (flowNode && status !== "progress") {
-				this.database
-					.prepare("UPDATE flow_nodes SET state = ?, updated_at = ?, completed_at = ? WHERE agent_id = ?")
-					.run(status, now, now, agent.id);
-				if (status === "failed") this.skipBlockedFlowNodes(flowNode.flow_id, flowNode.node_key, now);
-				this.settleFlow(flowNode.flow_id, now);
-			}
 			this.appendEventInternal(
 				agent.taskId,
 				agent.id,
@@ -4250,26 +5041,6 @@ export class SqliteTaskStore {
 				{ messageId, status, flowId: flowNode?.flow_id, nodeKey: flowNode?.node_key, schemaVersion: 1 },
 				now,
 			);
-			if (status === "completed") {
-				this.appendEventInternal(
-					agent.taskId,
-					agent.id,
-					undefined,
-					"AgentCompleted",
-					{ messageId, schemaVersion: 1 },
-					now,
-				);
-			}
-			if (status === "failed") {
-				this.appendEventInternal(
-					agent.taskId,
-					agent.id,
-					undefined,
-					"AgentFailed",
-					{ messageId, schemaVersion: 1 },
-					now,
-				);
-			}
 			return nextState;
 		});
 	}
@@ -4305,16 +5076,24 @@ export class SqliteTaskStore {
 						"UPDATE delegations SET state = 'cancelled', completed_at = ? WHERE child_agent_id = ? AND state = 'queued'",
 					)
 					.run(now, row.agent_id);
+				const dispatch = this.getRunnableAgentDispatch(row.agent_id);
+				if (!dispatch) throw new Error(`Skipped Flow Agent has no runnable Dispatch: ${row.agent_id}`);
+				this.database
+					.prepare(
+						"UPDATE agent_dispatches SET state = 'cancelled', settled_at = ? WHERE id = ? AND state = 'queued'",
+					)
+					.run(now, dispatch.id);
 				this.database
 					.prepare(
 						`INSERT INTO episodes(
-						 id, task_id, agent_id, flow_id, node_key, status, summary, evidence_json,
+						 id, task_id, agent_id, dispatch_id, flow_id, node_key, status, summary, evidence_json,
 						 blockers_json, acceptance_results_json, created_at
-						) SELECT ?, task_id, ?, ?, ?, 'skipped', ?, '[]', ?, '[]', ? FROM flows WHERE id = ?`,
+						) SELECT ?, task_id, ?, ?, ?, ?, 'skipped', ?, '[]', ?, '[]', ? FROM flows WHERE id = ?`,
 					)
 					.run(
 						randomUUID(),
 						row.agent_id,
+						dispatch.id,
 						flowId,
 						target,
 						`Skipped because dependency ${source} failed`,
@@ -4327,11 +5106,15 @@ export class SqliteTaskStore {
 	}
 
 	private settleFlow(flowId: string, now: string): void {
+		const flow = this.requireFlow(flowId);
+		if (flow.state !== "running") return;
 		const states = this.database
-			.prepare("SELECT state FROM flow_nodes WHERE flow_id = ?")
-			.all(flowId) as unknown as Array<{ state: FlowNodeRecord["state"] }>;
+			.prepare("SELECT state, required FROM flow_nodes WHERE flow_id = ?")
+			.all(flowId) as unknown as Array<{ state: FlowNodeRecord["state"]; required: 0 | 1 }>;
 		if (states.some((row) => !["completed", "failed", "skipped", "cancelled"].includes(row.state))) return;
-		const state: FlowRecord["state"] = states.every((row) => row.state === "completed") ? "completed" : "failed";
+		const state: FlowRecord["state"] = states.every((row) => row.required === 0 || row.state === "completed")
+			? "completed"
+			: "failed";
 		this.database
 			.prepare("UPDATE flows SET state = ?, updated_at = ?, completed_at = ? WHERE id = ?")
 			.run(state, now, now, flowId);
@@ -4341,6 +5124,7 @@ export class SqliteTaskStore {
 		return executeTransaction(this.database, () => {
 			this.assertLeaseInternal(lease);
 			if (lease.agentId !== agentId) throw new Error("Lease does not belong to inbox recipient");
+			this.recoverStaleAgentMessageDeliveries();
 			const rows = this.database
 				.prepare(
 					`SELECT * FROM agent_messages
@@ -4392,8 +5176,10 @@ export class SqliteTaskStore {
 			if (input.lease.agentId !== input.agentId || input.lease.taskId !== input.taskId)
 				throw new Error("Checkpoint lease identity mismatch");
 			const attempt = this.database
-				.prepare("SELECT runtime_snapshot_sha256 FROM attempts WHERE id = ? AND agent_id = ?")
-				.get(input.attemptId, input.agentId) as { runtime_snapshot_sha256: string } | undefined;
+				.prepare("SELECT runtime_snapshot_sha256, dispatch_id FROM attempts WHERE id = ? AND agent_id = ?")
+				.get(input.attemptId, input.agentId) as
+				| { runtime_snapshot_sha256: string; dispatch_id: string }
+				| undefined;
 			if (!attempt) throw new Error(`Attempt not found for checkpoint: ${input.attemptId}`);
 			if (attempt.runtime_snapshot_sha256 !== input.sessionCheckpoint.runtimeSnapshotSha256) {
 				throw new Error("Checkpoint runtime snapshot does not match the Attempt");
@@ -4411,14 +5197,15 @@ export class SqliteTaskStore {
 			this.database
 				.prepare(
 					`INSERT INTO checkpoints (
-					 id, task_id, agent_id, attempt_id, event_seq, session_checkpoint_json, progress_json,
+					 id, task_id, agent_id, dispatch_id, attempt_id, event_seq, session_checkpoint_json, progress_json,
 					 evidence_json, workspace_snapshot_json, runtime_snapshot_sha256, created_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				)
 				.run(
 					checkpointId,
 					input.taskId,
 					input.agentId,
+					attempt.dispatch_id,
 					input.attemptId,
 					eventSeq,
 					JSON.stringify(input.sessionCheckpoint),
@@ -4453,6 +5240,76 @@ export class SqliteTaskStore {
 				now,
 			);
 		});
+	}
+
+	private createAgentDispatchInternal(
+		agent: AgentRecord,
+		operationKey: string,
+		action: string,
+		sourceAgentIds: readonly string[],
+		createdAt: string,
+		actorAgentId?: string,
+	): AgentDispatchRecord {
+		const uniqueSourceIds = [...new Set(sourceAgentIds)].sort();
+		if (uniqueSourceIds.includes(agent.id)) throw new Error("An Agent cannot be its own Dispatch source");
+		const sourceEpisodes = uniqueSourceIds.map((sourceAgentId) => {
+			const source = this.requireAgent(sourceAgentId);
+			if (source.taskId !== agent.taskId) throw new Error("Cross-task Dispatch source is forbidden");
+			const episode = this.getLatestCompletedEpisode(source.id);
+			if (!episode) throw new Error(`Dispatch source Agent has no completed Episode: ${source.id}`);
+			return contextEpisode(episode);
+		});
+		const selfEpisode = this.getLatestCompletedEpisode(agent.id);
+		const manifest: AgentDispatchContextManifest = {
+			action,
+			...(selfEpisode ? { selfEpisode: contextEpisode(selfEpisode) } : {}),
+			sourceAgentIds: uniqueSourceIds,
+			sourceEpisodes,
+			createdAt,
+		};
+		const manifestJson = JSON.stringify(manifest);
+		const sequenceRow = this.database
+			.prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM agent_dispatches WHERE agent_id = ?")
+			.get(agent.id) as { sequence: number };
+		const id = randomUUID();
+		this.database
+			.prepare(
+				`INSERT INTO agent_dispatches (
+				 id, task_id, agent_id, actor_agent_id, operation_key, sequence, action, state,
+				 context_manifest_json, context_manifest_sha256, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+			)
+			.run(
+				id,
+				agent.taskId,
+				agent.id,
+				actorAgentId ?? null,
+				operationKey,
+				sequenceRow.sequence,
+				action,
+				manifestJson,
+				createHash("sha256").update(manifestJson).digest("hex"),
+				createdAt,
+			);
+		if (["completed", "failed"].includes(agent.state)) {
+			this.database
+				.prepare(
+					"UPDATE agents SET state = 'queued', active_session_id = NULL, completed_at = NULL, updated_at = ? WHERE id = ?",
+				)
+				.run(createdAt, agent.id);
+			this.database
+				.prepare("UPDATE delegations SET state = 'queued', completed_at = NULL WHERE child_agent_id = ?")
+				.run(agent.id);
+		}
+		this.appendEventInternal(
+			agent.taskId,
+			agent.id,
+			undefined,
+			"AgentDispatchCreated",
+			{ dispatchId: id, sequence: sequenceRow.sequence, operationKey, schemaVersion: 1 },
+			createdAt,
+		);
+		return this.requireAgentDispatch(id);
 	}
 
 	private assertCompletionReady(taskId: string): void {
@@ -4561,6 +5418,20 @@ export class SqliteTaskStore {
 		payload: Record<string, unknown>,
 		createdAt: string,
 	): number {
+		const attemptDispatch = attemptId
+			? (
+					this.database.prepare("SELECT dispatch_id FROM attempts WHERE id = ?").get(attemptId) as
+						| { dispatch_id: string | null }
+						| undefined
+				)?.dispatch_id
+			: undefined;
+		const dispatchId =
+			attemptDispatch ??
+			(typeof payload.dispatchId === "string"
+				? payload.dispatchId
+				: agentId
+					? this.getActiveAgentDispatch(agentId)?.id
+					: undefined);
 		const seqRow = this.database
 			.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM task_events WHERE task_id = ?")
 			.get(taskId) as {
@@ -4568,12 +5439,13 @@ export class SqliteTaskStore {
 		};
 		this.database
 			.prepare(
-				"INSERT INTO task_events(id, task_id, agent_id, attempt_id, seq, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				"INSERT INTO task_events(id, task_id, agent_id, dispatch_id, attempt_id, seq, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			)
 			.run(
 				randomUUID(),
 				taskId,
 				agentId ?? null,
+				dispatchId ?? null,
 				attemptId ?? null,
 				seqRow.seq,
 				type,

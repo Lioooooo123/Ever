@@ -23,12 +23,16 @@ function registerCurrentSession(ctx: ExtensionContext): void {
 	const taskId = ctx.durableGoal.status()?.taskId;
 	const mailbox = openMailbox();
 	try {
+		const existing = mailbox.getSession(sessionId);
+		const mappedTaskId = taskId ?? existing?.taskId;
+		const mappedAgentId = taskId ? taskAgent(taskId, sessionId) : existing?.agentId;
 		mailbox.register({
 			sessionId,
 			...(ctx.sessionManager.getSessionName() ? { name: ctx.sessionManager.getSessionName() } : {}),
 			cwd: ctx.cwd,
 			...(ctx.sessionManager.getSessionFile() ? { sessionPath: ctx.sessionManager.getSessionFile() } : {}),
-			...(taskId ? { taskId, agentId: taskAgent(taskId, sessionId) } : {}),
+			...(mappedTaskId ? { taskId: mappedTaskId } : {}),
+			...(mappedAgentId ? { agentId: mappedAgentId } : {}),
 		});
 	} finally {
 		mailbox.close();

@@ -33,7 +33,7 @@ export class DurableAgentCoordinator implements AgentCoordinator {
 		const actor = this.store.requireAgent(actorIdentity.agentId);
 		if (actor.taskId !== actorIdentity.taskId || actor.kind !== actorIdentity.kind)
 			throw new Error("Agent identity mismatch");
-		return this.store.coordinate(actor.id, command.operationKey, () => {
+		return this.store.coordinate(actor.id, command.operationKey, command, () => {
 			switch (command.type) {
 				case "delegate": {
 					const allocation =
@@ -117,7 +117,7 @@ export class DurableAgentCoordinator implements AgentCoordinator {
 						}),
 						artifactRefs: command.evidence.map((evidence) => evidence.ref),
 					});
-					const agentState = this.store.recordAgentReport(actor, acceptedStatus, messageId, {
+					const agentState = this.store.recordAgentReport(actor, command.dispatchId, acceptedStatus, messageId, {
 						summary: command.summary,
 						evidence: command.evidence,
 						blockers: command.blockers ?? [],

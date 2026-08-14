@@ -11,6 +11,23 @@ afterEach(() => {
 });
 
 describe("SessionMailboxStore", () => {
+	it("resolves exact Sessions outside list pagination and preserves Agent bindings", () => {
+		const directory = mkdtempSync(join(tmpdir(), "ever-session-mailbox-"));
+		temporaryDirectories.push(directory);
+		const store = new SessionMailboxStore(join(directory, "mailbox.sqlite"));
+		store.register({ sessionId: "bound", cwd: "/repo", taskId: "task-1", agentId: "agent-1" });
+		for (let index = 0; index < 101; index += 1) store.register({ sessionId: `session-${index}`, cwd: "/repo" });
+		expect(store.listSessions().some((session) => session.sessionId === "bound")).toBe(false);
+		expect(store.getSession("bound")).toMatchObject({ taskId: "task-1", agentId: "agent-1" });
+		store.register({ sessionId: "bound", cwd: "/repo/updated" });
+		expect(store.getSession("bound")).toMatchObject({
+			cwd: "/repo/updated",
+			taskId: "task-1",
+			agentId: "agent-1",
+		});
+		store.close();
+	});
+
 	it("routes durable messages across ordinary Sessions with replay and acknowledgement", () => {
 		const directory = mkdtempSync(join(tmpdir(), "ever-session-mailbox-"));
 		temporaryDirectories.push(directory);

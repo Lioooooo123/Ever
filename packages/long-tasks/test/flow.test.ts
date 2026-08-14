@@ -104,6 +104,16 @@ describe("durable Flow DAG", () => {
 				),
 			}),
 		).toThrow("dependency cycle");
+		expect(() =>
+			validateFlowDefinition({
+				...definition,
+				nodes: definition.nodes.map((node) =>
+					node.key === "research_a"
+						? { ...node, scope: { ...node.scope, workspaceMode: "isolated_worktree" as const } }
+						: node,
+				),
+			}),
+		).toThrow("requires change-bundle composition");
 		store.close();
 	});
 
@@ -111,6 +121,7 @@ describe("durable Flow DAG", () => {
 		const { store, task, main, definition } = setup();
 		const flow = new DurableFlowCoordinator(store).define(
 			{ taskId: task.id, agentId: main.id, kind: "main" },
+			"flow-concurrent",
 			definition,
 		);
 		const byKey = new Map(flow.nodes.map((node) => [node.key, node]));
@@ -126,6 +137,7 @@ describe("durable Flow DAG", () => {
 				{
 					type: "report",
 					operationKey: `report-${key}`,
+					dispatchId: node.dispatchId,
 					status,
 					summary: `${key} ${status}`,
 					evidence: [{ id: key, kind: "event", ref: `event:${key}` }],
@@ -150,6 +162,20 @@ describe("durable Flow DAG", () => {
 		]);
 		await report("synthesize", "completed");
 		expect(store.requireFlow(flow.id).state).toBe("completed");
+		expect(
+			new DurableFlowCoordinator(store).define(
+				{ taskId: task.id, agentId: main.id, kind: "main" },
+				"flow-concurrent",
+				definition,
+			).id,
+		).toBe(flow.id);
+		expect(() =>
+			new DurableFlowCoordinator(store).define(
+				{ taskId: task.id, agentId: main.id, kind: "main" },
+				"flow-concurrent",
+				{ ...definition, objective: "changed" },
+			),
+		).toThrow("reused with different input");
 		expect(store.listEpisodes({ taskId: task.id, flowId: flow.id }).map((episode) => episode.status)).toEqual([
 			"completed",
 			"completed",
@@ -162,6 +188,7 @@ describe("durable Flow DAG", () => {
 		const { store, task, main, definition } = setup();
 		const flow = new DurableFlowCoordinator(store).define(
 			{ taskId: task.id, agentId: main.id, kind: "main" },
+			"flow-failure",
 			definition,
 		);
 		const a = flow.nodes.find((node) => node.key === "research_a")!;
@@ -184,9 +211,10 @@ describe("durable Flow DAG", () => {
 			{
 				type: "report",
 				operationKey: "a-failed",
+				dispatchId: a.dispatchId,
 				status: "failed",
 				summary: "source unavailable",
-				evidence: [],
+				evidence: [{ id: "research-a-failed", kind: "event", ref: "event:research-a-failed" }],
 				blockers: ["source"],
 			},
 		);
@@ -200,6 +228,7 @@ describe("durable Flow DAG", () => {
 		const { store, controller, task, main, definition } = setup();
 		const flow = new DurableFlowCoordinator(store).define(
 			{ taskId: task.id, agentId: main.id, kind: "main" },
+			"flow-cancel",
 			definition,
 		);
 		const node = flow.nodes.find((candidate) => candidate.key === "research_a")!;
@@ -220,6 +249,89 @@ describe("durable Flow DAG", () => {
 		expect(store.listRunnableAgents(task.id, 4).map((agent) => agent.id)).toContain(node.agentId);
 		controller.cancel(task.id);
 		expect(store.requireFlow(flow.id).state).toBe("cancelled");
+		expect(store.requireAgentDispatch(node.dispatchId).state).toBe("cancelled");
+		expect(() =>
+			store.finalizeAgentDispatch({
+				agent: store.requireAgent(node.agentId),
+				dispatchId: node.dispatchId,
+				status: "completed",
+				messageId: "late",
+				episode: { summary: "late", evidence: [], blockers: [], acceptanceResults: [] },
+			}),
+		).toThrow("already terminal");
+		expect(store.requireFlow(flow.id).state).toBe("cancelled");
+		store.close();
+	});
+
+	it("completes when only optional nodes fail", async () => {
+		const { store, task, main, definition } = setup();
+		const optional = { ...definition.nodes[0]!, required: false };
+		const flow = new DurableFlowCoordinator(store).define(
+			{ taskId: task.id, agentId: main.id, kind: "main" },
+			"flow-optional",
+			{ objective: "best effort research", nodes: [optional] },
+		);
+		const node = flow.nodes[0]!;
+		expect(node.required).toBe(false);
+		await new DurableAgentCoordinator(store).coordinate(
+			{ taskId: task.id, agentId: node.agentId, kind: "subagent" },
+			{
+				type: "report",
+				operationKey: "optional-failed",
+				dispatchId: node.dispatchId,
+				status: "failed",
+				summary: "optional source unavailable",
+				evidence: [],
+				blockers: ["source"],
+			},
+		);
+		expect(store.requireFlow(flow.id).state).toBe("completed");
+		store.close();
+	});
+
+	it("freezes completed predecessor Episodes when a downstream Dispatch becomes runnable", async () => {
+		const { store, task, main, definition } = setup();
+		const flow = new DurableFlowCoordinator(store).define(
+			{ taskId: task.id, agentId: main.id, kind: "main" },
+			"flow-context",
+			definition,
+		);
+		const sources = flow.nodes.filter((node) => node.key.startsWith("research_"));
+		const target = flow.nodes.find((node) => node.key === "synthesize")!;
+		for (const source of sources) {
+			await new DurableAgentCoordinator(store).coordinate(
+				{ taskId: task.id, agentId: source.agentId, kind: "subagent" },
+				{
+					type: "report",
+					operationKey: `${source.key}-completed`,
+					dispatchId: source.dispatchId,
+					status: "completed",
+					summary: `${source.key} handoff`,
+					evidence: [{ id: source.key, kind: "event", ref: `event:${source.key}` }],
+					blockers: [],
+					acceptanceResults: [{ criterionId: source.key === "research_a" ? "a" : "b", passed: true }],
+				},
+			);
+		}
+		const superseding = store.createAgentDispatch({
+			actor: main,
+			agentId: sources[0]!.agentId,
+			operationKey: "unrelated-later-work",
+			action: "unrelated later work",
+		}).dispatch;
+		store.finalizeAgentDispatch({
+			agent: store.requireAgent(sources[0]!.agentId),
+			dispatchId: superseding.id,
+			status: "completed",
+			messageId: "later",
+			episode: { summary: "unrelated later Episode", evidence: [], blockers: [], acceptanceResults: [] },
+		});
+		const prepared = store.prepareAgentDispatchContext(target.dispatchId);
+		expect(prepared.contextManifest.sourceAgentIds).toEqual(sources.map((source) => source.agentId));
+		expect(prepared.contextManifest.sourceEpisodes.map((episode) => episode.summary)).toEqual([
+			"research_a handoff",
+			"research_b handoff",
+		]);
 		store.close();
 	});
 });

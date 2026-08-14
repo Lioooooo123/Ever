@@ -157,7 +157,9 @@ export class SessionMailboxStore {
 				 VALUES (?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT(session_id) DO UPDATE SET
 				 name = excluded.name, cwd = excluded.cwd, session_path = excluded.session_path,
-				 task_id = excluded.task_id, agent_id = excluded.agent_id, last_seen_at = excluded.last_seen_at`,
+				 task_id = COALESCE(excluded.task_id, sessions.task_id),
+				 agent_id = COALESCE(excluded.agent_id, sessions.agent_id),
+				 last_seen_at = excluded.last_seen_at`,
 			)
 			.run(
 				address.sessionId,
@@ -174,6 +176,13 @@ export class SessionMailboxStore {
 			| undefined;
 		if (!registered) throw new Error(`Session registration failed: ${address.sessionId}`);
 		return fromSessionRow(registered);
+	}
+
+	getSession(sessionId: string): SessionAddress | undefined {
+		const row = this.database.prepare("SELECT * FROM sessions WHERE session_id = ?").get(sessionId) as
+			| SessionRow
+			| undefined;
+		return row ? fromSessionRow(row) : undefined;
 	}
 
 	listSessions(limit = 100): SessionAddress[] {

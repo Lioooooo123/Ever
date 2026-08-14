@@ -352,6 +352,7 @@ export interface TaskEvent {
 	id: string;
 	taskId: string;
 	agentId?: string;
+	dispatchId?: string;
 	attemptId?: string;
 	seq: number;
 	type: string;
@@ -551,6 +552,7 @@ export interface AttemptRecord {
 	id: string;
 	taskId: string;
 	agentId: string;
+	dispatchId: string;
 	sessionId?: string;
 	ordinal: number;
 	state: string;
@@ -589,6 +591,7 @@ export interface CheckpointRecord {
 	id: string;
 	taskId: string;
 	agentId: string;
+	dispatchId: string;
 	attemptId: string;
 	eventSeq: number;
 	sessionCheckpoint: SessionCheckpoint;
@@ -629,6 +632,7 @@ export interface MessageCommand {
 export interface ReportCommand {
 	type: "report";
 	operationKey: string;
+	dispatchId: string;
 	status: "progress" | "completed" | "failed";
 	summary: string;
 	evidence: EvidenceRef[];
@@ -653,8 +657,21 @@ export interface InboxMessage {
 	priority: "normal" | "high";
 	body: string;
 	artifactRefs: string[];
+	state?: "queued" | "delivering" | "delivered" | "acknowledged";
 	replyToMessageId?: string;
 	createdAt: string;
+}
+
+export interface AgentMessageReceiptInput {
+	sessionId: string;
+	requestId: string;
+}
+
+export interface UnsettledAgentMessageReceipt {
+	messageId: string;
+	sessionId: string;
+	requestId: string;
+	modelVisibleAt: string;
 }
 
 export interface InboxBatch {
@@ -685,8 +702,10 @@ export interface FlowNodeRecord {
 	flowId: string;
 	key: string;
 	agentId: string;
+	dispatchId: string;
 	activeSessionId?: string;
 	delegationId: string;
+	required: boolean;
 	state: FlowNodeState;
 	dependsOn: string[];
 	createdAt: string;
@@ -710,14 +729,63 @@ export interface EpisodeRecord {
 	id: string;
 	taskId: string;
 	agentId: string;
+	dispatchId: string;
 	flowId?: string;
 	nodeKey?: string;
-	status: ReportCommand["status"] | "skipped";
+	status: ReportCommand["status"] | "completed_unaccepted" | "skipped";
 	summary: string;
 	evidence: EvidenceRef[];
 	blockers: string[];
 	acceptanceResults: AcceptanceResult[];
+	originalResponseArtifactRef?: string;
 	createdAt: string;
+}
+
+export type AgentDispatchState =
+	| "queued"
+	| "running"
+	| "finalizing"
+	| "completed"
+	| "completed_unaccepted"
+	| "failed"
+	| "cancelled"
+	| "unknown_outcome";
+
+export interface AgentDispatchContextEpisode {
+	id: string;
+	agentId: string;
+	status: "completed";
+	summary: string;
+	evidence: EvidenceRef[];
+	blockers: string[];
+	acceptanceResults: AcceptanceResult[];
+	sha256: string;
+}
+
+export interface AgentDispatchContextManifest {
+	action: string;
+	selfEpisode?: AgentDispatchContextEpisode;
+	sourceAgentIds: string[];
+	sourceEpisodes: AgentDispatchContextEpisode[];
+	createdAt: string;
+}
+
+export interface AgentDispatchRecord {
+	id: string;
+	taskId: string;
+	agentId: string;
+	actorAgentId?: string;
+	operationKey: string;
+	sequence: number;
+	action: string;
+	state: AgentDispatchState;
+	contextManifest: AgentDispatchContextManifest;
+	contextManifestSha256: string;
+	sessionId?: string;
+	episodeId?: string;
+	createdAt: string;
+	startedAt?: string;
+	settledAt?: string;
 }
 
 export interface AgentCheckpointCommit {

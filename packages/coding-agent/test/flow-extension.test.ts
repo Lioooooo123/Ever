@@ -52,14 +52,7 @@ describe("Flow extension", () => {
 		await command("research NAC", { durableGoal: host } as unknown as ExtensionCommandContext);
 
 		expect(host.start).toHaveBeenCalledWith("research NAC", { mode: "flow" });
-		expect(activeTools).toEqual([
-			"flow_define",
-			"flow_status",
-			"session_message",
-			"session_inbox",
-			"session_address",
-			"task_update",
-		]);
+		expect(activeTools).toEqual(["flow_define", "flow_status", "agent_message", "agent_inbox", "task_update"]);
 		expect(tools.has("flow_define")).toBe(true);
 		expect(tools.has("flow_status")).toBe(true);
 		expect(sendMessage).toHaveBeenCalledWith(

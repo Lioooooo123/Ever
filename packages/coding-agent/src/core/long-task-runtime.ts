@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, writeSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import type { Api, Model } from "@lioooooo123/ever-ai";
+import type { Api, AssistantMessage, Model } from "@lioooooo123/ever-ai";
 import type { ToolEffect } from "@lioooooo123/ever-long-tasks";
 import {
 	type AgentLease,
@@ -231,6 +231,13 @@ export interface LongTaskRuntimeHandle {
 	drainAndClose(): Promise<AttemptOutcome>;
 }
 
+const dispatchTerminalSignals = new WeakMap<AgentSessionRuntime, Promise<void>>();
+
+/** Resident Worker host seam: resolves only after its claimed subagent Dispatch is durably terminal. */
+export function waitForLongTaskDispatchTerminal(runtime: AgentSessionRuntime): Promise<void> | undefined {
+	return dispatchTerminalSignals.get(runtime);
+}
+
 interface NativeLongTaskAgentOptions {
 	runtime: AgentSessionRuntime;
 	store: SqliteTaskStore;
@@ -241,6 +248,7 @@ interface NativeLongTaskAgentOptions {
 	onReady?: () => void;
 	resident: boolean;
 	artifactsRoot: string;
+	onDispatchTerminal?: () => void;
 }
 
 /** The only module that joins Ever Session execution to durable Task facts. */
@@ -254,6 +262,7 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 	private readonly onReady?: () => void;
 	private readonly resident: boolean;
 	private readonly artifactsRoot: string;
+	private readonly onDispatchTerminal?: () => void;
 	private readonly permissionKernel: PermissionKernel;
 	private readonly authorizationCompiler: ModelAuthorizationCompiler;
 	private reviewerModel?: Model<Api>;
@@ -275,6 +284,8 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		outboundMessageIds: [],
 	};
 	private evidence: EvidenceRef[] = [];
+	private lastAssistantMessage?: AssistantMessage;
+	private dispatchTerminalSignalled = false;
 
 	constructor(options: NativeLongTaskAgentOptions) {
 		this.runtime = options.runtime;
@@ -286,6 +297,7 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		this.onReady = options.onReady;
 		this.resident = options.resident;
 		this.artifactsRoot = options.artifactsRoot;
+		this.onDispatchTerminal = options.onDispatchTerminal;
 		this.authorizationCompiler = new ModelAuthorizationCompiler((compileContext, signal) =>
 			this.runtime.session.completeLifecycleRequest("authorization_compile", compileContext, signal, {
 				model: this.requireReviewerModel(),
@@ -355,12 +367,15 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		const context = this.store.resolveAttemptClaim(claim);
 		this.lease = context.lease;
 		this.deadlineAt = context.deadlineAt;
-		const checkpoint = this.store.getLatestCheckpoint(context.agent.id);
+		const checkpoint = this.store.getLatestCheckpoint(context.agent.id, context.attempt.dispatchId);
 		if (checkpoint) {
 			this.progress = { ...checkpoint.progress, consumedMessageIds: [], outboundMessageIds: [] };
 			this.evidence = checkpoint.evidence;
 			if (checkpoint.sessionCheckpoint.sessionId === this.runtime.session.sessionId)
 				await this.runtime.restoreCheckpoint(checkpoint.sessionCheckpoint);
+			this.lastAssistantMessage = [...this.runtime.session.state.messages]
+				.reverse()
+				.find((message): message is AssistantMessage => message.role === "assistant");
 		}
 		const uninstallLifecycle = this.runtime.installLifecycle(this);
 		this.heartbeat = setInterval(() => this.renewLease(), this.heartbeatSeconds * 1000);
@@ -376,16 +391,14 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			uninstallLifecycle();
 		}
 		let task = this.store.requireTask(context.task.id);
-		if (!this.heartbeatError) {
-			try {
-				this.store.releaseLease(this.requireLease());
-				const agent = this.store.requireAgent(context.agent.id);
-				if (task.state === "running" && agent.state === "running")
-					this.store.transitionAgent(agent.id, "queued", "attempt_settled");
-				task = this.store.requireTask(context.task.id);
-			} catch (error) {
-				this.heartbeatError = error instanceof Error ? error : new Error(String(error));
-			}
+		try {
+			this.store.releaseLease(this.requireLease());
+			const agent = this.store.requireAgent(context.agent.id);
+			if (task.state === "running" && agent.state === "running")
+				this.store.transitionAgent(agent.id, "queued", "attempt_settled");
+			task = this.store.requireTask(context.task.id);
+		} catch (error) {
+			this.heartbeatError ??= error instanceof Error ? error : new Error(String(error));
 		}
 		if (this.heartbeatError) throw this.heartbeatError;
 		if (task.state === "completed") {
@@ -413,7 +426,7 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		const context = this.store.resolveAttemptClaim(this.requireClaim());
 		if (event.type === "before_turn") {
 			await this.compilePendingAuthorizations(context.task.id);
-			const checkpoint = this.store.getLatestCheckpoint(context.agent.id);
+			const checkpoint = this.store.getLatestCheckpoint(context.agent.id, context.attempt.dispatchId);
 			const taskContext = new TaskContextBuilder().build({
 				task: context.task,
 				agent: context.agent,
@@ -442,6 +455,7 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			return undefined;
 		}
 		if (event.type === "after_response") {
+			if (event.kind === "agent") this.lastAssistantMessage = event.message;
 			const reservationId = this.reservations.get(event.requestId);
 			if (!reservationId) throw new Error(`Provider request was not reserved: ${event.requestId}`);
 			if (
@@ -660,10 +674,14 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			});
 			return undefined;
 		}
+		if (this.finalizeSettledSubagent(context)) {
+			this.signalDispatchTerminal();
+			return undefined;
+		}
 		await this.commitCheckpoint(false);
 		this.assertRunnable("continuation decision");
 		this.lease = this.store.renewLease(this.requireLease(), this.leaseSeconds);
-		const checkpoint = this.store.getLatestCheckpoint(context.agent.id);
+		const checkpoint = this.store.getLatestCheckpoint(context.agent.id, context.attempt.dispatchId);
 		if (checkpoint) {
 			const continuation = new ContinuationController(this.store, this.continuationPolicy).evaluate({
 				lease: this.requireLease(),
@@ -699,6 +717,60 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 		return undefined;
 	}
 
+	private finalizeSettledSubagent(context: ReturnType<SqliteTaskStore["resolveAttemptClaim"]>): boolean {
+		if (context.agent.kind !== "subagent") return false;
+		const dispatch = this.store.requireAgentDispatch(context.attempt.dispatchId);
+		if (["completed", "completed_unaccepted", "failed", "cancelled", "unknown_outcome"].includes(dispatch.state))
+			return true;
+		const responseText = this.lastAssistantMessage?.content
+			.filter((part): part is { type: "text"; text: string } => part.type === "text")
+			.map((part) => part.text)
+			.join("\n")
+			.trim();
+		const rawResponse = JSON.stringify({ schemaVersion: 1, message: this.lastAssistantMessage ?? null });
+		const artifactDirectory = join(
+			this.artifactsRoot,
+			context.task.id,
+			"dispatches",
+			dispatch.id,
+			"attempts",
+			context.attempt.id,
+		);
+		const artifactPath = join(artifactDirectory, `original-response-${sha256(rawResponse)}.json`);
+		mkdirSync(artifactDirectory, { recursive: true, mode: 0o700 });
+		if (!existsSync(artifactPath)) {
+			const descriptor = openSync(artifactPath, "wx", 0o600);
+			try {
+				writeSync(descriptor, `${rawResponse}\n`);
+				fsyncSync(descriptor);
+			} finally {
+				closeSync(descriptor);
+			}
+		}
+		const cleanCompletion = this.lastAssistantMessage?.stopReason === "stop";
+		const summary =
+			responseText ||
+			this.lastAssistantMessage?.errorMessage?.trim() ||
+			(cleanCompletion
+				? "Subagent completed without a textual response."
+				: `Subagent did not complete cleanly${this.lastAssistantMessage ? ` (${this.lastAssistantMessage.stopReason})` : ""}.`);
+		const acceptance = this.store.getDelegationForAgent(context.agent.id)?.acceptance ?? [];
+		this.store.finalizeAgentDispatch({
+			agent: context.agent,
+			dispatchId: context.attempt.dispatchId,
+			status: cleanCompletion ? (acceptance.length === 0 ? "completed" : "completed_unaccepted") : "failed",
+			messageId: `automatic-settled:${dispatch.id}:${context.attempt.id}`,
+			episode: {
+				summary,
+				evidence: this.evidence,
+				blockers: cleanCompletion ? [] : [summary],
+				acceptanceResults: [],
+				originalResponseArtifactRef: artifactPath,
+			},
+		});
+		return true;
+	}
+
 	private assertRunnable(boundary: string): void {
 		if (this.heartbeatError) throw this.heartbeatError;
 		if (this.deadlineAt && Date.now() >= Date.parse(this.deadlineAt)) {
@@ -715,12 +787,14 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			const context = this.store.resolveAttemptClaim(this.requireClaim());
 			if (["paused", "cancelled"].includes(context.agent.state)) {
 				void this.runtime.session.abort();
+				this.signalDispatchTerminal();
 				return;
 			}
 			this.lease = this.store.renewLease(this.requireLease(), this.leaseSeconds);
 		} catch (error) {
 			this.heartbeatError = error instanceof Error ? error : new Error(String(error));
 			void this.runtime.session.abort();
+			this.signalDispatchTerminal();
 		}
 	}
 
@@ -752,7 +826,8 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 			},
 			progress: checkpointProgress,
 			evidence: this.evidence,
-			workspaceSnapshot: this.store.getLatestCheckpoint(context.agent.id)?.workspaceSnapshot ?? {},
+			workspaceSnapshot:
+				this.store.getLatestCheckpoint(context.agent.id, context.attempt.dispatchId)?.workspaceSnapshot ?? {},
 		});
 		this.progress = { ...checkpointProgress, consumedMessageIds: [] };
 	}
@@ -798,6 +873,12 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 	private requireLease(): AgentLease {
 		if (!this.lease) throw new Error("NativeLongTaskAgent has no active lease");
 		return this.lease;
+	}
+
+	private signalDispatchTerminal(): void {
+		if (this.dispatchTerminalSignalled) return;
+		this.dispatchTerminalSignalled = true;
+		this.onDispatchTerminal?.();
 	}
 }
 
@@ -926,6 +1007,11 @@ class NativeLongTaskExecution {
 				: {}),
 		});
 		const stopController = new AbortController();
+		let markDispatchTerminal: () => void = () => {};
+		const dispatchTerminal = new Promise<void>((resolve) => {
+			markDispatchTerminal = resolve;
+		});
+		dispatchTerminalSignals.set(runtime, dispatchTerminal);
 		let markReady: () => void = () => {};
 		const ready = new Promise<void>((resolve) => {
 			markReady = resolve;
@@ -940,8 +1026,18 @@ class NativeLongTaskExecution {
 			onReady: markReady,
 			resident: true,
 			artifactsRoot: join(agentDir, "tasks"),
+			onDispatchTerminal: () => {
+				markDispatchTerminal();
+				stopController.abort();
+			},
 		});
 		const running = nativeAgent.run(claim);
+		const clearDispatchTerminalSignal = (): void => {
+			if (dispatchTerminalSignals.get(runtime) === dispatchTerminal) dispatchTerminalSignals.delete(runtime);
+		};
+		void running.catch(() => {
+			markDispatchTerminal();
+		});
 		try {
 			await Promise.race([
 				ready,
@@ -954,6 +1050,7 @@ class NativeLongTaskExecution {
 			try {
 				await running;
 			} finally {
+				clearDispatchTerminalSignal();
 				store.close();
 			}
 			throw error;
@@ -964,6 +1061,7 @@ class NativeLongTaskExecution {
 				try {
 					return await running;
 				} finally {
+					clearDispatchTerminalSignal();
 					store.close();
 				}
 			},
