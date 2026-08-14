@@ -8,6 +8,7 @@
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@lioooooo123/ever-ai";
+import { SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import {
@@ -53,6 +54,7 @@ import { ForegroundPermissionLifecycle } from "./core/foreground-permission-life
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
+import { createNativeCoordinationTools } from "./core/native-coordination-tools.ts";
 import { createNativeTaskTool } from "./core/native-task-tool.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -852,6 +854,16 @@ export async function main(args: string[], options?: MainOptions) {
 				await modelRuntime.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey);
 			}
 		}
+		const taskAllowedTools = taskRunContext
+			? (() => {
+					const store = SqliteTaskStore.open({ databasePath: join(agentDir, "long-tasks.sqlite") });
+					try {
+						return store.requireAgent(taskRunContext.agentId).toolPolicy.allowedTools;
+					} finally {
+						store.close();
+					}
+				})()
+			: undefined;
 
 		const created = await createAgentSessionFromServices({
 			services,
@@ -860,12 +872,17 @@ export async function main(args: string[], options?: MainOptions) {
 			model: sessionOptions.model,
 			thinkingLevel: sessionOptions.thinkingLevel,
 			scopedModels: sessionOptions.scopedModels,
-			tools: sessionOptions.tools,
+			tools: taskAllowedTools ?? sessionOptions.tools,
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
 			customTools: [
 				...(sessionOptions.customTools ?? []),
-				...(taskRunContext ? [createNativeTaskTool(agentDir, taskRunContext.taskId)] : []),
+				...(taskRunContext
+					? [
+							createNativeTaskTool(agentDir, taskRunContext.taskId, taskRunContext.agentId),
+							...createNativeCoordinationTools(agentDir, taskRunContext.taskId, taskRunContext.agentId),
+						]
+					: []),
 			],
 			lifecycleRef,
 		});

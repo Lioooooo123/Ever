@@ -31,6 +31,7 @@ export interface UnattendedTaskSubmission {
 
 export interface InteractiveTaskSubmission {
 	kind: "interactive";
+	mode?: "session" | "flow";
 	workspaceRoot: string;
 	goal: string;
 	title?: string;
@@ -183,6 +184,7 @@ export class TaskApplication {
 					? {
 							constraints: {
 								...(input.kind === "unattended" ? { unattendedApproved: true } : { interactiveApproved: true }),
+								...(input.kind === "interactive" ? { executionMode: input.mode ?? "session" } : {}),
 								...(input.model === undefined ? {} : { model: input.model }),
 							},
 						}
@@ -198,7 +200,26 @@ export class TaskApplication {
 				...(input.kind !== "manual"
 					? {
 							toolPolicy: {
-								allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "task_update"],
+								allowedTools: [
+									"read",
+									"grep",
+									"find",
+									"ls",
+									"bash",
+									"edit",
+									"write",
+									"task_update",
+									"agent_spawn",
+									"agent_message",
+									"agent_inbox",
+									...(input.kind === "interactive"
+										? ["session_message", "session_inbox", "session_address"]
+										: []),
+									"agent_report",
+									...(input.kind === "interactive" && input.mode === "flow"
+										? ["flow_define", "flow_status"]
+										: []),
+								],
 								allowedPaths: [workspace.root],
 								readOnly: false,
 								sandboxRequired: input.kind === "unattended" && input.unsafeNoSandbox !== true,

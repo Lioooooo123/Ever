@@ -53,6 +53,7 @@ export interface DaemonResponse {
 
 export interface DaemonRuntimeSettings {
 	maxConcurrentTasks: number;
+	maxConcurrentAgentsPerTask: number;
 	workerHeartbeatSeconds: number;
 	workerLeaseSeconds: number;
 	eventReplayMaxCount: number;
@@ -301,6 +302,7 @@ async function waitForDaemon(agentDir: string, child: ChildProcess, attempts = 1
 
 const DEFAULT_DAEMON_RUNTIME_SETTINGS: DaemonRuntimeSettings = {
 	maxConcurrentTasks: 1,
+	maxConcurrentAgentsPerTask: 4,
 	workerHeartbeatSeconds: 5,
 	workerLeaseSeconds: 30,
 	eventReplayMaxCount: 10_000,
@@ -426,12 +428,20 @@ class DaemonSupervisor {
 				}
 				if (stopping || !cliEntry) return;
 				const activeTaskIds = new Set([...workers.values()].map((worker) => worker.taskId));
-				const task = store
-					.listRunnableTasks(100)
-					.find(
-						(candidate) => !activeTaskIds.has(candidate.id) && activeTaskIds.size < settings.maxConcurrentTasks,
+				const candidate = store.listRunnableTasks(100).find((task) => {
+					const taskWorkerCount = [...workers.values()].filter((worker) => worker.taskId === task.id).length;
+					const taskHasCapacity = taskWorkerCount < settings.maxConcurrentAgentsPerTask;
+					const taskSlotAvailable = activeTaskIds.has(task.id) || activeTaskIds.size < settings.maxConcurrentTasks;
+					return (
+						taskHasCapacity &&
+						taskSlotAvailable &&
+						store
+							.listRunnableAgents(task.id, settings.maxConcurrentAgentsPerTask)
+							.some((agent) => !workers.has(agent.id))
 					);
-				if (!task) return;
+				});
+				if (!candidate) return;
+				const task = candidate;
 				const selectedModel = taskModel(task);
 				if (!selectedModel) {
 					store.transitionTask(task.id, "waiting_input", "model_required");
@@ -451,12 +461,14 @@ class DaemonSupervisor {
 					}
 					return;
 				}
-				const agent = store.listRunnableAgents(task.id, 1).find((candidate) => candidate.kind === "main");
+				const agent = store
+					.listRunnableAgents(task.id, settings.maxConcurrentAgentsPerTask)
+					.find((candidateAgent) => !workers.has(candidateAgent.id));
 				if (!agent || workers.has(agent.id)) return;
 				const executionContext = resolveAgentExecutionContext(store, task.id, agent.id);
 				const logDir = join(agentDir, "tasks", task.id);
 				mkdirSync(logDir, { recursive: true, mode: 0o700 });
-				const workerArgs = [cliEntry, "task", "run", task.id, "--print"];
+				const workerArgs = [cliEntry, "task", "run", task.id, "--agent", agent.id, "--print"];
 				const workerId = randomUUID();
 				const executionId = randomUUID();
 				const token = deriveWorkerToken(controlToken, workerId, supervisorGeneration);
@@ -473,7 +485,7 @@ class DaemonSupervisor {
 				}
 				const privateSocketPath = createWorkerSocketPath(agentDir, agent.id);
 				const startedAt = new Date().toISOString();
-				const logFd = openSync(join(logDir, "daemon.log"), "a", 0o600);
+				const logFd = openSync(join(logDir, `daemon-${agent.id.slice(0, 8)}.log`), "a", 0o600);
 				let hosted: Awaited<ReturnType<SessionExecutionHost["start"]>>;
 				try {
 					hosted = await executionHost.start({

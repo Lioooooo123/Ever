@@ -7,6 +7,7 @@ export * from "./coordinator.ts";
 export * from "./evidence-resolver.ts";
 export * from "./execution-context.ts";
 export * from "./execution-policy.ts";
+export * from "./flow.ts";
 export * from "./notifications.ts";
 export * from "./recovery.ts";
 export * from "./runtime-snapshot.ts";

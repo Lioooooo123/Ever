@@ -303,6 +303,7 @@ export interface CompactOptions {
 export interface DurableGoalSnapshot {
 	taskId: string;
 	goal: string;
+	executionMode?: "session" | "flow";
 	state:
 		| "draft"
 		| "queued"
@@ -383,7 +384,7 @@ export interface DurableTaskAuthorizationSummary {
 
 export interface DurableGoalHost {
 	status(): DurableGoalSnapshot | undefined;
-	start(goal: string): Promise<DurableGoalSnapshot>;
+	start(goal: string, options?: { mode?: "session" | "flow" }): Promise<DurableGoalSnapshot>;
 	pause(): Promise<DurableGoalSnapshot>;
 	resume(): Promise<DurableGoalSnapshot>;
 	cancel(): Promise<DurableGoalSnapshot>;

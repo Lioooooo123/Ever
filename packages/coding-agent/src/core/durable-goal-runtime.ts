@@ -23,6 +23,9 @@ function snapshot(
 	return {
 		taskId: task.id,
 		goal: task.goal,
+		...(task.constraints.executionMode === "flow"
+			? { executionMode: "flow" as const }
+			: { executionMode: "session" as const }),
 		state: task.state,
 		...(task.stateReason ? { stateReason: task.stateReason } : {}),
 		totalTurns: task.totalTurns,
@@ -88,7 +91,7 @@ export class DurableGoalRuntime implements DurableGoalHost {
 		return this.snapshot(this.application.resolve(this.activeTaskId));
 	}
 
-	async start(goal: string): Promise<DurableGoalSnapshot> {
+	async start(goal: string, options?: { mode?: "session" | "flow" }): Promise<DurableGoalSnapshot> {
 		if (!this.runtime.session.isIdle) throw new Error("Wait for the current Turn to settle before starting a Goal");
 		const current = this.status();
 		if (current && !TERMINAL_STATES.has(current.state))
@@ -99,6 +102,7 @@ export class DurableGoalRuntime implements DurableGoalHost {
 		if (!model) throw new Error("Select a model before starting a Goal");
 		const task = this.application.submit({
 			kind: "interactive",
+			mode: options?.mode ?? "session",
 			workspaceRoot: this.runtime.cwd,
 			goal,
 			model: { provider: model.provider, id: model.id },

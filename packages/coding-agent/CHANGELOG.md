@@ -8,6 +8,10 @@
 - Required durable completion requests to audit each explicit objective requirement against host-verified evidence.
 - Deferred automatic Task continuation whenever the Session is already occupied by user work.
 
+### Added
+
+- Added `/flow` for durable DAG orchestration across concurrent Agent Sessions, reusable Agent delegation and messaging tools, persistent Episodes and Handoffs, and cross-Session messaging for ordinary Sessions.
+
 ## [0.0.1] - 2026-08-14
 
 ### Added
