@@ -4,17 +4,21 @@
 
 ## Tasks and Sessions
 
-Ever is Task-first. Every public execution creates, resumes, or controls a durable Task. A Session is the Task's internal execution and conversation record; it is not a separate public CLI workflow.
+Ever opens as a normal coding-agent Session. Durable Tasks and DAG Flows are explicit capabilities layered on the same Session runtime; they do not replace the default CLI workflow.
 
 ```bash
-# Open Task Home
+# Open a normal persistent Session
 ever
 
-# Create a Task and enter its TUI
+# Start a Session with an initial prompt
 ever "inspect this repository and explain the architecture"
 
+# Open Task Home or create a durable Task explicitly
+ever home
+ever run "inspect this repository and explain the architecture"
+
 # Create a detached Task
-ever "refactor the repository and run the focused tests" --detach --yes
+ever run "refactor the repository and run the focused tests" --detach --yes
 
 # Reopen or control a Task
 ever attach <task-id>
@@ -22,7 +26,7 @@ ever status <task-id>
 /goal status
 ```
 
-The CLI normally creates the durable Task before starting its Session. In an idle Session with no active Task, `/goal <objective>` can create and attach one through the same Task Application. Task Store owns the Goal, budget, progress, checkpoints, evidence, permissions, and recovery state; `/goal` remains a thin adapter and does not own a parallel state machine. Completion is accepted only when `task_update` maps each explicit requirement to host-verified evidence.
+The CLI normally starts a persistent Session. In an idle Session with no active Task, `/goal <objective>` can create and attach one through the same Task Application. Task Store owns the Goal, budget, progress, checkpoints, evidence, permissions, and recovery state; `/goal` remains a thin adapter and does not own a parallel state machine. Completion is accepted only when `task_update` maps each explicit requirement to host-verified evidence.
 
 The same Task can be resumed by a resident Worker after the client exits and reopened through `ever task`.
 
@@ -224,7 +228,7 @@ Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUp
 
 ## Sessions
 
-A Session is a Task Agent's execution and conversation record. The public CLI resumes work with `ever attach <task-id>`; `--continue`, `--resume`, `--session`, `--session-id`, and `--fork` are reserved for Ever's internal Task-to-Session bridge. Task state remains in Task Store rather than being copied into the transcript. SDK consumers may still manage standalone Sessions directly. See [Session details](docs/sessions.md).
+A Session is Ever's execution and conversation record. The public CLI can create, continue, resume, select, and fork Sessions with `--continue`, `--resume`, `--session`, `--session-id`, and `--fork`. A durable Task may attach to a Session, while Task state remains in Task Store rather than being copied into the transcript. See [Session details](docs/sessions.md).
 
 ### Compaction
 
@@ -450,7 +454,7 @@ See [docs/rpc.md](docs/rpc.md) for the protocol.
 
 ## Design principles
 
-Ever is Task-first and Session-powered. Public execution begins with a durable Task; `AgentSessionRuntime` remains the single model, tool, context, transcript, and compaction kernel inside each Task Attempt.
+Ever is Session-native. `AgentSessionRuntime` remains the single model, tool, context, transcript, and compaction kernel. Durable Tasks and Flows reuse it instead of creating a parallel agent loop.
 
 The native Task lifecycle is `reasoning -> execute -> observe -> verify -> repair`, repeated until acceptance passes, a budget pauses execution, or the Task waits for user or external input. The same lifecycle owns checkpoints, leases, permissions, continuation, and Worker recovery; there is no separate Goal Mode state machine.
 
@@ -461,10 +465,11 @@ Extensions, skills, prompt templates, and packages customize execution without c
 ## CLI Reference
 
 ```bash
-ever [goal] [task-options]
+ever [session-options] [message]
+ever run <goal> [task-options]
 ```
 
-Run `ever` without arguments for Task Home. `ever <goal>` creates a foreground Task; add `--detach --yes` for unattended execution. Use `ever tasks`, `ever status <task-id>`, `ever attach <task-id>`, and `ever pause|resume|cancel|stop <task-id>` to manage it. Session-selection flags are internal and rejected at the public CLI boundary.
+Run `ever` without arguments for a normal Session, or pass a message as its initial prompt. Use `ever home` for Task Home and `ever run <goal>` to create a foreground durable Task; add `--detach --yes` for unattended execution. Use `ever tasks`, `ever status <task-id>`, `ever attach <task-id>`, and `ever pause|resume|cancel|stop <task-id>` to manage it.
 
 ### Package Commands
 

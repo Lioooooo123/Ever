@@ -368,7 +368,7 @@ export interface ToolPolicy {
 }
 
 export type PermissionGrantSource = "user" | "policy" | "reviewer_once";
-export type PermissionGrantLifetime = "once" | "attempt" | "task" | "workspace" | "project_policy";
+export type PermissionGrantLifetime = "once" | "attempt" | "task" | "session" | "workspace" | "project_policy";
 export type PermissionGrantState = "active" | "consumed" | "revoked" | "expired";
 export type PermissionEffect = "read_only" | "reconcilable_write" | "process" | "external_side_effect";
 
@@ -386,7 +386,8 @@ export interface PermissionGrantRecord {
 	source: PermissionGrantSource;
 	lifetime: PermissionGrantLifetime;
 	scope: PermissionScope;
-	taskId: string;
+	taskId?: string;
+	sessionId?: string;
 	attemptId?: string;
 	workspaceFingerprint: string;
 	sandboxProfileSha256: string;
@@ -401,7 +402,8 @@ export interface CreatePermissionGrantInput {
 	source: PermissionGrantSource;
 	lifetime: PermissionGrantLifetime;
 	scope: PermissionScope;
-	taskId: string;
+	taskId?: string;
+	sessionId?: string;
 	attemptId?: string;
 	workspaceFingerprint: string;
 	sandboxProfileSha256: string;

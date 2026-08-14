@@ -250,13 +250,18 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
   ${APP_NAME} task <command>            Create and manage durable long-running tasks
+  ${APP_NAME} home                      Open Task Home
+  ${APP_NAME} new                       Create a durable Task interactively
+  ${APP_NAME} run <goal>                Create a durable Task explicitly
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
-${chalk.bold("Attached Task controls:")}
+${chalk.bold("Durable coordination:")}
   /goal <objective>               Start a Task when this Session has no active Task
   /goal status                    Inspect Task state, usage, progress, and evidence
   /goal pause|resume|cancel       Control the current Task
   /goal blocked|permissions       Record a blocker or manage durable permission grants
+  /flow <objective>               Run a durable DAG from the current Session
+  /flow status|pause|resume|cancel Inspect or control the current Flow
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)

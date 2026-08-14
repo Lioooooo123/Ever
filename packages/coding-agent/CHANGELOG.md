@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Restored the default CLI to a normal persistent Session and made durable Task creation explicit through `ever run`, `ever new`, `ever home`, `/goal`, or `/flow`.
 - Restored `/goal <objective>` as a thin Session adapter over the durable Task runtime, without reintroducing a second Goal state machine.
 - Required durable completion requests to audit each explicit objective requirement against host-verified evidence.
 - Deferred automatic Task continuation whenever the Session is already occupied by user work.
@@ -11,6 +12,9 @@
 ### Added
 
 - Added `/flow` for durable DAG orchestration and reusable `agent_spawn`, `agent_dispatch`, `agent_message`, `agent_inbox`, and `agent_report` tools for named Agents across ordinary Sessions, with fresh Dispatch Sessions, persistent Episodes, and durable cross-Session delivery.
+- Sandboxed the foreground execution path so `ever`, `ever run`, `ever attach`, `ever new`, and `ever home` re-exec the Session inside the same Session Execution Host used by detached Workers. Bare Sessions are sandboxed at launch, `/goal` inherits `sandboxAvailable` without its own handling, and the Small Model Judge can auto-approve eligible low-risk process commands in the foreground instead of prompting for every command. Startup envelopes now carry the full credential map, and unsandboxed platforms or missing credentials still fall back to manual confirmation.
+- Allowed durable permission grants to attach to a Session without a Task: `taskId` is now optional, `session` grants are keyed by `sessionId`, and `workspace`/`project_policy` grants are keyed by workspace alone. A sandboxed Session hot-updates the network allowlist over a control channel when the user grants a new domain, so newly approved domains work without a restart.
+- Added a permission security eval gate: an adversarial process corpus must never auto-allow, and eligible benign workspace intents must auto-approve at a ≥90% rate.
 
 ## [0.0.1] - 2026-08-14
 

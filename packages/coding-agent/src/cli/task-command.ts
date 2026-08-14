@@ -138,6 +138,7 @@ export async function handleTaskCommand(args: string[], agentDir: string, cwd: s
 						taskRef: args[2] ?? "",
 						agentRef: option(args, "--agent"),
 						print: printMode,
+						json: args.includes("--json"),
 						acceptRuntimeDrift: args.includes("--accept-runtime-drift"),
 						clientId: commandIdentity.clientId,
 					}),

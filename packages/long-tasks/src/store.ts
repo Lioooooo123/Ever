@@ -79,7 +79,7 @@ try {
 	process.emitWarning = originalEmitWarning;
 }
 
-const CURRENT_SCHEMA_VERSION = 10;
+const CURRENT_SCHEMA_VERSION = 11;
 const LIVE_DELIVERY_STALE_AFTER_MS = 35 * 60_000;
 
 const TASK_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
@@ -336,7 +336,8 @@ interface PermissionGrantRow {
 	source: PermissionGrantRecord["source"];
 	lifetime: PermissionGrantRecord["lifetime"];
 	scope_json: string;
-	task_id: string;
+	task_id: string | null;
+	session_id: string | null;
 	attempt_id: string | null;
 	workspace_fingerprint: string;
 	sandbox_profile_sha256: string;
@@ -649,7 +650,8 @@ function permissionGrantFromRow(row: PermissionGrantRow): PermissionGrantRecord 
 		source: row.source,
 		lifetime: row.lifetime,
 		scope,
-		taskId: row.task_id,
+		...(row.task_id === null ? {} : { taskId: row.task_id }),
+		...(row.session_id === null ? {} : { sessionId: row.session_id }),
 		...(row.attempt_id === null ? {} : { attemptId: row.attempt_id }),
 		workspaceFingerprint: row.workspace_fingerprint,
 		sandboxProfileSha256: row.sandbox_profile_sha256,
@@ -778,6 +780,7 @@ function migrationSql(version: number): string {
 		8: "task_authorizations",
 		9: "flows",
 		10: "agent_dispatches",
+		11: "permission_grant_session_scope",
 	} as const;
 	const filename = `${String(version).padStart(3, "0")}_${names[version as keyof typeof names]}.sql`;
 	const migrationPath = import.meta.url.includes("$bunfs")
@@ -1139,17 +1142,26 @@ export class SqliteTaskStore {
 	}
 
 	createPermissionGrant(input: CreatePermissionGrantInput): PermissionGrantRecord {
-		const task = this.requireTask(input.taskId);
 		validatePermissionScope(input.scope);
-		if (task.workspaceFingerprint !== input.workspaceFingerprint)
-			throw new Error("Permission grant workspace identity does not match the Task");
+		if (input.taskId !== undefined) {
+			const task = this.requireTask(input.taskId);
+			if (task.workspaceFingerprint !== input.workspaceFingerprint)
+				throw new Error("Permission grant workspace identity does not match the Task");
+		} else if (["once", "attempt", "task"].includes(input.lifetime)) {
+			throw new Error(`${input.lifetime} permission grants require a Task`);
+		}
 		if (!/^[a-f0-9]{64}$/.test(input.sandboxProfileSha256))
 			throw new TypeError("Invalid permission grant sandbox profile hash");
 		if (input.expiresAt !== undefined && !Number.isFinite(Date.parse(input.expiresAt)))
 			throw new TypeError("Invalid permission grant expiration");
 		if (input.source === "reviewer_once" && input.lifetime !== "once")
 			throw new Error("Risk reviewer grants must be single-use");
+		if (input.sessionId !== undefined && input.lifetime !== "session")
+			throw new Error("Only session permission grants can bind a session ID");
+		if (input.lifetime === "session" && input.sessionId === undefined)
+			throw new Error("session permission grants require a session ID");
 		if (["once", "attempt"].includes(input.lifetime)) {
+			if (input.taskId === undefined) throw new Error(`${input.lifetime} permission grants require a Task`);
 			if (!input.attemptId) throw new Error(`${input.lifetime} permission grants require an Attempt`);
 			const attempt = this.getAttempt(input.attemptId);
 			if (!attempt || attempt.taskId !== input.taskId)
@@ -1163,16 +1175,17 @@ export class SqliteTaskStore {
 			this.database
 				.prepare(
 					`INSERT INTO permission_grants
-					 (id, source, lifetime, scope_json, task_id, attempt_id, workspace_fingerprint,
+					 (id, source, lifetime, scope_json, task_id, session_id, attempt_id, workspace_fingerprint,
 					  sandbox_profile_sha256, state, remaining_uses, created_at, expires_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
 				)
 				.run(
 					id,
 					input.source,
 					input.lifetime,
 					JSON.stringify(input.scope),
-					input.taskId,
+					input.taskId ?? null,
+					input.sessionId ?? null,
 					input.attemptId ?? null,
 					input.workspaceFingerprint,
 					input.sandboxProfileSha256,
@@ -1180,14 +1193,16 @@ export class SqliteTaskStore {
 					now,
 					input.expiresAt ?? null,
 				);
-			this.appendEventInternal(
-				input.taskId,
-				undefined,
-				input.attemptId,
-				"PermissionGrantCreated",
-				{ grantId: id, source: input.source, lifetime: input.lifetime, schemaVersion: 1 },
-				now,
-			);
+			if (input.taskId !== undefined) {
+				this.appendEventInternal(
+					input.taskId,
+					undefined,
+					input.attemptId,
+					"PermissionGrantCreated",
+					{ grantId: id, source: input.source, lifetime: input.lifetime, schemaVersion: 1 },
+					now,
+				);
+			}
 		});
 		return this.requirePermissionGrant(id);
 	}
@@ -1203,8 +1218,9 @@ export class SqliteTaskStore {
 	}
 
 	listActivePermissionGrants(input: {
-		taskId: string;
-		attemptId: string;
+		taskId?: string;
+		sessionId?: string;
+		attemptId?: string;
 		workspaceFingerprint: string;
 		sandboxProfileSha256: string;
 	}): PermissionGrantRecord[] {
@@ -1214,15 +1230,20 @@ export class SqliteTaskStore {
 				.prepare(
 					`SELECT * FROM permission_grants
 					 WHERE state = 'active' AND workspace_fingerprint = ? AND sandbox_profile_sha256 = ?
-					 AND (lifetime IN ('workspace', 'project_policy') OR task_id = ?)
+					 AND (
+						 lifetime IN ('workspace', 'project_policy')
+						 OR (lifetime = 'session' AND session_id = ?)
+						 OR (lifetime IN ('once', 'attempt', 'task') AND task_id = ?)
+					 )
 					 AND (attempt_id IS NULL OR attempt_id = ?)
 					 ORDER BY created_at`,
 				)
 				.all(
 					input.workspaceFingerprint,
 					input.sandboxProfileSha256,
-					input.taskId,
-					input.attemptId,
+					input.sessionId ?? null,
+					input.taskId ?? null,
+					input.attemptId ?? null,
 				) as unknown as PermissionGrantRow[]
 		).map(permissionGrantFromRow);
 	}
@@ -1277,14 +1298,16 @@ export class SqliteTaskStore {
 			this.database
 				.prepare("UPDATE permission_grants SET state = 'revoked', revoked_at = ? WHERE id = ?")
 				.run(now, grant.id);
-			this.appendEventInternal(
-				grant.taskId,
-				undefined,
-				grant.attemptId,
-				"PermissionGrantRevoked",
-				{ grantId: grant.id, schemaVersion: 1 },
-				now,
-			);
+			if (grant.taskId !== undefined) {
+				this.appendEventInternal(
+					grant.taskId,
+					undefined,
+					grant.attemptId,
+					"PermissionGrantRevoked",
+					{ grantId: grant.id, schemaVersion: 1 },
+					now,
+				);
+			}
 			return this.requirePermissionGrant(grant.id);
 		});
 	}
@@ -1513,14 +1536,16 @@ export class SqliteTaskStore {
 		executeTransaction(this.database, () => {
 			for (const row of expired) {
 				this.database.prepare("UPDATE permission_grants SET state = 'expired' WHERE id = ?").run(row.id);
-				this.appendEventInternal(
-					row.task_id,
-					undefined,
-					row.attempt_id ?? undefined,
-					"PermissionGrantExpired",
-					{ grantId: row.id, schemaVersion: 1 },
-					now,
-				);
+				if (row.task_id !== null) {
+					this.appendEventInternal(
+						row.task_id,
+						undefined,
+						row.attempt_id ?? undefined,
+						"PermissionGrantExpired",
+						{ grantId: row.id, schemaVersion: 1 },
+						now,
+					);
+				}
 			}
 		});
 	}

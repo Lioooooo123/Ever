@@ -6,7 +6,7 @@
 - 关联规范：[UNIFIED_GOAL_SANDBOX_PERMISSION_SPEC.md](./UNIFIED_GOAL_SANDBOX_PERMISSION_SPEC.md)、[LONG_RUNNING_CONTROL_PLANE_SPEC.md](./LONG_RUNNING_CONTROL_PLANE_SPEC.md)、[NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md](./NATIVE_LONG_TASK_AGENT_ARCHITECTURE.md)
 - 目标读者：Ever 维护者、实现工程师、安全评审者、Eval 维护者
 
-实现边界：Phase A、Phase B 的运行时代码与持久化，以及 Phase C 的 fail-closed sandbox seam 和 faux-provider 回归已落地；第 22 节的真实 Provider 延迟、成本 P95 和端到端 smoke 属于发布资格验证，未通过前不得宣称达到生产发布门槛。
+实现边界：Phase A、Phase B 的运行时代码与持久化、Phase C 的统一前台 Sandbox（`ever`/`ever run`/`attach`/`new`/`home` re-exec + `/goal` 继承 + 网络域名热更新 + Session/workspace 级 grant）以及 faux-provider 回归已落地；第 22 节的真实 Provider 延迟、成本 P95 和端到端 smoke 属于发布资格验证，未通过前不得宣称达到生产发布门槛。前台写路径扩展（reinitialize + checkpoint 重启）与后台 Worker 的运行时域扩展仍为后续项。
 
 ## 1. 决策摘要
 

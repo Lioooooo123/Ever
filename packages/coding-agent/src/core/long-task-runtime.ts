@@ -46,6 +46,7 @@ import {
 	selectReviewerModel,
 } from "./reviewer-model-selector.ts";
 import { ModelRiskReviewer, RISK_REVIEWER_PROMPT_SHA256, riskReviewPayload } from "./risk-reviewer.ts";
+import { requestSandboxControl } from "./sandbox-control.ts";
 import { type EvalEffectGateCapability, getWorkerStartupIfLoaded } from "./worker-startup.ts";
 
 function sha256(value: string): string {
@@ -272,6 +273,9 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 	private heartbeat?: ReturnType<typeof setInterval>;
 	private heartbeatError?: Error;
 	private readonly reservations = new Map<string, string>();
+	private readonly allowedDomains = new Set<string>(
+		getWorkerStartupIfLoaded()?.executionEnvironment.allowedDomains ?? [],
+	);
 	private progress: Progress = {
 		summary: "Attempt claimed; awaiting the next settled Turn.",
 		completedItems: [],
@@ -508,8 +512,8 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 				workspaceFingerprint: context.task.workspaceFingerprint,
 				sandboxProfileSha256: context.attempt.runtimeSnapshot.sandboxPolicySha256,
 				sandboxAvailable: executionEnvironment?.trust === "sandboxed",
-				sandboxAllowedDomains: executionEnvironment?.allowedDomains,
-				unattended: executionEnvironment !== undefined,
+				sandboxAllowedDomains: [...this.allowedDomains],
+				unattended: process.env.EVER_RESIDENT_WORKER === "1",
 				unsafeNoSandbox: executionEnvironment?.trust === "unsafe_host",
 				...gitFacts,
 				prHeadSha: needsAuthorizationFacts
@@ -566,6 +570,13 @@ class NativeLongTaskAgent implements AgentSessionLifecycle {
 						workspaceFingerprint: context.task.workspaceFingerprint,
 						sandboxProfileSha256: context.attempt.runtimeSnapshot.sandboxPolicySha256,
 					});
+					if (decision.code === "sandbox_profile_expansion_required") {
+						for (const domain of decision.suggestedScope.networkDomains) this.allowedDomains.add(domain);
+						requestSandboxControl({
+							type: "updateAllowedDomains",
+							domains: decision.suggestedScope.networkDomains,
+						});
+					}
 					decision = await this.permissionKernel.authorize(intent, permissionContext, this.stopSignal);
 				} else if (approval?.action === "deny") {
 					decision = { action: "deny", code: "user_denied", reason: "User denied this action" };
@@ -986,7 +997,7 @@ class NativeLongTaskExecution {
 			throw new Error("Invalid long-task Worker lease or heartbeat configuration");
 		}
 		const workerStartup = getWorkerStartupIfLoaded();
-		const residentWorker = workerStartup !== undefined;
+		const residentWorker = process.env.EVER_RESIDENT_WORKER === "1";
 		const workerId = residentWorker ? process.env.EVER_WORKER_ID : `foreground:${process.pid}`;
 		const executionId = residentWorker ? process.env.EVER_EXECUTION_ID : randomUUID();
 		if (!workerId || !executionId) {

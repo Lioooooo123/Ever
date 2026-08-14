@@ -26,7 +26,7 @@ function fixture(approval: "allow" | "deny") {
 		session: { getActiveToolNames: () => ["read", "bash"], messages: [] },
 		requestPermissionApproval,
 	} as unknown as AgentSessionRuntime;
-	return { cwd, lifecycle: new ForegroundPermissionLifecycle(runtime, () => false), requestPermissionApproval };
+	return { cwd, lifecycle: new ForegroundPermissionLifecycle(runtime, cwd, () => false), requestPermissionApproval };
 }
 
 describe("ForegroundPermissionLifecycle", () => {
@@ -85,7 +85,7 @@ describe("ForegroundPermissionLifecycle", () => {
 			},
 			requestPermissionApproval,
 		} as unknown as AgentSessionRuntime;
-		const lifecycle = new ForegroundPermissionLifecycle(runtime, () => false);
+		const lifecycle = new ForegroundPermissionLifecycle(runtime, cwd, () => false);
 		expect(
 			await lifecycle.handle({
 				type: "before_tool",
@@ -155,7 +155,7 @@ describe("ForegroundPermissionLifecycle", () => {
 			session: { getActiveToolNames: () => ["bash"], messages: [] },
 			requestPermissionApproval,
 		} as unknown as AgentSessionRuntime;
-		const lifecycle = new ForegroundPermissionLifecycle(runtime, () => true);
+		const lifecycle = new ForegroundPermissionLifecycle(runtime, cwd, () => true);
 		expect(
 			await lifecycle.handle({
 				type: "before_tool",

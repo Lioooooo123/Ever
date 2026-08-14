@@ -427,4 +427,51 @@ describe("durable permission grants", () => {
 		]);
 		store.close();
 	});
+
+	it("persists Session-scoped grants without a Task", () => {
+		const store = createInMemoryTaskStore(() => new Date("2026-08-14T00:00:00.000Z"));
+		const scope = {
+			toolNames: ["bash"],
+			effects: ["process" as const],
+			pathPrefixes: [process.cwd()],
+			commandFingerprints: [],
+			networkDomains: ["registry.npmjs.org"],
+			credentialScopes: [],
+		};
+		const sessionGrant = store.createPermissionGrant({
+			source: "user",
+			lifetime: "session",
+			scope,
+			sessionId: "session-foreground",
+			workspaceFingerprint: "workspace-1",
+			sandboxProfileSha256: profileSha256,
+		});
+		const workspaceGrant = store.createPermissionGrant({
+			source: "user",
+			lifetime: "workspace",
+			scope,
+			workspaceFingerprint: "workspace-1",
+			sandboxProfileSha256: profileSha256,
+		});
+		expect(sessionGrant).toMatchObject({ lifetime: "session", sessionId: "session-foreground" });
+		expect(sessionGrant.taskId).toBeUndefined();
+		expect(workspaceGrant).toMatchObject({ lifetime: "workspace" });
+		expect(workspaceGrant.taskId).toBeUndefined();
+
+		const active = store.listActivePermissionGrants({
+			sessionId: "session-foreground",
+			workspaceFingerprint: "workspace-1",
+			sandboxProfileSha256: profileSha256,
+		});
+		expect(active).toHaveLength(2);
+		expect(active.map((grant) => grant.lifetime).sort()).toEqual(["session", "workspace"]);
+
+		const otherSession = store.listActivePermissionGrants({
+			sessionId: "session-other",
+			workspaceFingerprint: "workspace-1",
+			sandboxProfileSha256: profileSha256,
+		});
+		expect(otherSession.map((grant) => grant.lifetime)).toEqual(["workspace"]);
+		store.close();
+	});
 });

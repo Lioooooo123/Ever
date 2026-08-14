@@ -7,9 +7,9 @@ import { resolveTaskModel, TaskModelConfigurationError, type TaskModelIdentity }
 import { activateTaskRun } from "../core/task-run.ts";
 import { getTaskRunContext } from "../core/task-run-context.ts";
 import { requestDaemon, startDaemon } from "./daemon-command.ts";
+import { maybeReexecForegroundTask } from "./foreground-sandbox.ts";
 import { runProviderAndModelSetup } from "./provider-setup.ts";
 import { runTaskHome } from "./task-home.ts";
-import { runTaskRpc } from "./task-rpc.ts";
 
 const VALUE_OPTIONS = new Set([
 	"--verify",
@@ -19,18 +19,6 @@ const VALUE_OPTIONS = new Set([
 	"--mode",
 	"--provider",
 	"--model",
-]);
-
-const INTERNAL_SESSION_OPTIONS = new Set([
-	"--continue",
-	"-c",
-	"--resume",
-	"-r",
-	"--session",
-	"--session-id",
-	"--fork",
-	"--no-session",
-	"--export",
 ]);
 
 function option(args: string[], name: string): string | undefined {
@@ -86,13 +74,13 @@ function printTaskLine(task: TaskRecord): void {
 }
 
 function printHelp(): void {
-	console.log(`ever - AI coding assistant with durable Task execution
+	console.log(`ever run - create a durable Task
 
 Usage:
-	  ever                           打开 Task Home
-  ever <goal>                       创建 Task 并进入同一个 TUI
-  ever <goal> --detach --yes        创建 Task 后转入后台
+  ever run <goal>                 创建 Task 并进入同一个 TUI
+  ever run <goal> --detach --yes    创建 Task 后转入后台
   ever new                          引导式创建 Task
+  ever home                         打开 Task Home
 
 Task:
   ever tasks                        查看 Task 队列
@@ -102,10 +90,10 @@ Task:
   ever task <command>               高级 Task 命令
 
 Runtime:
-	  Provider 与模型                 在 Task Home 内完成登录和模型选择
+  Provider 与模型                 可在普通 Session 或 Task Home 内配置
   /model                            在 Ever TUI 内选择模型
   ever models [search]              查看可用模型
-  ever --mode rpc                   启动 Task JSONL RPC
+  ever --mode rpc                   启动 Session JSONL RPC
 
 Task options:
   --verify <command>                完成时运行验证命令
@@ -197,24 +185,31 @@ async function resolveCommandModel(input: {
 	}
 }
 
+type ForegroundActivation = { kind: "args"; args: string[] } | { kind: "replaced"; exitCode: number | null };
+
 async function activateForegroundTask(input: {
 	agentDir: string;
 	taskRef: string;
 	acceptRuntimeDrift: boolean;
 	clientId: string;
-}): Promise<string[]> {
+}): Promise<ForegroundActivation> {
 	const current = new TaskApplication(input.agentDir).resolve(input.taskRef);
 	if (current.state === "running") {
 		const stopped = await requestDaemon(input.agentDir, { command: "stop-agent", taskId: current.id });
 		if (!stopped.ok) throw new Error(stopped.message ?? "Daemon 拒绝 Task 交接");
 	}
-	return activateTaskRun({
-		agentDir: input.agentDir,
-		taskRef: current.id,
-		print: false,
-		acceptRuntimeDrift: input.acceptRuntimeDrift,
-		clientId: input.clientId,
-	});
+	const reexec = await maybeReexecForegroundTask({ agentDir: input.agentDir, taskId: current.id });
+	if (reexec.replaced) return { kind: "replaced", exitCode: reexec.exitCode };
+	return {
+		kind: "args",
+		args: activateTaskRun({
+			agentDir: input.agentDir,
+			taskRef: current.id,
+			print: false,
+			acceptRuntimeDrift: input.acceptRuntimeDrift,
+			clientId: input.clientId,
+		}),
+	};
 }
 
 export async function handleEverCommand(args: string[], agentDir: string, cwd: string): Promise<boolean> {
@@ -224,33 +219,24 @@ export async function handleEverCommand(args: string[], agentDir: string, cwd: s
 		return false;
 	}
 	if (args.includes("--version") || args.includes("-v") || args.includes("--list-models")) return false;
-	if (args.includes("--help") || args.includes("-h") || args[0] === "help") {
+	if ((args[0] === "run" || args[0] === "new") && (args.includes("--help") || args.includes("-h"))) {
 		printHelp();
-		return true;
-	}
-	if (args.some((arg) => INTERNAL_SESSION_OPTIONS.has(arg))) {
-		console.error(chalk.red("Error: Ever CLI 只运行持久 Task；Session 是 Task 内部的执行上下文。"));
-		process.exitCode = 1;
-		return true;
-	}
-	validateValueOptions(args);
-	if (option(args, "--mode") === "rpc") {
-		await runTaskRpc(agentDir, cwd);
 		return true;
 	}
 	if (args[0] === "attach") {
 		const taskRef = args[1];
 		if (!taskRef) throw new Error("attach requires a Task ID");
-		args.splice(
-			0,
-			args.length,
-			...(await activateForegroundTask({
-				agentDir,
-				taskRef: taskRef,
-				acceptRuntimeDrift: args.includes("--accept-runtime-drift"),
-				clientId: "ever-cli",
-			})),
-		);
+		const activation = await activateForegroundTask({
+			agentDir,
+			taskRef: taskRef,
+			acceptRuntimeDrift: args.includes("--accept-runtime-drift"),
+			clientId: "ever-cli",
+		});
+		if (activation.kind === "replaced") {
+			if (activation.exitCode !== null) process.exitCode = activation.exitCode;
+			return true;
+		}
+		args.splice(0, args.length, ...activation.args);
 		return false;
 	}
 	if (args[0] === "status" || args[0] === "tasks") {
@@ -285,22 +271,25 @@ export async function handleEverCommand(args: string[], agentDir: string, cwd: s
 		console.log(JSON.stringify(response));
 		return true;
 	}
-	if ((args.length === 0 || (args[0] === "new" && args.length === 1)) && process.stdin.isTTY === true) {
+	if ((args[0] === "home" || (args[0] === "new" && args.length === 1)) && process.stdin.isTTY === true) {
 		const home = await runTaskHome(agentDir, cwd, args[0] === "new");
 		if (home.kind === "quit") return true;
-		args.splice(
-			0,
-			args.length,
-			...(await activateForegroundTask({
-				agentDir,
-				taskRef: home.taskId,
-				acceptRuntimeDrift: false,
-				clientId: "ever-task-home",
-			})),
-		);
+		const activation = await activateForegroundTask({
+			agentDir,
+			taskRef: home.taskId,
+			acceptRuntimeDrift: false,
+			clientId: "ever-task-home",
+		});
+		if (activation.kind === "replaced") {
+			if (activation.exitCode !== null) process.exitCode = activation.exitCode;
+			return true;
+		}
+		args.splice(0, args.length, ...activation.args);
 		return false;
 	}
 	const explicitRun = args[0] === "run" || args[0] === "new";
+	if (!explicitRun) return false;
+	validateValueOptions(args);
 	const runArgs = explicitRun ? args.slice(1) : args;
 	const guided = runArgs.length === 0 && process.stdin.isTTY === true;
 	const quick = runArgs.length > 0;
@@ -381,13 +370,26 @@ export async function handleEverCommand(args: string[], agentDir: string, cwd: s
 			console.log(`后台运行。使用 ever attach ${task.id.slice(0, 8)} 重新进入。`);
 		} else {
 			const jsonOutput = args.includes("--json") || option(args, "--mode") === "json";
+			const printOutput = machineOutput && !jsonOutput;
+			const reexec = unsafeNoSandbox
+				? { replaced: false, exitCode: null }
+				: await maybeReexecForegroundTask({
+						agentDir,
+						taskId: task.id,
+						print: printOutput,
+						json: jsonOutput,
+					});
+			if (reexec.replaced) {
+				if (reexec.exitCode !== null) process.exitCode = reexec.exitCode;
+				return true;
+			}
 			args.splice(
 				0,
 				args.length,
 				...activateTaskRun({
 					agentDir,
 					taskRef: task.id,
-					print: machineOutput && !jsonOutput,
+					print: printOutput,
 					json: jsonOutput,
 					clientId: "ever-cli",
 				}),

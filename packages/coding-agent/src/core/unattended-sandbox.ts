@@ -34,9 +34,14 @@ export interface SandboxedCommand {
 	profileSha256: string;
 }
 
+/** Unix-socket roots where sandboxed tools (tsx/vitest/etc.) create their IPC sockets under the sandbox TMPDIR. */
+const SANDBOX_TMP_SOCKETS = ["/tmp/claude", "/private/tmp/claude"] as const;
+
 export interface SandboxProfileExtension {
 	allowedDomains?: readonly string[];
 	writableRoots?: readonly string[];
+	/** macOS only: allow pseudo-terminal operations so an interactive TUI can run inside the sandbox. */
+	allowPty?: boolean;
 }
 
 export function unattendedSandboxAllowedDomains(profile: SandboxProfileExtension = {}): string[] {
@@ -98,7 +103,11 @@ export class UnattendedSandbox {
 			network: {
 				allowedDomains: unattendedSandboxAllowedDomains(profile),
 				deniedDomains: [],
-				allowUnixSockets: [join(this.agentDir, "run"), workerSocketDirectory(this.agentDir)],
+				allowUnixSockets: [
+					join(this.agentDir, "run"),
+					workerSocketDirectory(this.agentDir),
+					...SANDBOX_TMP_SOCKETS,
+				],
 				allowLocalBinding: false,
 			},
 			filesystem: {
@@ -124,6 +133,7 @@ export class UnattendedSandbox {
 				],
 				allowGitConfig: false,
 			},
+			allowPty: profile.allowPty ?? false,
 		};
 		await SandboxManager.initialize(config, undefined, false);
 		this.initialized = true;
@@ -175,6 +185,7 @@ export class UnattendedSandbox {
 				],
 				allowGitConfig: false,
 			},
+			allowPty: profile.allowPty ?? false,
 		};
 		const serialized = [command, ...args].map((value) => `'${value.replaceAll("'", `'\\''`)}'`).join(" ");
 		const wrapped = await SandboxManager.wrapWithSandbox(serialized, undefined, config);
@@ -188,6 +199,23 @@ export class UnattendedSandbox {
 	async reinitialize(profile: SandboxProfileExtension): Promise<SandboxCapability> {
 		await this.close();
 		return this.initialize(profile);
+	}
+
+	/** Hot-update the network allowlist for already-running sandboxed processes via the host proxy. */
+	updateAllowedDomains(domains: readonly string[]): void {
+		if (!this.initialized) throw new Error("Unattended sandbox is not initialized");
+		const valid = domains.filter((domain) => domain.trim() !== "" && domain !== "*" && !/[\s/]/u.test(domain));
+		if (valid.length === 0) return;
+		const current = SandboxManager.getConfig();
+		if (!current) throw new Error("Sandbox configuration is unavailable");
+		const next: SandboxRuntimeConfig = {
+			...current,
+			network: {
+				...current.network,
+				allowedDomains: [...new Set([...current.network.allowedDomains, ...valid])],
+			},
+		};
+		SandboxManager.updateConfig(next);
 	}
 
 	async close(): Promise<void> {

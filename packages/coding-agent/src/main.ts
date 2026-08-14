@@ -31,6 +31,7 @@ import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { handleDaemonCommand } from "./cli/daemon-command.ts";
 import { handleEverCommand } from "./cli/ever-command.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
+import { maybeReexecSessionSandboxed } from "./cli/foreground-sandbox.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
@@ -661,6 +662,24 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
+	// Unified Session sandbox: run the bare Session inside the same sandboxed
+	// Session Execution Host used by foreground Tasks, so `/goal` inherits
+	// `sandboxAvailable=true` without its own sandbox handling. Fails closed to
+	// an unsandboxed Session when no sandbox or no usable credentials exist.
+	if (
+		!getTaskRunContext() &&
+		!getWorkerStartupIfLoaded() &&
+		!args.includes("--unsafe-no-sandbox") &&
+		!parsed.help &&
+		parsed.listModels === undefined
+	) {
+		const sessionReexec = await maybeReexecSessionSandboxed({ agentDir, cwd });
+		if (sessionReexec.replaced) {
+			if (sessionReexec.exitCode !== null) process.exitCode = sessionReexec.exitCode;
+			return;
+		}
+	}
+
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
 	const shouldTakeOverStdout = appMode !== "interactive" && !isPlainRuntimeMetadataCommand(parsed);
 	if (shouldTakeOverStdout) {
@@ -739,9 +758,7 @@ export async function main(args: string[], options?: MainOptions) {
 	const lifecycleRef: AgentSessionLifecycleRef = {};
 	const taskRunContext = getTaskRunContext();
 	const workerStartup = getWorkerStartupIfLoaded();
-	const workerCredentials = workerStartup
-		? AuthStorage.inMemory({ [workerStartup.provider]: workerStartup.credential })
-		: undefined;
+	const workerCredentials = workerStartup ? AuthStorage.inMemory(workerStartup.credentials) : undefined;
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
@@ -988,7 +1005,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (taskRunContext) await durableGoalRuntime.adopt(taskRunContext);
 	const terminalTaskStates = new Set(["completed", "failed", "cancelled"]);
 	const uninstallForegroundPermission = runtime.installLifecycle(
-		new ForegroundPermissionLifecycle(runtime, () => {
+		new ForegroundPermissionLifecycle(runtime, agentDir, () => {
 			const goal = durableGoalRuntime.status();
 			return goal !== undefined && !terminalTaskStates.has(goal.state);
 		}),

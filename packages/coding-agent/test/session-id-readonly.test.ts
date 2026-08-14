@@ -60,7 +60,7 @@ interface CliDirs {
 async function runCli(
 	args: string[] | ((dirs: CliDirs) => string[]),
 	setup?: (dirs: CliDirs) => void,
-): Promise<{ code: number | null; agentDir: string; stderr: string }> {
+): Promise<{ code: number | null; agentDir: string; sessionDir: string; stderr: string }> {
 	const tempRoot = createTempDir();
 	const dirs: CliDirs = {
 		agentDir: join(tempRoot, "agent"),
@@ -90,7 +90,7 @@ async function runCli(
 		child.on("close", resolvePromise);
 	});
 
-	return { code, agentDir: dirs.agentDir, stderr };
+	return { code, agentDir: dirs.agentDir, sessionDir: dirs.sessionDir, stderr };
 }
 
 function writeSession(sessionDir: string, cwd: string, id: string): void {
@@ -122,7 +122,7 @@ describe("--session-id metadata commands", () => {
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-models")).toBe(false);
 	});
 
-	it("rejects creating a public Session ID without persisting it", async () => {
+	it("accepts a requested public Session ID without reserving it before the first message", async () => {
 		const result = await runCli((dirs) => [
 			"--session-dir",
 			dirs.sessionDir,
@@ -135,11 +135,11 @@ describe("--session-id metadata commands", () => {
 		]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
-		expect(hasSessionWithId(result.agentDir, "missing-session-id")).toBe(false);
+		expect(result.stderr).not.toContain("Ever CLI 只运行持久 Task");
+		expect(hasSessionWithId(result.sessionDir, "missing-session-id")).toBe(false);
 	});
 
-	it("rejects opening an existing public Session ID", async () => {
+	it("opens an existing public Session ID", async () => {
 		const result = await runCli(
 			(dirs) => [
 				"--session-dir",
@@ -158,10 +158,10 @@ describe("--session-id metadata commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(result.stderr).not.toContain("Ever CLI 只运行持久 Task");
 	});
 
-	it("rejects public Session forks before resolving their target", async () => {
+	it("rejects conflicting fork and Session ID flags", async () => {
 		const result = await runCli(
 			(dirs) => ["--session-dir", dirs.sessionDir, "--fork", "source-id", "--session-id", "existing-id", "-p", "hi"],
 			(dirs) => {
@@ -172,7 +172,7 @@ describe("--session-id metadata commands", () => {
 		);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+		expect(result.stderr).toContain("Session already exists with id 'existing-id'");
 	});
 });
 
@@ -182,7 +182,7 @@ describe("--session-id validation", () => {
 			const result = await runCli(["--session-id", id, "-p", "hi"]);
 
 			expect(result.code).toBe(1);
-			expect(result.stderr).toContain("Ever CLI 只运行持久 Task");
+			expect(result.stderr).toContain("Session id must be non-empty");
 			expect(result.stderr).not.toContain("SessionManager.create");
 		}
 	});
