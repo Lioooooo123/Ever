@@ -8,6 +8,7 @@ import { workerSocketDirectory } from "./worker-socket.ts";
 const PROVIDER_DOMAINS = [
 	"api.anthropic.com",
 	"api.openai.com",
+	"chatgpt.com",
 	"api.github.com",
 	"github.com",
 	"*.githubusercontent.com",
@@ -70,14 +71,12 @@ export function probeUnattendedSandbox(): SandboxCapability {
 	const backend = sandboxBackend();
 	if (backend === "unsupported")
 		return { available: false, backend, reason: `Unsupported platform: ${process.platform}` };
-	if (!SandboxManager.checkDependencies()) {
+	const dependencies = SandboxManager.checkDependencies();
+	if (dependencies.errors.length > 0) {
 		return {
 			available: false,
 			backend,
-			reason:
-				backend === "bubblewrap"
-					? "Sandbox requires rg, bwrap, and socat"
-					: "Sandbox requires rg and the macOS Seatbelt runtime",
+			reason: dependencies.errors.join(", "),
 		};
 	}
 	return { available: true, backend };
@@ -158,7 +157,13 @@ export class UnattendedSandbox {
 					join(homedir(), ".netrc"),
 					join(homedir(), ".npmrc"),
 				],
-				allowWrite: [workspaceRoot, this.agentDir, tmpdir(), ...(profile.writableRoots ?? [])],
+				allowWrite: [
+					workspaceRoot,
+					this.agentDir,
+					workerSocketDirectory(this.agentDir),
+					tmpdir(),
+					...(profile.writableRoots ?? []),
+				],
 				denyWrite: [
 					join(this.agentDir, "auth.json"),
 					join(this.agentDir, "run", "control-token"),
