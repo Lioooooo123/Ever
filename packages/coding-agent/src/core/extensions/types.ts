@@ -364,7 +364,7 @@ export type DurableGoalUpdate =
 
 export interface DurablePermissionGrantSummary {
 	id: string;
-	lifetime: "once" | "attempt" | "task" | "workspace" | "project_policy";
+	lifetime: "once" | "attempt" | "task" | "session" | "workspace" | "project_policy";
 	state: "active" | "consumed" | "revoked" | "expired";
 	tools: string[];
 	effects: string[];

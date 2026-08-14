@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { isAbsolute } from "node:path";
-import type { Writable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { sanitizeUnattendedEnvironment } from "./secret-environment.ts";
 import {
 	type SandboxCapability,
@@ -23,6 +23,8 @@ export interface SessionExecutionEnvironment {
 export interface HostedSessionProcess {
 	child: ReturnType<typeof spawn>;
 	tokenChannel: Writable;
+	/** Foreground only: readable stream carrying sandbox-control messages from the child (fd 4). */
+	controlChannel?: Readable;
 	environment: SessionExecutionEnvironment;
 }
 
@@ -30,9 +32,12 @@ export interface SessionProcessStartRequest {
 	command: string;
 	args: readonly string[];
 	cwd: string;
-	logFd: number;
+	/** Required for background Workers; unused when `foreground` is true. */
+	logFd?: number;
 	env: NodeJS.ProcessEnv;
 	profile?: SandboxProfileExtension;
+	/** Attach the child to the caller terminal and wait for it (foreground sandbox). */
+	foreground?: boolean;
 }
 
 /** Owns sandbox initialization and process launch for Session workers. */
@@ -57,15 +62,19 @@ export class SessionExecutionHost {
 		if (this.sandbox && !this.capability.available) {
 			throw new Error(this.capability.reason ?? "Session execution sandbox is unavailable");
 		}
+		if (!request.foreground && request.logFd === undefined)
+			throw new Error("Background Session process launch requires a log file descriptor");
 		this.validateProfile(request.profile);
 		let sandboxed: SandboxedCommand | undefined;
 		if (this.sandbox)
 			sandboxed = await this.sandbox.wrap(request.command, request.args, request.cwd, request.profile);
 		const child = spawn(sandboxed?.command ?? request.command, sandboxed ? [] : [...request.args], {
 			cwd: request.cwd,
-			detached: true,
+			detached: request.foreground !== true,
 			shell: sandboxed !== undefined,
-			stdio: ["ignore", request.logFd, request.logFd, "pipe"],
+			stdio: request.foreground
+				? ["inherit", "inherit", "inherit", "pipe", "pipe"]
+				: ["ignore", request.logFd, request.logFd, "pipe"],
 			env: {
 				...sanitizeUnattendedEnvironment(process.env),
 				...request.env,
@@ -76,9 +85,13 @@ export class SessionExecutionHost {
 			child.kill("SIGTERM");
 			throw new Error("Session Worker token channel did not open");
 		}
+		const controlChannel = request.foreground ? child.stdio[4] : undefined;
 		return {
 			child,
 			tokenChannel,
+			...(controlChannel && typeof controlChannel !== "number" && "on" in controlChannel
+				? { controlChannel: controlChannel as Readable }
+				: {}),
 			environment: {
 				trust: sandboxed ? "sandboxed" : "unsafe_host",
 				backend: this.capability.backend,
@@ -88,6 +101,12 @@ export class SessionExecutionHost {
 				...(sandboxed ? { sandboxId: sandboxed.sandboxId, profileSha256: sandboxed.profileSha256 } : {}),
 			},
 		};
+	}
+
+	/** Hot-update the network allowlist for the running sandboxed Session process. */
+	updateAllowedDomains(domains: readonly string[]): void {
+		if (!this.sandbox) throw new Error("Session execution sandbox is unavailable");
+		this.sandbox.updateAllowedDomains(domains);
 	}
 
 	async close(): Promise<void> {

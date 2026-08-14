@@ -590,6 +590,7 @@ export class InteractiveMode {
 				once: "Allow once",
 				attempt: "Allow for this Attempt",
 				task: "Allow for this Task",
+				session: "Allow for this Session",
 				workspace: "Allow in this workspace",
 				project_policy: "Write project policy",
 			} as const;

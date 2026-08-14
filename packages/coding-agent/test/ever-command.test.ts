@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteTaskStore } from "@lioooooo123/ever-long-tasks";
 import { afterEach, describe, expect, it } from "vitest";
-import { submitAsyncTask, submitInteractiveTask, taskText } from "../src/cli/ever-command.ts";
+import { handleEverCommand, submitAsyncTask, submitInteractiveTask, taskText } from "../src/cli/ever-command.ts";
 import { handleTaskCommand } from "../src/cli/task-command.ts";
 import { TaskApplication } from "../src/core/task-application.ts";
 
@@ -14,10 +14,20 @@ afterEach(() => {
 });
 
 describe("ever async submission", () => {
-	it("treats ordinary CLI text as a Task goal", () => {
+	it("extracts the goal from an explicit Task run", () => {
 		expect(taskText(["inspect", "this", "repository", "--max-turns", "12", "--offline", "--print"])).toBe(
 			"inspect this repository",
 		);
+	});
+
+	it("leaves normal Session startup and Session flags to the native CLI", async () => {
+		await expect(handleEverCommand([], "/tmp/ever-agent", "/tmp/ever-workspace")).resolves.toBe(false);
+		await expect(
+			handleEverCommand(["inspect", "this", "repository"], "/tmp/ever-agent", "/tmp/ever-workspace"),
+		).resolves.toBe(false);
+		await expect(
+			handleEverCommand(["--continue", "continue this Session"], "/tmp/ever-agent", "/tmp/ever-workspace"),
+		).resolves.toBe(false);
 	});
 
 	it("creates a foreground Task without unattended sandbox approval", () => {

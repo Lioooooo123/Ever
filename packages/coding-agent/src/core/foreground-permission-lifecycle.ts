@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { type Api, type Context, contentText, type Model } from "@lioooooo123/ever-ai";
-import type { AgentRecord, TaskAuthorizationRecord, TaskAuthorizationSourceRecord } from "@lioooooo123/ever-long-tasks";
+import {
+	type AgentRecord,
+	SqliteTaskStore,
+	type TaskAuthorizationRecord,
+	type TaskAuthorizationSourceRecord,
+} from "@lioooooo123/ever-long-tasks";
 import type {
 	AgentSessionLifecycle,
 	AgentSessionLifecycleDecision,
@@ -17,26 +23,33 @@ import {
 } from "./permission-kernel.ts";
 import { reviewerWorstCaseCostUsd, selectReviewerModel } from "./reviewer-model-selector.ts";
 import { ModelRiskReviewer } from "./risk-reviewer.ts";
+import { requestSandboxControl } from "./sandbox-control.ts";
 import { getWorkerStartupIfLoaded } from "./worker-startup.ts";
 
 /** Applies the same deterministic permission seam to ordinary, non-Task Sessions. */
 export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
 	private readonly runtime: AgentSessionRuntime;
+	private readonly agentDir: string;
 	private readonly taskOwnsPermission: () => boolean;
 	private readonly authorizations: TaskAuthorizationRecord[] = [];
 	private readonly compiledSources = new Set<string>();
 	private readonly reviewerReservations = new Map<string, number>();
+	private readonly allowedDomains = new Set<string>(
+		getWorkerStartupIfLoaded()?.executionEnvironment.allowedDomains ?? [],
+	);
 	private reviewerSettledCostUsd = 0;
 	private mainAgentSettledCostUsd = 0;
 	private compilerRequestCount = 0;
 	private reviewerRequestCount = 0;
 	private authorizationRevision = 0;
 	private selectedReviewerModel?: Model<Api>;
+	private store?: SqliteTaskStore;
 	private readonly compiler: ModelAuthorizationCompiler;
 	private readonly kernel: PermissionKernel;
 
-	constructor(runtime: AgentSessionRuntime, taskOwnsPermission: () => boolean) {
+	constructor(runtime: AgentSessionRuntime, agentDir: string, taskOwnsPermission: () => boolean) {
 		this.runtime = runtime;
+		this.agentDir = agentDir;
 		this.taskOwnsPermission = taskOwnsPermission;
 		const complete =
 			(kind: "authorization_compile" | "permission_review") => (context: Context, signal?: AbortSignal) =>
@@ -48,7 +61,24 @@ export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
 		this.kernel = new PermissionKernel({
 			authorizations: { list: () => this.authorizations, revision: () => this.authorizationRevision },
 			reviewer: new ModelRiskReviewer(complete("permission_review")),
+			grants: {
+				list: (context) =>
+					this.getStore().listActivePermissionGrants({
+						sessionId: this.runtime.session.sessionId,
+						workspaceFingerprint: context.workspaceFingerprint,
+						sandboxProfileSha256: context.sandboxProfileSha256,
+					}),
+				wasDenied: () => false,
+			},
 		});
+	}
+
+	private getStore(): SqliteTaskStore {
+		this.store ??= SqliteTaskStore.open({
+			databasePath: join(this.agentDir, "long-tasks.sqlite"),
+			artifactsRoot: join(this.agentDir, "tasks"),
+		});
+		return this.store;
 	}
 
 	async handle(event: AgentSessionLifecycleEvent): Promise<AgentSessionLifecycleDecision | undefined> {
@@ -128,9 +158,9 @@ export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
 			agent,
 			attemptId: taskId,
 			workspaceFingerprint: this.runtime.cwd,
-			sandboxProfileSha256: "0".repeat(64),
+			sandboxProfileSha256: executionEnvironment?.profileSha256 ?? "0".repeat(64),
 			sandboxAvailable: executionEnvironment?.trust === "sandboxed",
-			sandboxAllowedDomains: executionEnvironment?.allowedDomains,
+			sandboxAllowedDomains: [...this.allowedDomains],
 			unattended: false,
 			...gitFacts,
 			prHeadSha: needsAuthorizationFacts ? readPrHeadSha(intent.command?.normalized, this.runtime.cwd) : undefined,
@@ -172,11 +202,34 @@ export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
 			code: decision.code,
 			reason: decision.reason,
 			suggestedScope: decision.suggestedScope,
-			availableLifetimes: ["once"],
+			availableLifetimes:
+				decision.code === "sandbox_profile_expansion_required" ? ["session", "workspace"] : ["once"],
 		});
-		return approval?.action === "allow"
-			? undefined
-			: { block: true, reason: approval ? "User denied this action" : decision.reason, terminate: true };
+		if (approval?.action === "allow") {
+			if (
+				approval.lifetime === "session" ||
+				approval.lifetime === "workspace" ||
+				approval.lifetime === "project_policy"
+			) {
+				this.getStore().createPermissionGrant({
+					source: "user",
+					lifetime: approval.lifetime,
+					scope: decision.suggestedScope,
+					...(approval.lifetime === "session" ? { sessionId: this.runtime.session.sessionId } : {}),
+					workspaceFingerprint: permissionContext.workspaceFingerprint,
+					sandboxProfileSha256: permissionContext.sandboxProfileSha256,
+				});
+			}
+			if (decision.code === "sandbox_profile_expansion_required") {
+				for (const domain of decision.suggestedScope.networkDomains) this.allowedDomains.add(domain);
+				requestSandboxControl({
+					type: "updateAllowedDomains",
+					domains: decision.suggestedScope.networkDomains,
+				});
+			}
+			return undefined;
+		}
+		return { block: true, reason: approval ? "User denied this action" : decision.reason, terminate: true };
 	}
 
 	private reviewerModel(): Model<Api> {

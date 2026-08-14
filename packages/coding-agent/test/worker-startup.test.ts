@@ -12,21 +12,30 @@ const executionEnvironment = {
 } as const;
 
 describe("Resident Worker startup envelope", () => {
-	it("accepts one provider-scoped credential and explicit execution environment", () => {
+	it("accepts a provider-scoped credential map and explicit execution environment", () => {
 		const envelope = parseWorkerStartupEnvelope({
 			schemaVersion: 1,
 			token: "a".repeat(32),
-			provider: "anthropic",
-			credential: { type: "api_key", key: "secret" },
+			credentials: { anthropic: { type: "api_key", key: "secret" } },
 			executionEnvironment,
 		});
 		expect(envelope).toEqual({
 			schemaVersion: 1,
 			token: "a".repeat(32),
-			provider: "anthropic",
-			credential: { type: "api_key", key: "secret" },
+			credentials: { anthropic: { type: "api_key", key: "secret" } },
 			executionEnvironment,
 		});
+	});
+
+	it("rejects an empty credential map", () => {
+		expect(() =>
+			parseWorkerStartupEnvelope({
+				schemaVersion: 1,
+				token: "a".repeat(32),
+				credentials: {},
+				executionEnvironment,
+			}),
+		).toThrow("no credentials");
 	});
 
 	it("rejects malformed or incomplete credentials", () => {
@@ -34,8 +43,7 @@ describe("Resident Worker startup envelope", () => {
 			parseWorkerStartupEnvelope({
 				schemaVersion: 1,
 				token: "a".repeat(32),
-				provider: "anthropic",
-				credential: { type: "api_key" },
+				credentials: { anthropic: { type: "api_key" } },
 				executionEnvironment,
 			}),
 		).toThrow("has no key");
@@ -43,8 +51,7 @@ describe("Resident Worker startup envelope", () => {
 			parseWorkerStartupEnvelope({
 				schemaVersion: 1,
 				token: "a".repeat(32),
-				provider: "anthropic",
-				credential: { type: "oauth", access: "access" },
+				credentials: { anthropic: { type: "oauth", access: "access" } },
 				executionEnvironment,
 			}),
 		).toThrow("incomplete");
@@ -54,8 +61,7 @@ describe("Resident Worker startup envelope", () => {
 		const base = {
 			schemaVersion: 1,
 			token: "a".repeat(32),
-			provider: "anthropic",
-			credential: { type: "api_key", key: "secret" },
+			credentials: { anthropic: { type: "api_key", key: "secret" } },
 			executionEnvironment,
 		};
 		expect(

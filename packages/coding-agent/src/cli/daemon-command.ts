@@ -202,7 +202,7 @@ function rebindPermissionGrantsForSandboxProfile(
 	}
 }
 
-async function resolveWorkerCredential(agentDir: string, provider: string): Promise<Credential> {
+export async function resolveWorkerCredential(agentDir: string, provider: string): Promise<Credential> {
 	const stored = await AuthStorage.create(join(agentDir, "auth.json")).read(provider, {
 		signal: AbortSignal.timeout(15_000),
 	});
@@ -522,8 +522,7 @@ class DaemonSupervisor {
 				const startupEnvelope: WorkerStartupEnvelope = {
 					schemaVersion: 1,
 					token,
-					provider: selectedModel.provider,
-					credential,
+					credentials: { [selectedModel.provider]: credential },
 					executionEnvironment: environment,
 					...(gateCapability === undefined ? {} : { evalEffectGate: gateCapability }),
 				};
