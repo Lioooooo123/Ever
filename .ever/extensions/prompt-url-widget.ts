@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@lioooooo123/ever";
+import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@lioooooo123/ever-cli";
 import { Container, hyperlink, Text } from "@lioooooo123/ever-tui";
 
 const PR_PROMPT_PATTERN = /^\s*You are given one or more GitHub PR URLs:\s*(\S+)/im;

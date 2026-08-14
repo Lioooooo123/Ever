@@ -17,7 +17,7 @@
 import { Buffer } from "node:buffer";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "@lioooooo123/ever";
+import type { ExtensionAPI, ExtensionCommandContext } from "@lioooooo123/ever-cli";
 
 const GIST_ID_RE = /^[0-9a-fA-F]{20,}$/;
 const GIST_URL_RE = /^https:\/\/gist\.github\.com\/(?:[^/]+\/)?([0-9a-fA-F]{20,})(?:[/#?].*)?$/;

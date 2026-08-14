@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@lioooooo123/ever-ai";
-import type { ExtensionAPI } from "@lioooooo123/ever";
+import type { ExtensionAPI } from "@lioooooo123/ever-cli";
 
 function isAssistantMessage(message: unknown): message is AssistantMessage {
 	if (!message || typeof message !== "object") return false;
