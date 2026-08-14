@@ -2,8 +2,9 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Writable } from "node:stream";
+import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { PermissionGrantRecord, TaskRecord } from "@lioooooo123/ever-long-tasks";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	probeUnattendedSandbox,
 	sandboxProfileForTask,
@@ -15,10 +16,23 @@ import { createWorkerSocketPath } from "../src/core/worker-socket.ts";
 const temporaryPaths: string[] = [];
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	for (const path of temporaryPaths.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
 describe("UnattendedSandbox", () => {
+	it("fails closed when the runtime reports missing host dependencies", () => {
+		vi.spyOn(SandboxManager, "checkDependencies").mockReturnValue({
+			errors: ["bubblewrap (bwrap) not installed", "socat not installed"],
+			warnings: [],
+		});
+
+		expect(probeUnattendedSandbox()).toMatchObject({
+			available: false,
+			reason: "bubblewrap (bwrap) not installed, socat not installed",
+		});
+	});
+
 	it("allows every built-in provider endpoint used by the OpenAI Codex provider", () => {
 		expect(unattendedSandboxAllowedDomains()).toContain("chatgpt.com");
 	});

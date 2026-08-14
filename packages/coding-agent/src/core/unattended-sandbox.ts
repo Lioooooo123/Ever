@@ -71,14 +71,12 @@ export function probeUnattendedSandbox(): SandboxCapability {
 	const backend = sandboxBackend();
 	if (backend === "unsupported")
 		return { available: false, backend, reason: `Unsupported platform: ${process.platform}` };
-	if (!SandboxManager.checkDependencies()) {
+	const dependencies = SandboxManager.checkDependencies();
+	if (dependencies.errors.length > 0) {
 		return {
 			available: false,
 			backend,
-			reason:
-				backend === "bubblewrap"
-					? "Sandbox requires rg, bwrap, and socat"
-					: "Sandbox requires rg and the macOS Seatbelt runtime",
+			reason: dependencies.errors.join(", "),
 		};
 	}
 	return { available: true, backend };
