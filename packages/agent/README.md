@@ -4,8 +4,12 @@ Stateful agent with tool execution and event streaming. Built on `@lioooooo123/e
 
 ## Installation
 
+This library is currently consumed from the Ever workspace and is not published independently on npm yet. For the public CLI, install `@lioooooo123/ever-cli` instead.
+
 ```bash
-npm install @lioooooo123/ever-agent-core
+git clone https://github.com/Lioooooo123/Ever.git
+cd Ever
+npm ci --ignore-scripts
 ```
 
 ### SQLite session backends

@@ -8,7 +8,7 @@ import path from "node:path";
 const DEFAULT_REPO = "Lioooooo123/Ever";
 const DEFAULT_BASE_PATH = "packages/coding-agent";
 const DEFAULT_CHANGELOG = "packages/coding-agent/CHANGELOG.md";
-const DEFAULT_FIX_SINCE_TAG = "v0.74.0";
+const DEFAULT_FIX_SINCE_TAG = "cli-v0.0.1";
 const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const INLINE_MARKDOWN_LINK_RE = /(!?\[[^\]\n]+\]\()([^\s)]+)((?:\s+[^)]*)?\))/g;
 

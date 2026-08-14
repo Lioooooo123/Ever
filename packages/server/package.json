@@ -1,6 +1,6 @@
 {
 	"name": "@lioooooo123/ever-server",
-	"version": "0.84.1",
+	"version": "0.0.1",
 	"description": "Experimental server package for Ever",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -47,8 +47,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@lioooooo123/ever-ai": "^0.84.1",
-		"@lioooooo123/ever-protocol": "^0.84.1"
+		"@lioooooo123/ever-ai": "^0.0.1",
+		"@lioooooo123/ever-protocol": "^0.0.1"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

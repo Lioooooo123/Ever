@@ -13,7 +13,7 @@
   "agent": {
     "kind": "ever",
     "name": "ever",
-    "version": "0.84.1",
+    "version": "0.0.1",
     "model": "openai-codex/gpt-5.6-sol",
     "artifact": {
       "path": "../../../../path/to/ever-release/node",

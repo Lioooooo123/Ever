@@ -32,8 +32,12 @@ Applications can use the in-memory reference or provide an adapter for OpenTelem
 
 ## Installation
 
+This library is currently consumed from the Ever workspace and is not published independently on npm yet. For the public CLI, install `@lioooooo123/ever-cli` instead.
+
 ```bash
-npm install @lioooooo123/ever-telemetry
+git clone https://github.com/Lioooooo123/Ever.git
+cd Ever
+npm ci --ignore-scripts
 ```
 
 ## Telemetry Concepts

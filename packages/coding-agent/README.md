@@ -627,8 +627,8 @@ MIT
 
 ## See Also
 
-- [@lioooooo123/ever-ai](https://www.npmjs.com/package/@lioooooo123/ever-ai): Core LLM toolkit
-- [@lioooooo123/ever-agent-core](https://www.npmjs.com/package/@lioooooo123/ever-agent-core): Agent framework
-- [@lioooooo123/ever-tui](https://www.npmjs.com/package/@lioooooo123/ever-tui): Terminal UI components
+- [@lioooooo123/ever-ai](../ai): Core LLM toolkit source
+- [@lioooooo123/ever-agent-core](../agent): Agent framework source
+- [@lioooooo123/ever-tui](../tui): Terminal UI component source
 
 [Ever source and releases](https://github.com/Lioooooo123/Ever)

@@ -12,13 +12,13 @@
 				"@anthropic-ai/sandbox-runtime": "0.0.38",
 				"@anthropic-ai/sdk": "0.91.1",
 				"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-				"@lioooooo123/ever-long-tasks": "^0.84.1",
-				"@lioooooo123/ever-agent-core": "^0.84.1",
-				"@lioooooo123/ever-ai": "^0.84.1",
-				"@lioooooo123/ever-client": "^0.84.1",
-				"@lioooooo123/ever-protocol": "^0.84.1",
-				"@lioooooo123/ever-telemetry": "^0.84.1",
-				"@lioooooo123/ever-tui": "^0.84.1",
+				"@lioooooo123/ever-long-tasks": "^0.0.1",
+				"@lioooooo123/ever-agent-core": "^0.0.1",
+				"@lioooooo123/ever-ai": "^0.0.1",
+				"@lioooooo123/ever-client": "^0.0.1",
+				"@lioooooo123/ever-protocol": "^0.0.1",
+				"@lioooooo123/ever-telemetry": "^0.0.1",
+				"@lioooooo123/ever-tui": "^0.0.1",
 				"@google/genai": "1.52.0",
 				"@opentelemetry/api": "1.9.0",
 				"@silvia-odwyer/photon-node": "0.3.4",
@@ -545,11 +545,11 @@
 			"hasInstallScript": true
 		},
 		"node_modules/@lioooooo123/ever-agent-core": {
-			"version": "0.84.1",
+			"version": "0.0.1",
 			"license": "MIT",
 			"dependencies": {
-				"@lioooooo123/ever-ai": "^0.84.1",
-				"@lioooooo123/ever-telemetry": "^0.84.1",
+				"@lioooooo123/ever-ai": "^0.0.1",
+				"@lioooooo123/ever-telemetry": "^0.0.1",
 				"diff": "8.0.4",
 				"ignore": "7.0.5",
 				"typebox": "1.3.7",
@@ -561,12 +561,12 @@
 			"inBundle": true
 		},
 		"node_modules/@lioooooo123/ever-ai": {
-			"version": "0.84.1",
+			"version": "0.0.1",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
 				"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-				"@lioooooo123/ever-telemetry": "^0.84.1",
+				"@lioooooo123/ever-telemetry": "^0.0.1",
 				"@google/genai": "1.52.0",
 				"@opentelemetry/api": "1.9.0",
 				"@smithy/node-http-handler": "4.7.3",
@@ -585,10 +585,10 @@
 			"inBundle": true
 		},
 		"node_modules/@lioooooo123/ever-client": {
-			"version": "0.84.1",
+			"version": "0.0.1",
 			"license": "MIT",
 			"dependencies": {
-				"@lioooooo123/ever-protocol": "^0.84.1"
+				"@lioooooo123/ever-protocol": "^0.0.1"
 			},
 			"engines": {
 				"node": ">=22.19.0"
@@ -596,7 +596,7 @@
 			"inBundle": true
 		},
 		"node_modules/@lioooooo123/ever-long-tasks": {
-			"version": "0.84.1",
+			"version": "0.0.1",
 			"dependencies": {
 				"croner": "10.0.1",
 				"typebox": "1.3.7"
@@ -607,7 +607,7 @@
 			"inBundle": true
 		},
 		"node_modules/@lioooooo123/ever-protocol": {
-			"version": "0.84.1",
+			"version": "0.0.1",
 			"license": "MIT",
 			"dependencies": {
 				"typebox": "1.3.7"
@@ -618,7 +618,7 @@
 			"inBundle": true
 		},
 		"node_modules/@lioooooo123/ever-telemetry": {
-			"version": "0.84.1",
+			"version": "0.0.1",
 			"license": "MIT",
 			"engines": {
 				"node": ">=22.19.0"
@@ -626,7 +626,7 @@
 			"inBundle": true
 		},
 		"node_modules/@lioooooo123/ever-tui": {
-			"version": "0.84.1",
+			"version": "0.0.1",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",
