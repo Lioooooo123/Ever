@@ -44,6 +44,13 @@ export interface SandboxProfileExtension {
 	allowPty?: boolean;
 }
 
+export interface SandboxProfileGrantScope {
+	workspaceFingerprint: string;
+	sessionId?: string;
+	sessionInstanceId?: string;
+	taskId?: string;
+}
+
 export function unattendedSandboxAllowedDomains(profile: SandboxProfileExtension = {}): string[] {
 	return [...new Set([...PROVIDER_DOMAINS, ...(profile.allowedDomains ?? [])])];
 }
@@ -53,13 +60,21 @@ export function sandboxProfileForTask(
 	task: TaskRecord,
 	grants: readonly PermissionGrantRecord[],
 ): SandboxProfileExtension {
-	const applicable = grants.filter(
-		(grant) =>
-			grant.state === "active" &&
-			(grant.taskId === task.id ||
-				(["workspace", "project_policy"].includes(grant.lifetime) &&
-					grant.workspaceFingerprint === task.workspaceFingerprint)),
-	);
+	return sandboxProfileForWorkspace(grants, { workspaceFingerprint: task.workspaceFingerprint, taskId: task.id });
+}
+
+/** Derives a profile for a foreground Session or Task from grants that survive process boundaries. */
+export function sandboxProfileForWorkspace(
+	grants: readonly PermissionGrantRecord[],
+	scope: SandboxProfileGrantScope,
+): SandboxProfileExtension {
+	const applicable = grants.filter((grant) => {
+		if (grant.state !== "active" || grant.workspaceFingerprint !== scope.workspaceFingerprint) return false;
+		if (grant.lifetime === "workspace" || grant.lifetime === "project_policy") return true;
+		if (grant.lifetime === "session")
+			return grant.sessionId === scope.sessionId && grant.sessionInstanceId === scope.sessionInstanceId;
+		return grant.taskId === scope.taskId;
+	});
 	return {
 		allowedDomains: [...new Set(applicable.flatMap((grant) => grant.scope.networkDomains))],
 		writableRoots: [...new Set(applicable.flatMap((grant) => grant.scope.pathPrefixes))],

@@ -1,6 +1,4 @@
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import {
 	type AgentRecord,
@@ -12,6 +10,7 @@ import {
 	type VerifiedChangeBundleResult,
 } from "@lioooooo123/ever-long-tasks";
 import { probeUnattendedSandbox } from "./unattended-sandbox.ts";
+import { workspaceIdentity } from "./workspace-identity.ts";
 
 export interface UnattendedTaskSubmission {
 	kind: "unattended";
@@ -88,33 +87,6 @@ function canonicalJson(value: unknown): string {
 		.sort()
 		.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
 		.join(",")}}`;
-}
-
-function gitValue(cwd: string, args: string[]): string | undefined {
-	try {
-		return (
-			execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined
-		);
-	} catch {
-		return undefined;
-	}
-}
-
-function workspaceIdentity(cwd: string): { root: string; fingerprint: string; head?: string } {
-	const root = gitValue(cwd, ["rev-parse", "--show-toplevel"]) ?? realpathSync(cwd);
-	const remote =
-		gitValue(root, ["remote", "get-url", "origin"]) ??
-		gitValue(root, ["remote", "get-url", "upstream"]) ??
-		"no-remote";
-	const branch = gitValue(root, ["branch", "--show-current"]) ?? "detached";
-	const head = gitValue(root, ["rev-parse", "HEAD"]);
-	return {
-		root,
-		fingerprint: createHash("sha256")
-			.update(`${realpathSync(root)}\0${remote}\0${branch}`)
-			.digest("hex"),
-		...(head ? { head } : {}),
-	};
 }
 
 export class TaskApplication {
