@@ -25,6 +25,9 @@ import { reviewerWorstCaseCostUsd, selectReviewerModel } from "./reviewer-model-
 import { ModelRiskReviewer } from "./risk-reviewer.ts";
 import { requestSandboxControl } from "./sandbox-control.ts";
 import { getWorkerStartupIfLoaded } from "./worker-startup.ts";
+import { workspaceIdentity } from "./workspace-identity.ts";
+
+const foregroundSessionInstanceId = randomUUID();
 
 /** Applies the same deterministic permission seam to ordinary, non-Task Sessions. */
 export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
@@ -46,11 +49,13 @@ export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
 	private store?: SqliteTaskStore;
 	private readonly compiler: ModelAuthorizationCompiler;
 	private readonly kernel: PermissionKernel;
+	private readonly workspace: ReturnType<typeof workspaceIdentity>;
 
 	constructor(runtime: AgentSessionRuntime, agentDir: string, taskOwnsPermission: () => boolean) {
 		this.runtime = runtime;
 		this.agentDir = agentDir;
 		this.taskOwnsPermission = taskOwnsPermission;
+		this.workspace = workspaceIdentity(runtime.cwd);
 		const complete =
 			(kind: "authorization_compile" | "permission_review") => (context: Context, signal?: AbortSignal) =>
 				this.runtime.session.completeLifecycleRequest(kind, context, signal, {
@@ -63,11 +68,19 @@ export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
 			reviewer: new ModelRiskReviewer(complete("permission_review")),
 			grants: {
 				list: (context) =>
-					this.getStore().listActivePermissionGrants({
-						sessionId: this.runtime.session.sessionId,
-						workspaceFingerprint: context.workspaceFingerprint,
-						sandboxProfileSha256: context.sandboxProfileSha256,
-					}),
+					this.getStore()
+						.listPermissionGrants()
+						.filter(
+							(grant) =>
+								grant.state === "active" &&
+								grant.workspaceFingerprint === context.workspaceFingerprint &&
+								(grant.lifetime === "workspace" ||
+									grant.lifetime === "project_policy" ||
+									(grant.lifetime === "session" &&
+										grant.sessionId === this.runtime.session.sessionId &&
+										grant.sessionInstanceId === foregroundSessionInstanceId) ||
+									(grant.lifetime !== "session" && grant.taskId === context.agent.taskId)),
+						),
 				wasDenied: () => false,
 			},
 		});
@@ -157,7 +170,7 @@ export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
 		const permissionContext = {
 			agent,
 			attemptId: taskId,
-			workspaceFingerprint: this.runtime.cwd,
+			workspaceFingerprint: this.workspace.fingerprint,
 			sandboxProfileSha256: executionEnvironment?.profileSha256 ?? "0".repeat(64),
 			sandboxAvailable: executionEnvironment?.trust === "sandboxed",
 			sandboxAllowedDomains: [...this.allowedDomains],
@@ -215,7 +228,9 @@ export class ForegroundPermissionLifecycle implements AgentSessionLifecycle {
 					source: "user",
 					lifetime: approval.lifetime,
 					scope: decision.suggestedScope,
-					...(approval.lifetime === "session" ? { sessionId: this.runtime.session.sessionId } : {}),
+					...(approval.lifetime === "session"
+						? { sessionId: this.runtime.session.sessionId, sessionInstanceId: foregroundSessionInstanceId }
+						: {}),
 					workspaceFingerprint: permissionContext.workspaceFingerprint,
 					sandboxProfileSha256: permissionContext.sandboxProfileSha256,
 				});

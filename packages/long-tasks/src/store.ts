@@ -79,7 +79,7 @@ try {
 	process.emitWarning = originalEmitWarning;
 }
 
-const CURRENT_SCHEMA_VERSION = 11;
+const CURRENT_SCHEMA_VERSION = 12;
 const LIVE_DELIVERY_STALE_AFTER_MS = 35 * 60_000;
 
 const TASK_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
@@ -338,6 +338,7 @@ interface PermissionGrantRow {
 	scope_json: string;
 	task_id: string | null;
 	session_id: string | null;
+	session_instance_id: string | null;
 	attempt_id: string | null;
 	workspace_fingerprint: string;
 	sandbox_profile_sha256: string;
@@ -652,6 +653,7 @@ function permissionGrantFromRow(row: PermissionGrantRow): PermissionGrantRecord 
 		scope,
 		...(row.task_id === null ? {} : { taskId: row.task_id }),
 		...(row.session_id === null ? {} : { sessionId: row.session_id }),
+		...(row.session_instance_id === null ? {} : { sessionInstanceId: row.session_instance_id }),
 		...(row.attempt_id === null ? {} : { attemptId: row.attempt_id }),
 		workspaceFingerprint: row.workspace_fingerprint,
 		sandboxProfileSha256: row.sandbox_profile_sha256,
@@ -781,6 +783,7 @@ function migrationSql(version: number): string {
 		9: "flows",
 		10: "agent_dispatches",
 		11: "permission_grant_session_scope",
+		12: "permission_grant_session_instance",
 	} as const;
 	const filename = `${String(version).padStart(3, "0")}_${names[version as keyof typeof names]}.sql`;
 	const migrationPath = import.meta.url.includes("$bunfs")
@@ -1158,8 +1161,14 @@ export class SqliteTaskStore {
 			throw new Error("Risk reviewer grants must be single-use");
 		if (input.sessionId !== undefined && input.lifetime !== "session")
 			throw new Error("Only session permission grants can bind a session ID");
+		if (input.sessionInstanceId !== undefined && input.lifetime !== "session")
+			throw new Error("Only session permission grants can bind a session instance ID");
 		if (input.lifetime === "session" && input.sessionId === undefined)
 			throw new Error("session permission grants require a session ID");
+		if (input.lifetime === "session" && input.sessionInstanceId === undefined)
+			throw new Error("session permission grants require a session instance ID");
+		if (input.sessionInstanceId !== undefined && input.sessionInstanceId.trim() === "")
+			throw new TypeError("Session instance ID cannot be empty");
 		if (["once", "attempt"].includes(input.lifetime)) {
 			if (input.taskId === undefined) throw new Error(`${input.lifetime} permission grants require a Task`);
 			if (!input.attemptId) throw new Error(`${input.lifetime} permission grants require an Attempt`);
@@ -1175,9 +1184,9 @@ export class SqliteTaskStore {
 			this.database
 				.prepare(
 					`INSERT INTO permission_grants
-					 (id, source, lifetime, scope_json, task_id, session_id, attempt_id, workspace_fingerprint,
+					 (id, source, lifetime, scope_json, task_id, session_id, session_instance_id, attempt_id, workspace_fingerprint,
 					  sandbox_profile_sha256, state, remaining_uses, created_at, expires_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
 				)
 				.run(
 					id,
@@ -1186,6 +1195,7 @@ export class SqliteTaskStore {
 					JSON.stringify(input.scope),
 					input.taskId ?? null,
 					input.sessionId ?? null,
+					input.sessionInstanceId ?? null,
 					input.attemptId ?? null,
 					input.workspaceFingerprint,
 					input.sandboxProfileSha256,
@@ -1220,6 +1230,7 @@ export class SqliteTaskStore {
 	listActivePermissionGrants(input: {
 		taskId?: string;
 		sessionId?: string;
+		sessionInstanceId?: string;
 		attemptId?: string;
 		workspaceFingerprint: string;
 		sandboxProfileSha256: string;
@@ -1232,7 +1243,7 @@ export class SqliteTaskStore {
 					 WHERE state = 'active' AND workspace_fingerprint = ? AND sandbox_profile_sha256 = ?
 					 AND (
 						 lifetime IN ('workspace', 'project_policy')
-						 OR (lifetime = 'session' AND session_id = ?)
+						 OR (lifetime = 'session' AND session_id = ? AND session_instance_id = ?)
 						 OR (lifetime IN ('once', 'attempt', 'task') AND task_id = ?)
 					 )
 					 AND (attempt_id IS NULL OR attempt_id = ?)
@@ -1242,6 +1253,7 @@ export class SqliteTaskStore {
 					input.workspaceFingerprint,
 					input.sandboxProfileSha256,
 					input.sessionId ?? null,
+					input.sessionInstanceId ?? null,
 					input.taskId ?? null,
 					input.attemptId ?? null,
 				) as unknown as PermissionGrantRow[]

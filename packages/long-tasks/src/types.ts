@@ -388,6 +388,7 @@ export interface PermissionGrantRecord {
 	scope: PermissionScope;
 	taskId?: string;
 	sessionId?: string;
+	sessionInstanceId?: string;
 	attemptId?: string;
 	workspaceFingerprint: string;
 	sandboxProfileSha256: string;
@@ -404,6 +405,7 @@ export interface CreatePermissionGrantInput {
 	scope: PermissionScope;
 	taskId?: string;
 	sessionId?: string;
+	sessionInstanceId?: string;
 	attemptId?: string;
 	workspaceFingerprint: string;
 	sandboxProfileSha256: string;

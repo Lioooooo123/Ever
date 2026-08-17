@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Credential } from "@lioooooo123/ever-ai";
+import { getBuiltinProviders } from "@lioooooo123/ever-ai/providers/all";
 import { SqliteTaskStore, type TaskRecord } from "@lioooooo123/ever-long-tasks";
 import chalk from "chalk";
 import { SessionExecutionHost } from "../core/session-execution-host.ts";
@@ -9,8 +10,11 @@ import {
 	probeUnattendedSandbox,
 	type SandboxCapability,
 	type SandboxProfileExtension,
+	sandboxProfileForTask,
+	sandboxProfileForWorkspace,
 } from "../core/unattended-sandbox.ts";
 import { getWorkerStartupIfLoaded, type WorkerStartupEnvelope } from "../core/worker-startup.ts";
+import { workspaceIdentity } from "../core/workspace-identity.ts";
 import { resolveWorkerCredential } from "./daemon-command.ts";
 
 export interface ForegroundSandboxResult {
@@ -41,26 +45,45 @@ function isUsableCredential(value: unknown): value is Credential {
 }
 
 /** Read the full credential map from auth.json so a sandboxed Session can switch models without reading the file. */
-function readSessionCredentials(agentDir: string): Record<string, Credential> | undefined {
+function readSessionCredentials(agentDir: string): Record<string, Credential> {
 	let content: string;
 	try {
 		content = readFileSync(join(agentDir, "auth.json"), "utf8");
 	} catch {
-		return undefined;
+		return {};
 	}
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(content);
 	} catch {
-		return undefined;
+		return {};
 	}
-	if (!isRecord(parsed)) return undefined;
+	if (!isRecord(parsed)) return {};
 	const credentials: Record<string, Credential> = {};
 	for (const [provider, credential] of Object.entries(parsed)) {
 		if (provider.trim() === "" || !isUsableCredential(credential)) continue;
 		credentials[provider] = credential;
 	}
-	return Object.keys(credentials).length > 0 ? credentials : undefined;
+	return credentials;
+}
+
+/** Resolve credentials that can be safely serialized into the sandbox startup envelope. */
+export async function resolveForegroundCredentials(
+	agentDir: string,
+	currentProvider?: string,
+): Promise<Record<string, Credential>> {
+	const credentials = readSessionCredentials(agentDir);
+	const providers = new Set<string>([...getBuiltinProviders(), ...Object.keys(credentials)]);
+	if (currentProvider) providers.add(currentProvider);
+	for (const provider of providers) {
+		if (credentials[provider]) continue;
+		try {
+			credentials[provider] = await resolveWorkerCredential(agentDir, provider);
+		} catch {
+			// Providers without a serializable API key/OAuth credential remain unavailable.
+		}
+	}
+	return credentials;
 }
 
 function sandboxWarning(action: string, error: unknown): void {
@@ -98,8 +121,10 @@ export async function maybeReexecForegroundTask(
 		});
 		let task: TaskRecord;
 		let agentId: string | undefined;
+		let profile: SandboxProfileExtension;
 		try {
 			task = store.requireTask(input.taskId);
+			profile = sandboxProfileForTask(task, store.listPermissionGrants());
 			const mainAgents = store.listAgents(input.taskId).filter((agent) => agent.kind === "main");
 			agentId = mainAgents.length === 1 ? mainAgents[0]!.id : undefined;
 		} finally {
@@ -108,7 +133,8 @@ export async function maybeReexecForegroundTask(
 		if (!agentId) return { replaced: false, exitCode: null };
 		const model = taskModelIdentity(task.constraints.model);
 		if (!model) return { replaced: false, exitCode: null };
-		const credential = await resolveWorkerCredential(input.agentDir, model.provider);
+		const credentials = await resolveForegroundCredentials(input.agentDir, model.provider);
+		if (!credentials[model.provider]) return { replaced: false, exitCode: null };
 		return await spawnSandboxedChild({
 			agentDir: input.agentDir,
 			cwd: task.workspaceRoot,
@@ -122,7 +148,8 @@ export async function maybeReexecForegroundTask(
 				...(input.print ? ["--print"] : []),
 				...(input.json ? ["--json"] : []),
 			],
-			credentials: { [model.provider]: credential },
+			credentials,
+			profile,
 			logName: "foreground-task.log",
 		});
 	} catch (error) {
@@ -150,15 +177,29 @@ export async function maybeReexecSessionSandboxed(
 	if (!capability.available) return { replaced: false, exitCode: null };
 	const cliEntry = process.argv[1];
 	if (!cliEntry) return { replaced: false, exitCode: null };
-	const credentials = readSessionCredentials(input.agentDir);
-	if (!credentials) return { replaced: false, exitCode: null };
+	const credentials = await resolveForegroundCredentials(input.agentDir);
+	if (Object.keys(credentials).length === 0) return { replaced: false, exitCode: null };
 
 	try {
+		const identity = workspaceIdentity(input.cwd);
+		const store = SqliteTaskStore.open({
+			databasePath: join(input.agentDir, "long-tasks.sqlite"),
+			artifactsRoot: join(input.agentDir, "tasks"),
+		});
+		let profile: SandboxProfileExtension;
+		try {
+			profile = sandboxProfileForWorkspace(store.listPermissionGrants(), {
+				workspaceFingerprint: identity.fingerprint,
+			});
+		} finally {
+			store.close();
+		}
 		return await spawnSandboxedChild({
 			agentDir: input.agentDir,
 			cwd: input.cwd,
 			args: [cliEntry, ...process.argv.slice(2)],
 			credentials,
+			profile,
 			logName: "foreground-session.log",
 		});
 	} catch (error) {
@@ -181,6 +222,7 @@ async function spawnSandboxedChild(input: {
 	cwd: string;
 	args: string[];
 	credentials: Record<string, Credential>;
+	profile?: SandboxProfileExtension;
 	logName: string;
 }): Promise<ForegroundSandboxResult> {
 	const executionHost = new SessionExecutionHost(input.agentDir, false);
@@ -189,7 +231,7 @@ async function spawnSandboxedChild(input: {
 	mkdirSync(runDir, { recursive: true, mode: 0o700 });
 	const logFd = openSync(join(runDir, input.logName), "a", 0o600);
 	try {
-		const profile: SandboxProfileExtension = { allowPty: true };
+		const profile: SandboxProfileExtension = { ...(input.profile ?? {}), allowPty: true };
 		const hosted = await executionHost.start({
 			command: process.execPath,
 			args: [...process.execArgv, ...input.args],

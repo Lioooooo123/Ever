@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	probeUnattendedSandbox,
 	sandboxProfileForTask,
+	sandboxProfileForWorkspace,
 	UnattendedSandbox,
 	unattendedSandboxAllowedDomains,
 } from "../src/core/unattended-sandbox.ts";
@@ -60,6 +61,75 @@ describe("UnattendedSandbox", () => {
 		expect(sandboxProfileForTask(task, [grant])).toEqual({
 			allowedDomains: ["example.test"],
 			writableRoots: [process.cwd()],
+		});
+	});
+
+	it("derives a Task-scoped profile for the exact Task", () => {
+		const task = { id: "task-2", workspaceFingerprint: "workspace-1" } as TaskRecord;
+		const grant = {
+			id: "grant-task",
+			source: "user",
+			taskId: task.id,
+			lifetime: "task",
+			workspaceFingerprint: task.workspaceFingerprint,
+			sandboxProfileSha256: "a".repeat(64),
+			state: "active",
+			createdAt: "2026-08-14T00:00:00.000Z",
+			scope: {
+				toolNames: ["bash"],
+				effects: ["process"],
+				pathPrefixes: [process.cwd()],
+				commandFingerprints: [],
+				networkDomains: ["task.example.test"],
+				credentialScopes: [],
+			},
+		} as PermissionGrantRecord;
+		expect(sandboxProfileForTask(task, [grant])).toEqual({
+			allowedDomains: ["task.example.test"],
+			writableRoots: [process.cwd()],
+		});
+	});
+
+	it("derives a foreground Session profile only from the matching session instance", () => {
+		const grant = {
+			id: "grant-session",
+			source: "user",
+			taskId: "foreground:session",
+			lifetime: "session",
+			sessionId: "session-1",
+			sessionInstanceId: "instance-1",
+			workspaceFingerprint: "workspace-1",
+			sandboxProfileSha256: "a".repeat(64),
+			state: "active",
+			createdAt: "2026-08-14T00:00:00.000Z",
+			scope: {
+				toolNames: ["bash"],
+				effects: ["process"],
+				pathPrefixes: [process.cwd()],
+				commandFingerprints: [],
+				networkDomains: ["example.test"],
+				credentialScopes: [],
+			},
+		} as PermissionGrantRecord;
+		expect(
+			sandboxProfileForWorkspace([grant], {
+				workspaceFingerprint: "workspace-1",
+				sessionId: "session-1",
+				sessionInstanceId: "instance-1",
+			}),
+		).toEqual({
+			allowedDomains: ["example.test"],
+			writableRoots: [process.cwd()],
+		});
+		expect(
+			sandboxProfileForWorkspace([grant], {
+				workspaceFingerprint: "workspace-1",
+				sessionId: "session-1",
+				sessionInstanceId: "instance-2",
+			}),
+		).toEqual({
+			allowedDomains: [],
+			writableRoots: [],
 		});
 	});
 

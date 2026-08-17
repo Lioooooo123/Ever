@@ -1,5 +1,14 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createInMemoryTaskStore, type RuntimeSnapshot, runtimeSnapshotHash, TaskController } from "../src/index.ts";
+import {
+	createInMemoryTaskStore,
+	type RuntimeSnapshot,
+	runtimeSnapshotHash,
+	SqliteTaskStore,
+	TaskController,
+} from "../src/index.ts";
 
 const profileSha256 = "b".repeat(64);
 
@@ -443,6 +452,7 @@ describe("durable permission grants", () => {
 			lifetime: "session",
 			scope,
 			sessionId: "session-foreground",
+			sessionInstanceId: "instance-a",
 			workspaceFingerprint: "workspace-1",
 			sandboxProfileSha256: profileSha256,
 		});
@@ -454,12 +464,14 @@ describe("durable permission grants", () => {
 			sandboxProfileSha256: profileSha256,
 		});
 		expect(sessionGrant).toMatchObject({ lifetime: "session", sessionId: "session-foreground" });
+		expect(sessionGrant).toMatchObject({ sessionInstanceId: "instance-a" });
 		expect(sessionGrant.taskId).toBeUndefined();
 		expect(workspaceGrant).toMatchObject({ lifetime: "workspace" });
 		expect(workspaceGrant.taskId).toBeUndefined();
 
 		const active = store.listActivePermissionGrants({
 			sessionId: "session-foreground",
+			sessionInstanceId: "instance-a",
 			workspaceFingerprint: "workspace-1",
 			sandboxProfileSha256: profileSha256,
 		});
@@ -468,10 +480,66 @@ describe("durable permission grants", () => {
 
 		const otherSession = store.listActivePermissionGrants({
 			sessionId: "session-other",
+			sessionInstanceId: "instance-a",
 			workspaceFingerprint: "workspace-1",
 			sandboxProfileSha256: profileSha256,
 		});
 		expect(otherSession.map((grant) => grant.lifetime)).toEqual(["workspace"]);
+
+		const resumedProcess = store.listActivePermissionGrants({
+			sessionId: "session-foreground",
+			sessionInstanceId: "instance-b",
+			workspaceFingerprint: "workspace-1",
+			sandboxProfileSha256: profileSha256,
+		});
+		expect(resumedProcess.map((grant) => grant.lifetime)).toEqual(["workspace"]);
 		store.close();
+	});
+
+	it("keeps a persisted Session grant bound to its process instance after reopen", () => {
+		const root = mkdtempSync(join(tmpdir(), "ever-session-grant-"));
+		const databasePath = join(root, "tasks.sqlite");
+		const scope = {
+			toolNames: ["bash"],
+			effects: ["process" as const],
+			pathPrefixes: [process.cwd()],
+			commandFingerprints: [],
+			networkDomains: [],
+			credentialScopes: [],
+		};
+		try {
+			const firstProcess = SqliteTaskStore.open({ databasePath });
+			firstProcess.createPermissionGrant({
+				source: "user",
+				lifetime: "session",
+				scope,
+				sessionId: "session-resume",
+				sessionInstanceId: "instance-a",
+				workspaceFingerprint: "workspace-1",
+				sandboxProfileSha256: profileSha256,
+			});
+			firstProcess.close();
+
+			const resumedProcess = SqliteTaskStore.open({ databasePath });
+			expect(
+				resumedProcess.listActivePermissionGrants({
+					sessionId: "session-resume",
+					sessionInstanceId: "instance-b",
+					workspaceFingerprint: "workspace-1",
+					sandboxProfileSha256: profileSha256,
+				}),
+			).toEqual([]);
+			expect(
+				resumedProcess.listActivePermissionGrants({
+					sessionId: "session-resume",
+					sessionInstanceId: "instance-a",
+					workspaceFingerprint: "workspace-1",
+					sandboxProfileSha256: profileSha256,
+				}),
+			).toHaveLength(1);
+			resumedProcess.close();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
